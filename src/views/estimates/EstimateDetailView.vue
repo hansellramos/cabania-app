@@ -52,7 +52,22 @@
 
             <CRow>
               <CCol :md="6">
+                <div class="p-3 border rounded text-center">
+                  <h6 class="text-muted mb-2">Valor Cotizado</h6>
+                  <p class="fs-4 fw-bold text-primary mb-0">{{ formatCurrency(agreedPrice) }}</p>
+                  <small v-if="hasDiscount" class="text-success">
+                    <s class="text-muted">{{ formatCurrency(estimate.calculated_price) }}</s>
+                    (-{{ discountPercent }}%)
+                  </small>
+                  <p v-if="hasDiscount && estimate.discount_note" class="text-muted small mt-1 mb-0">
+                    {{ estimate.discount_note }}
+                  </p>
+                </div>
+              </CCol>
+              <CCol :md="6">
                 <p><strong>Precio Calculado:</strong> <span class="text-body-secondary">{{ formatCurrency(estimate.calculated_price) }}</span></p>
+                <p v-if="hasDiscount"><strong>Valor Pactado:</strong> <span class="text-success">{{ formatCurrency(estimate.agreed_price) }}</span></p>
+                <p v-if="hasDiscount && estimate.discount_note"><strong>Nota Descuento:</strong> <span class="text-body-secondary">{{ estimate.discount_note }}</span></p>
               </CCol>
             </CRow>
 
@@ -108,7 +123,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import { cilPencil, cilCheckCircle, cilPhone, cilUser } from '@coreui/icons'
@@ -183,6 +198,26 @@ const getStatusLabel = (status) => {
     default: return status
   }
 }
+
+const agreedPrice = computed(() => {
+  if (!estimate.value) return 0
+  return parseFloat(estimate.value.agreed_price) || parseFloat(estimate.value.calculated_price) || 0
+})
+
+const hasDiscount = computed(() => {
+  if (!estimate.value) return false
+  const calc = parseFloat(estimate.value.calculated_price) || 0
+  const agreed = parseFloat(estimate.value.agreed_price) || 0
+  return agreed > 0 && calc > 0 && agreed < calc
+})
+
+const discountPercent = computed(() => {
+  if (!estimate.value) return 0
+  const calc = parseFloat(estimate.value.calculated_price) || 0
+  const agreed = parseFloat(estimate.value.agreed_price) || 0
+  if (calc === 0) return 0
+  return Math.round(((calc - agreed) / calc) * 100)
+})
 
 onMounted(() => {
   loadEstimate()
