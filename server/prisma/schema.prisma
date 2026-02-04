@@ -477,6 +477,8 @@ model estimates {
   adults            Int?      @default(0)
   children          Int?      @default(0)
   calculated_price  Decimal?  @db.Decimal
+  agreed_price      Decimal?  @db.Decimal
+  discount_note     String?   @db.Text
   notes             String?   @db.Text
   status            String    @default("pending") @db.VarChar(50)
   conversation_id   String?   @db.Uuid
