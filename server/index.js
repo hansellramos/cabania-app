@@ -3868,7 +3868,7 @@ async function startServer() {
   app.post('/api/estimates', isAuthenticated, async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
-      const { venue_id, plan_id, customer_name, contact_type, contact_value, check_in, check_out, adults, children, calculated_price, notes, conversation_id } = req.body;
+      const { venue_id, plan_id, customer_name, contact_type, contact_value, check_in, check_out, adults, children, calculated_price, agreed_price, discount_note, notes, conversation_id } = req.body;
       
       if (!venue_id || !contact_type || !contact_value) {
         return res.status(400).json({ error: 'venue_id, contact_type y contact_value son requeridos' });
@@ -3886,6 +3886,8 @@ async function startServer() {
           adults: adults || 0,
           children: children || 0,
           calculated_price,
+          agreed_price,
+          discount_note,
           notes,
           conversation_id,
           status: 'pending',
@@ -3902,7 +3904,7 @@ async function startServer() {
   app.put('/api/estimates/:id', isAuthenticated, async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
-      const { plan_id, customer_name, contact_type, contact_value, check_in, check_out, adults, children, calculated_price, notes, status } = req.body;
+      const { plan_id, customer_name, contact_type, contact_value, check_in, check_out, adults, children, calculated_price, agreed_price, discount_note, notes, status } = req.body;
       
       const existing = await prisma.estimates.findUnique({ where: { id: req.params.id } });
       if (!existing) {
@@ -3921,6 +3923,8 @@ async function startServer() {
           adults: adults !== undefined ? adults : existing.adults,
           children: children !== undefined ? children : existing.children,
           calculated_price,
+          agreed_price,
+          discount_note,
           notes,
           status,
           updated_at: new Date()
