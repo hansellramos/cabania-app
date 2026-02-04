@@ -87,13 +87,28 @@
             </CRow>
             
             <CRow>
-              <CCol :md="4">
+              <CCol :md="3">
                 <div class="mb-3">
                   <CFormLabel>Precio calculado</CFormLabel>
                   <CFormInput type="number" v-model.number="form.calculated_price" />
                 </div>
               </CCol>
-              <CCol :md="4">
+              <CCol :md="3">
+                <div class="mb-3">
+                  <CFormLabel>Valor pactado</CFormLabel>
+                  <CFormInput type="number" v-model.number="form.agreed_price" placeholder="Dejar vacío si no hay descuento" />
+                  <small v-if="hasDiscount" class="text-success">
+                    Descuento: {{ discountPercent }}%
+                  </small>
+                </div>
+              </CCol>
+              <CCol :md="3">
+                <div class="mb-3">
+                  <CFormLabel>Nota de descuento</CFormLabel>
+                  <CFormInput v-model="form.discount_note" placeholder="Ej: Cliente frecuente" />
+                </div>
+              </CCol>
+              <CCol :md="3">
                 <div class="mb-3">
                   <CFormLabel>Estado</CFormLabel>
                   <CFormSelect v-model="form.status">
@@ -182,9 +197,24 @@ const form = ref({
   adults: 0,
   children: 0,
   calculated_price: null,
+  agreed_price: null,
+  discount_note: '',
   notes: '',
   status: 'pending',
   conversation_id: null
+})
+
+const hasDiscount = computed(() => {
+  const calc = parseFloat(form.value.calculated_price) || 0
+  const agreed = parseFloat(form.value.agreed_price) || 0
+  return agreed > 0 && calc > 0 && agreed < calc
+})
+
+const discountPercent = computed(() => {
+  const calc = parseFloat(form.value.calculated_price) || 0
+  const agreed = parseFloat(form.value.agreed_price) || 0
+  if (calc === 0) return 0
+  return Math.round(((calc - agreed) / calc) * 100)
 })
 
 const toast = ref({
@@ -238,6 +268,8 @@ const loadEstimate = async () => {
       adults: data.adults || 0,
       children: data.children || 0,
       calculated_price: data.calculated_price,
+      agreed_price: data.agreed_price,
+      discount_note: data.discount_note || '',
       notes: data.notes || '',
       status: data.status || 'pending',
       conversation_id: data.conversation_id
