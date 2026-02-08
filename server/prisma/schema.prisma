@@ -22,22 +22,22 @@ model accommodations {
 }
 
 model payments {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  created_at      DateTime  @default(now()) @db.Timestamptz(6)
-  type            String?   @db.VarChar(50)
-  accommodation   String?   @db.Uuid
-  amount          Decimal?  @db.Decimal
-  payment_method  String?   @db.VarChar(100)
-  payment_date    DateTime? @db.Date
-  reference       String?   @db.VarChar(255)
-  notes           String?   @db.Text
-  receipt_url     String?   @db.Text
-  verified        Boolean   @default(false)
-  verified_at     DateTime? @db.Timestamptz(6)
-  verified_by     String?   @db.VarChar(255)
-  created_by      String?   @db.VarChar(255)
-  updated_at      DateTime? @db.Timestamptz(6)
-  updated_by      String?   @db.VarChar(255)
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  type           String?   @db.VarChar(50)
+  accommodation  String?   @db.Uuid
+  amount         Decimal?  @db.Decimal
+  payment_method String?   @db.VarChar(100)
+  payment_date   DateTime? @db.Date
+  reference      String?   @db.VarChar(255)
+  notes          String?   @db.Text
+  receipt_url    String?   @db.Text
+  verified       Boolean   @default(false)
+  verified_at    DateTime? @db.Timestamptz(6)
+  verified_by    String?   @db.VarChar(255)
+  created_by     String?   @db.VarChar(255)
+  updated_at     DateTime? @db.Timestamptz(6)
+  updated_by     String?   @db.VarChar(255)
 }
 
 model contact_organization {
@@ -153,20 +153,20 @@ model user_organizations {
 }
 
 model subscriptions {
-  id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name              String               @db.VarChar(255)
-  description       String?              @db.Text
-  is_active         Boolean              @default(true)
-  stripe_customer_id String?             @db.VarChar(255)
-  stripe_subscription_id String?         @db.VarChar(255)
-  plan_type         String               @default("free") @db.VarChar(50)
-  max_users         Int                  @default(5)
-  max_organizations Int                  @default(1)
-  starts_at         DateTime?            @db.Timestamptz(6)
-  expires_at        DateTime?            @db.Timestamptz(6)
-  created_at        DateTime             @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
-  subscription_users subscription_users[]
+  id                     String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                   String               @db.VarChar(255)
+  description            String?              @db.Text
+  is_active              Boolean              @default(true)
+  stripe_customer_id     String?              @db.VarChar(255)
+  stripe_subscription_id String?              @db.VarChar(255)
+  plan_type              String               @default("free") @db.VarChar(50)
+  max_users              Int                  @default(5)
+  max_organizations      Int                  @default(1)
+  starts_at              DateTime?            @db.Timestamptz(6)
+  expires_at             DateTime?            @db.Timestamptz(6)
+  created_at             DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at             DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  subscription_users     subscription_users[]
 }
 
 model subscription_users {
@@ -193,30 +193,30 @@ model venue_packages {
 }
 
 model venues {
-  id                    String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name                  String?       @db.VarChar
-  created_at            DateTime      @default(now()) @db.Timestamptz(6)
-  whatsapp              Decimal?      @db.Decimal
-  address               String?       @db.VarChar
-  zip_code              String?       @db.VarChar
-  latitude              Float?
-  longitude             Float?
-  city                  String?       @db.VarChar
-  country               String?       @db.VarChar
-  department            String?       @db.VarChar
-  suburb                String?       @db.VarChar
-  address_reference     String?
-  instagram             String?       @db.VarChar
-  organization          String?       @db.Uuid
-  is_public             Boolean       @default(false)
-  waze_link             String?       @db.Text
-  google_maps_link      String?       @db.Text
-  venue_info            String?       @db.Text
-  wifi_ssid             String?       @db.VarChar(100)
-  wifi_password         String?       @db.VarChar(100)
-  delivery_info         String?       @db.Text
-  default_llm_provider  String?       @db.Uuid
-  venue_plans           venue_plans[]
+  id                   String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                 String?       @db.VarChar
+  created_at           DateTime      @default(now()) @db.Timestamptz(6)
+  whatsapp             Decimal?      @db.Decimal
+  address              String?       @db.VarChar
+  zip_code             String?       @db.VarChar
+  latitude             Float?
+  longitude            Float?
+  city                 String?       @db.VarChar
+  country              String?       @db.VarChar
+  department           String?       @db.VarChar
+  suburb               String?       @db.VarChar
+  address_reference    String?
+  instagram            String?       @db.VarChar
+  organization         String?       @db.Uuid
+  is_public            Boolean       @default(false)
+  waze_link            String?       @db.Text
+  google_maps_link     String?       @db.Text
+  venue_info           String?       @db.Text
+  wifi_ssid            String?       @db.VarChar(100)
+  wifi_password        String?       @db.VarChar(100)
+  delivery_info        String?       @db.Text
+  default_llm_provider String?       @db.Uuid
+  venue_plans          venue_plans[]
 }
 
 model sessions {
@@ -228,14 +228,14 @@ model sessions {
 }
 
 model incomes {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  payment_id      String?  @unique @db.Uuid
-  organization_id String?  @db.Uuid
-  venue_id        String?  @db.Uuid
-  amount          Decimal? @db.Decimal
-  type            String?  @db.VarChar(50)
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  payment_id      String?   @unique @db.Uuid
+  organization_id String?   @db.Uuid
+  venue_id        String?   @db.Uuid
+  amount          Decimal?  @db.Decimal
+  type            String?   @db.VarChar(50)
   date            DateTime? @db.Date
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
 }
 
 model amenities {
@@ -249,32 +249,32 @@ model amenities {
 }
 
 model venue_plans {
-  id                      String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  venue_id                String    @db.Uuid
-  name                    String    @db.VarChar(255)
-  plan_type               String    @db.VarChar(50)
-  description             String?   @db.Text
-  adult_price             Decimal   @db.Decimal
-  child_price             Decimal   @db.Decimal
-  infant_max_age          Int       @default(2)
-  child_max_age           Int       @default(12)
-  free_children_qty       Int?      @default(0)
+  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id                String   @db.Uuid
+  name                    String   @db.VarChar(255)
+  plan_type               String   @db.VarChar(50)
+  description             String?  @db.Text
+  adult_price             Decimal  @db.Decimal
+  child_price             Decimal  @db.Decimal
+  infant_max_age          Int      @default(2)
+  child_max_age           Int      @default(12)
+  free_children_qty       Int?     @default(0)
   free_children_max_age   Int?
-  free_children_condition String?   @db.Text
-  child_food_price        Decimal?  @db.Decimal
-  min_guests              Int       @default(1)
+  free_children_condition String?  @db.Text
+  child_food_price        Decimal? @db.Decimal
+  min_guests              Int      @default(1)
   max_capacity            Int?
-  check_in_time           String?   @db.VarChar(10)
-  check_out_time          String?   @db.VarChar(10)
-  includes_overnight      Boolean   @default(false)
-  includes_rooms          Boolean   @default(false)
-  includes_food           Boolean   @default(false)
-  food_description        String?   @db.Text
-  includes_beverages      Boolean   @default(false)
-  terms_conditions        String?   @db.Text
-  is_active               Boolean   @default(true)
-  created_at              DateTime  @default(now()) @db.Timestamptz(6)
-  venue                   venues    @relation(fields: [venue_id], references: [id], onDelete: Cascade)
+  check_in_time           String?  @db.VarChar(10)
+  check_out_time          String?  @db.VarChar(10)
+  includes_overnight      Boolean  @default(false)
+  includes_rooms          Boolean  @default(false)
+  includes_food           Boolean  @default(false)
+  food_description        String?  @db.Text
+  includes_beverages      Boolean  @default(false)
+  terms_conditions        String?  @db.Text
+  is_active               Boolean  @default(true)
+  created_at              DateTime @default(now()) @db.Timestamptz(6)
+  venue                   venues   @relation(fields: [venue_id], references: [id], onDelete: Cascade)
 }
 
 model plan_amenities {
@@ -327,37 +327,39 @@ model expense_categories {
 }
 
 model expenses {
-  id                  String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organization_id     String?             @db.Uuid
-  venue_id            String?             @db.Uuid
-  category_id         String?             @db.Uuid
-  subcategory         String?             @db.VarChar(100)
-  provider_id         String?             @db.Uuid
-  amount              Decimal             @db.Decimal
-  description         String?             @db.Text
-  expense_date        DateTime            @db.Date
-  reference           String?             @db.VarChar(255)
-  receipt_url         String?             @db.Text
-  notes               String?             @db.Text
-  created_by          String?             @db.VarChar(255)
-  created_at          DateTime            @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime?           @db.Timestamptz(6)
-  updated_by          String?             @db.VarChar(255)
-  category            expense_categories? @relation(fields: [category_id], references: [id])
-  provider            providers?          @relation(fields: [provider_id], references: [id])
+  id              String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String?                   @db.Uuid
+  venue_id        String?                   @db.Uuid
+  category_id     String?                   @db.Uuid
+  subcategory     String?                   @db.VarChar(100)
+  provider_id     String?                   @db.Uuid
+  amount          Decimal                   @db.Decimal
+  description     String?                   @db.Text
+  expense_date    DateTime                  @db.Date
+  reference       String?                   @db.VarChar(255)
+  receipt_url     String?                   @db.Text
+  notes           String?                   @db.Text
+  created_by      String?                   @db.VarChar(255)
+  created_at      DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?                 @db.Timestamptz(6)
+  updated_by      String?                   @db.VarChar(255)
+  category        expense_categories?       @relation(fields: [category_id], references: [id])
+  provider        providers?                @relation(fields: [provider_id], references: [id])
+  inventory_items expense_inventory_items[]
 }
 
 model providers {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name            String    @db.VarChar(255)
-  organization_id String?   @db.Uuid
-  phone           String?   @db.VarChar(50)
-  email           String?   @db.VarChar(255)
-  address         String?   @db.Text
-  notes           String?   @db.Text
-  created_at      DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at      DateTime? @db.Timestamptz(6)
-  expenses        expenses[]
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String             @db.VarChar(255)
+  organization_id  String?            @db.Uuid
+  phone            String?            @db.VarChar(50)
+  email            String?            @db.VarChar(255)
+  address          String?            @db.Text
+  notes            String?            @db.Text
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?          @db.Timestamptz(6)
+  expenses         expenses[]
+  maintenance_logs maintenance_logs[]
 }
 
 model deposits {
@@ -399,92 +401,244 @@ model deposit_evidence {
 }
 
 model llm_providers {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code        String   @unique @db.VarChar(50)
-  name        String   @db.VarChar(100)
-  api_key     String?  @db.Text
-  base_url    String?  @db.Text
-  model       String?  @db.VarChar(100)
-  is_active   Boolean  @default(true)
-  is_default  Boolean  @default(false)
-  config      Json?    @db.Json
-  created_at  DateTime @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime? @db.Timestamptz(6)
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String    @unique @db.VarChar(50)
+  name       String    @db.VarChar(100)
+  api_key    String?   @db.Text
+  base_url   String?   @db.Text
+  model      String?   @db.VarChar(100)
+  is_active  Boolean   @default(true)
+  is_default Boolean   @default(false)
+  config     Json?     @db.Json
+  created_at DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @db.Timestamptz(6)
 }
 
 model ai_settings {
-  id                      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  setting_key             String   @unique @db.VarChar(50)
-  provider_code           String   @db.VarChar(50)
-  model                   String   @db.VarChar(100)
-  created_at              DateTime @default(now()) @db.Timestamptz(6)
-  updated_at              DateTime? @db.Timestamptz(6)
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  setting_key   String    @unique @db.VarChar(50)
+  provider_code String    @db.VarChar(50)
+  model         String    @db.VarChar(100)
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at    DateTime? @db.Timestamptz(6)
 }
 
 model message_templates {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  venue_id    String?  @db.Uuid
-  code        String   @db.VarChar(50)
-  name        String   @db.VarChar(255)
-  category    String?  @db.VarChar(50)
-  content     String   @db.Text
-  variables   Json?    @db.Json
-  is_system   Boolean  @default(false)
-  is_active   Boolean  @default(true)
-  sort_order        Int      @default(0)
-  twilio_template   String?  @db.VarChar(255)
-  created_at        DateTime @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime? @db.Timestamptz(6)
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id        String?   @db.Uuid
+  code            String    @db.VarChar(50)
+  name            String    @db.VarChar(255)
+  category        String?   @db.VarChar(50)
+  content         String    @db.Text
+  variables       Json?     @db.Json
+  is_system       Boolean   @default(false)
+  is_active       Boolean   @default(true)
+  sort_order      Int       @default(0)
+  twilio_template String?   @db.VarChar(255)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime? @db.Timestamptz(6)
 
   @@unique([venue_id, code])
 }
 
 model chat_conversations {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  venue_id    String   @db.Uuid
-  external_id String?  @db.VarChar(255)
-  source      String   @db.VarChar(50)
-  phone       String?  @db.VarChar(50)
-  name        String?  @db.VarChar(255)
-  metadata    Json?    @db.Json
-  created_at  DateTime @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime? @db.Timestamptz(6)
+  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id    String          @db.Uuid
+  external_id String?         @db.VarChar(255)
+  source      String          @db.VarChar(50)
+  phone       String?         @db.VarChar(50)
+  name        String?         @db.VarChar(255)
+  metadata    Json?           @db.Json
+  created_at  DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at  DateTime?       @db.Timestamptz(6)
   messages    chat_messages[]
 }
 
 model chat_messages {
-  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  conversation_id String   @db.Uuid
-  role            String   @db.VarChar(20)
-  content         String   @db.Text
-  provider        String?  @db.VarChar(50)
-  model           String?  @db.VarChar(100)
+  id              String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversation_id String             @db.Uuid
+  role            String             @db.VarChar(20)
+  content         String             @db.Text
+  provider        String?            @db.VarChar(50)
+  model           String?            @db.VarChar(100)
   tokens_used     Int?
-  cost            Decimal? @db.Decimal
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  cost            Decimal?           @db.Decimal
+  created_at      DateTime           @default(now()) @db.Timestamptz(6)
   conversation    chat_conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 }
 
 model estimates {
-  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  venue_id          String    @db.Uuid
-  plan_id           String?   @db.Uuid
-  customer_name     String?   @db.VarChar(255)
-  contact_type      String    @db.VarChar(20)
-  contact_value     String    @db.VarChar(100)
-  check_in          DateTime? @db.Date
-  check_out         DateTime? @db.Date
-  adults            Int?      @default(0)
-  children          Int?      @default(0)
-  calculated_price  Decimal?  @db.Decimal
-  agreed_price      Decimal?  @db.Decimal
-  discount_note     String?   @db.Text
-  notes             String?   @db.Text
-  status            String    @default("pending") @db.VarChar(50)
-  conversation_id   String?   @db.Uuid
-  created_by        String?   @db.VarChar(255)
-  created_at        DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime? @db.Timestamptz(6)
-  converted_at      DateTime? @db.Timestamptz(6)
-  accommodation_id  String?   @db.Uuid
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id         String    @db.Uuid
+  plan_id          String?   @db.Uuid
+  customer_name    String?   @db.VarChar(255)
+  contact_type     String    @db.VarChar(20)
+  contact_value    String    @db.VarChar(100)
+  check_in         DateTime? @db.Date
+  check_out        DateTime? @db.Date
+  adults           Int?      @default(0)
+  children         Int?      @default(0)
+  calculated_price Decimal?  @db.Decimal
+  agreed_price     Decimal?  @db.Decimal
+  discount_note    String?   @db.Text
+  notes            String?   @db.Text
+  status           String    @default("pending") @db.VarChar(50)
+  conversation_id  String?   @db.Uuid
+  created_by       String?   @db.VarChar(255)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime? @db.Timestamptz(6)
+  converted_at     DateTime? @db.Timestamptz(6)
+  accommodation_id String?   @db.Uuid
+}
+
+// ========================================
+// INVENTORY MODULE
+// ========================================
+
+model inventory_categories {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String            @db.VarChar(100)
+  description     String?           @db.Text
+  icon            String?           @db.VarChar(50)
+  color           String?           @db.VarChar(20)
+  type            String?           @db.VarChar(20)
+  is_active       Boolean           @default(true)
+  created_at      DateTime          @default(now()) @db.Timestamptz(6)
+  inventory_items inventory_items[]
+}
+
+model inventory_items {
+  id                   String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id      String?                   @db.Uuid
+  venue_id             String?                   @db.Uuid
+  category_id          String?                   @db.Uuid
+  type                 String                    @db.VarChar(20)
+  name                 String                    @db.VarChar(255)
+  description          String?                   @db.Text
+  quantity             Decimal                   @default(0) @db.Decimal
+  unit                 String?                   @db.VarChar(50)
+  minimum_stock        Decimal?                  @db.Decimal
+  unit_cost            Decimal?                  @db.Decimal
+  condition            String?                   @db.VarChar(50)
+  location_notes       String?                   @db.VarChar(255)
+  brand                String?                   @db.VarChar(100)
+  model_name           String?                   @db.VarChar(100)
+  serial_number        String?                   @db.VarChar(100)
+  purchase_date        DateTime?                 @db.Date
+  warranty_expiry      DateTime?                 @db.Date
+  notes                String?                   @db.Text
+  is_active            Boolean                   @default(true)
+  created_by           String?                   @db.VarChar(255)
+  created_at           DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime?                 @db.Timestamptz(6)
+  updated_by           String?                   @db.VarChar(255)
+  category             inventory_categories?     @relation(fields: [category_id], references: [id])
+  images               inventory_images[]
+  movements            inventory_movements[]
+  maintenance_supplies maintenance_supplies[]
+  expense_items        expense_inventory_items[]
+}
+
+model inventory_images {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inventory_item_id String          @db.Uuid
+  image_url         String          @db.Text
+  is_cover          Boolean         @default(false)
+  description       String?         @db.Text
+  sort_order        Int             @default(0)
+  created_at        DateTime        @default(now()) @db.Timestamptz(6)
+  inventory_item    inventory_items @relation(fields: [inventory_item_id], references: [id], onDelete: Cascade)
+}
+
+model inventory_movements {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  inventory_item_id String          @db.Uuid
+  organization_id   String?         @db.Uuid
+  venue_id          String?         @db.Uuid
+  type              String          @db.VarChar(30)
+  quantity_change   Decimal         @db.Decimal
+  reference_id      String?         @db.Uuid
+  reference_type    String?         @db.VarChar(50)
+  reason            String?         @db.Text
+  created_by        String?         @db.VarChar(255)
+  created_at        DateTime        @default(now()) @db.Timestamptz(6)
+  inventory_item    inventory_items @relation(fields: [inventory_item_id], references: [id])
+}
+
+model expense_inventory_items {
+  id                String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  expense_id        String          @db.Uuid
+  inventory_item_id String          @db.Uuid
+  quantity          Decimal         @db.Decimal
+  unit_cost         Decimal?        @db.Decimal
+  notes             String?         @db.VarChar(255)
+  created_at        DateTime        @default(now()) @db.Timestamptz(6)
+  expense           expenses        @relation(fields: [expense_id], references: [id], onDelete: Cascade)
+  inventory_item    inventory_items @relation(fields: [inventory_item_id], references: [id])
+}
+
+// ========================================
+// MAINTENANCE MODULE
+// ========================================
+
+model maintenance_zones {
+  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id         String             @db.Uuid
+  name             String             @db.VarChar(255)
+  type             String?            @db.VarChar(50)
+  description      String?            @db.Text
+  notes            String?            @db.Text
+  is_active        Boolean            @default(true)
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?          @db.Timestamptz(6)
+  maintenance_logs maintenance_logs[]
+}
+
+model maintenance_logs {
+  id               String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String?                @db.Uuid
+  venue_id         String                 @db.Uuid
+  zone_id          String?                @db.Uuid
+  provider_id      String?                @db.Uuid
+  maintenance_date DateTime               @db.Date
+  entry_time       String?                @db.VarChar(10)
+  exit_time        String?                @db.VarChar(10)
+  description      String                 @db.Text
+  work_performed   String?                @db.Text
+  status           String                 @default("pending") @db.VarChar(50)
+  priority         String?                @db.VarChar(20)
+  cost             Decimal?               @db.Decimal
+  pending_items    String?                @db.Text
+  notes            String?                @db.Text
+  created_by       String?                @db.VarChar(255)
+  created_at       DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?              @db.Timestamptz(6)
+  updated_by       String?                @db.VarChar(255)
+  zone             maintenance_zones?     @relation(fields: [zone_id], references: [id])
+  provider         providers?             @relation(fields: [provider_id], references: [id])
+  supplies         maintenance_supplies[]
+  images           maintenance_images[]
+}
+
+model maintenance_supplies {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  maintenance_log_id String           @db.Uuid
+  inventory_item_id  String           @db.Uuid
+  quantity_used      Decimal          @db.Decimal
+  unit_cost_at_time  Decimal?         @db.Decimal
+  notes              String?          @db.VarChar(255)
+  created_at         DateTime         @default(now()) @db.Timestamptz(6)
+  maintenance_log    maintenance_logs @relation(fields: [maintenance_log_id], references: [id], onDelete: Cascade)
+  inventory_item     inventory_items  @relation(fields: [inventory_item_id], references: [id])
+}
+
+model maintenance_images {
+  id                 String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  maintenance_log_id String           @db.Uuid
+  image_url          String           @db.Text
+  type               String?          @db.VarChar(50)
+  description        String?          @db.Text
+  sort_order         Int              @default(0)
+  created_at         DateTime         @default(now()) @db.Timestamptz(6)
+  maintenance_log    maintenance_logs @relation(fields: [maintenance_log_id], references: [id], onDelete: Cascade)
 }

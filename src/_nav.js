@@ -89,6 +89,44 @@ export default [
   },
   {
     component: 'CNavTitle',
+    name: 'Inventario',
+  },
+  {
+    component: 'CNavItem',
+    name: 'Insumos y Activos',
+    to: '/business/inventory',
+    icon: 'cil-clipboard',
+  },
+  {
+    component: 'CNavItem',
+    name: 'Categorías',
+    to: '/admin/inventory-categories',
+    icon: 'cil-layers',
+  },
+  {
+    component: 'CNavTitle',
+    name: 'Mantenimiento',
+  },
+  {
+    component: 'CNavItem',
+    name: 'Tablero',
+    to: '/business/maintenance',
+    icon: 'cil-speedometer',
+  },
+  {
+    component: 'CNavItem',
+    name: 'Registros',
+    to: '/business/maintenance/logs',
+    icon: 'cil-task',
+  },
+  {
+    component: 'CNavItem',
+    name: 'Zonas',
+    to: '/admin/maintenance-zones',
+    icon: 'cil-map',
+  },
+  {
+    component: 'CNavTitle',
     name: 'Sistema',
   },
   {

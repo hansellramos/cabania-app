@@ -6,6 +6,8 @@ import DefaultLayout from '@/layouts/DefaultLayout'
 import accommodationsRoutes from './routes/accommodations'
 import paymentsRoutes from './routes/payments'
 import profilesRoutes from './routes/profiles'
+import inventoryRoutes from './routes/inventory'
+import maintenanceRoutes from './routes/maintenance'
 
 let authChecked = false
 let isAuthenticated = false
@@ -438,6 +440,8 @@ const routes = [
       ...accommodationsRoutes,
       ...paymentsRoutes,
       ...profilesRoutes,
+      ...inventoryRoutes,
+      ...maintenanceRoutes,
       {
         path: '/admin/amenities',
         name: 'AmenityList',
@@ -447,6 +451,16 @@ const routes = [
         path: '/admin/expense-categories',
         name: 'ExpenseCategoryList',
         component: () => import('@/views/expense-categories/ExpenseCategoryListView.vue'),
+      },
+      {
+        path: '/admin/inventory-categories',
+        name: 'InventoryCategoryList',
+        component: () => import('@/views/inventory-categories/InventoryCategoryListView.vue'),
+      },
+      {
+        path: '/admin/maintenance-zones',
+        name: 'MaintenanceZoneList',
+        component: () => import('@/views/maintenance-zones/MaintenanceZoneListView.vue'),
       },
       {
         path: '/admin/message-templates',

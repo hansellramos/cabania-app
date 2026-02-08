@@ -5640,6 +5640,621 @@ REGLAS:
     }
   });
 
+  // ==================== Inventory API ====================
+
+  // --- Inventory Categories ---
+
+  app.get('/api/inventory-categories', async (req, res) => {
+    try {
+      const categories = await prisma.inventory_categories.findMany({
+        where: { is_active: true },
+        orderBy: { name: 'asc' }
+      });
+      res.json(categories);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/inventory-categories', isAuthenticated, async (req, res) => {
+    try {
+      const category = await prisma.inventory_categories.create({ data: req.body });
+      res.json(category);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/inventory-categories/:id', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.inventory_categories.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Categoría no encontrada' });
+      const category = await prisma.inventory_categories.update({ where: { id: req.params.id }, data: req.body });
+      res.json(category);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/inventory-categories/:id', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.inventory_categories.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Categoría no encontrada' });
+      await prisma.inventory_categories.delete({ where: { id: req.params.id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Inventory Items ---
+
+  app.get('/api/inventory', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, organization_id, type, category_id, low_stock, search } = req.query;
+      const userId = String(req.user.claims?.sub);
+      const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+
+      let accessibleOrgIds = null;
+      if (currentUser?.is_super_admin) {
+        const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+        accessibleOrgIds = userOrgs.map(uo => uo.organization_id);
+      } else {
+        accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+      }
+
+      const whereClause = { is_active: true };
+      if (accessibleOrgIds !== null) {
+        if (accessibleOrgIds.length === 0) return res.json([]);
+        whereClause.organization_id = { in: accessibleOrgIds };
+      }
+      if (venue_id) whereClause.venue_id = venue_id;
+      if (organization_id) whereClause.organization_id = organization_id;
+      if (type) whereClause.type = type;
+      if (category_id) whereClause.category_id = category_id;
+      if (search) whereClause.name = { contains: search, mode: 'insensitive' };
+
+      const items = await prisma.inventory_items.findMany({
+        where: whereClause,
+        include: { category: true },
+        orderBy: { name: 'asc' }
+      });
+
+      if (low_stock === 'true') {
+        return res.json(items.filter(item => item.minimum_stock !== null && parseFloat(item.quantity) <= parseFloat(item.minimum_stock)));
+      }
+      res.json(items);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/inventory/:id', isAuthenticated, async (req, res) => {
+    try {
+      const item = await prisma.inventory_items.findUnique({
+        where: { id: req.params.id },
+        include: { category: true, images: true, movements: { take: 20, orderBy: { created_at: 'desc' } } }
+      });
+      if (!item) return res.status(404).json({ error: 'Item no encontrado' });
+      res.json(item);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/inventory', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const data = { ...req.body, created_by: userId };
+      if (data.purchase_date) data.purchase_date = new Date(data.purchase_date);
+      if (data.warranty_expiry) data.warranty_expiry = new Date(data.warranty_expiry);
+      const item = await prisma.inventory_items.create({ data });
+      res.json(item);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/inventory/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const existing = await prisma.inventory_items.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Item no encontrado' });
+      const updateData = { ...req.body, updated_at: new Date(), updated_by: userId };
+      if (updateData.purchase_date) updateData.purchase_date = new Date(updateData.purchase_date);
+      if (updateData.warranty_expiry) updateData.warranty_expiry = new Date(updateData.warranty_expiry);
+      const item = await prisma.inventory_items.update({ where: { id: req.params.id }, data: updateData });
+      res.json(item);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/inventory/:id', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.inventory_items.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Item no encontrado' });
+      await prisma.inventory_items.update({ where: { id: req.params.id }, data: { is_active: false } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Inventory Images ---
+
+  app.post('/api/inventory/:id/images', isAuthenticated, async (req, res) => {
+    try {
+      const item = await prisma.inventory_items.findUnique({ where: { id: req.params.id } });
+      if (!item) return res.status(404).json({ error: 'Item no encontrado' });
+      const { image_url, is_cover, description, sort_order } = req.body;
+      if (is_cover) {
+        await prisma.inventory_images.updateMany({ where: { inventory_item_id: req.params.id }, data: { is_cover: false } });
+      }
+      const image = await prisma.inventory_images.create({
+        data: { inventory_item_id: req.params.id, image_url, is_cover: is_cover || false, description: description || null, sort_order: sort_order || 0 }
+      });
+      res.json(image);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/inventory-images/:id', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.inventory_images.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Imagen no encontrada' });
+      await prisma.inventory_images.delete({ where: { id: req.params.id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Inventory Movements ---
+
+  app.get('/api/inventory/:id/movements', isAuthenticated, async (req, res) => {
+    try {
+      const movements = await prisma.inventory_movements.findMany({
+        where: { inventory_item_id: req.params.id },
+        orderBy: { created_at: 'desc' },
+        take: 50
+      });
+      res.json(movements);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/inventory/:id/movements', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { type, quantity_change, reason } = req.body;
+      const validTypes = ['consumption_general', 'adjustment', 'return'];
+      if (!validTypes.includes(type)) return res.status(400).json({ error: 'Tipo de movimiento no válido' });
+
+      const item = await prisma.inventory_items.findUnique({ where: { id: req.params.id } });
+      if (!item) return res.status(404).json({ error: 'Item no encontrado' });
+
+      if (type === 'consumption_general' && quantity_change > 0) return res.status(400).json({ error: 'La cantidad para consumo debe ser negativa' });
+      if (type === 'return' && quantity_change > 0) return res.status(400).json({ error: 'La cantidad para devolución debe ser negativa' });
+
+      const result = await prisma.$transaction(async (tx) => {
+        const movement = await tx.inventory_movements.create({
+          data: { inventory_item_id: req.params.id, organization_id: item.organization_id, venue_id: item.venue_id, type, quantity_change, reason: reason || null, created_by: userId }
+        });
+        const updatedItem = await tx.inventory_items.update({
+          where: { id: req.params.id },
+          data: { quantity: parseFloat(item.quantity) + parseFloat(quantity_change) }
+        });
+        return { movement, item: updatedItem };
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Expense-Inventory Items ---
+
+  app.get('/api/expenses/:id/inventory-items', isAuthenticated, async (req, res) => {
+    try {
+      const expenseItems = await prisma.expense_inventory_items.findMany({
+        where: { expense_id: req.params.id },
+        include: { inventory_item: { include: { category: true } } }
+      });
+      res.json(expenseItems);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/expenses/:id/inventory-items', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { inventory_item_id, quantity, unit_cost, notes } = req.body;
+
+      const expense = await prisma.expenses.findUnique({ where: { id: req.params.id } });
+      if (!expense) return res.status(404).json({ error: 'Gasto no encontrado' });
+
+      const item = await prisma.inventory_items.findUnique({ where: { id: inventory_item_id } });
+      if (!item) return res.status(404).json({ error: 'Item no encontrado' });
+
+      const result = await prisma.$transaction(async (tx) => {
+        const expenseItem = await tx.expense_inventory_items.create({
+          data: { expense_id: req.params.id, inventory_item_id, quantity, unit_cost: unit_cost || null, notes: notes || null }
+        });
+        await tx.inventory_items.update({
+          where: { id: inventory_item_id },
+          data: { quantity: parseFloat(item.quantity) + parseFloat(quantity) }
+        });
+        await tx.inventory_movements.create({
+          data: { inventory_item_id, organization_id: item.organization_id, venue_id: item.venue_id, type: 'purchase', quantity_change: quantity, reference_id: req.params.id, reference_type: 'expense', reason: 'Compra registrada en gasto', created_by: userId }
+        });
+        return expenseItem;
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/expense-inventory-items/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const record = await prisma.expense_inventory_items.findUnique({ where: { id: req.params.id } });
+      if (!record) return res.status(404).json({ error: 'Registro no encontrado' });
+
+      const item = await prisma.inventory_items.findUnique({ where: { id: record.inventory_item_id } });
+
+      await prisma.$transaction(async (tx) => {
+        if (item) {
+          await tx.inventory_items.update({
+            where: { id: record.inventory_item_id },
+            data: { quantity: parseFloat(item.quantity) - parseFloat(record.quantity) }
+          });
+          await tx.inventory_movements.create({
+            data: { inventory_item_id: record.inventory_item_id, organization_id: item.organization_id, venue_id: item.venue_id, type: 'adjustment', quantity_change: -parseFloat(record.quantity), reference_id: record.expense_id, reference_type: 'expense_reversal', reason: 'Reversión de compra vinculada a gasto', created_by: userId }
+          });
+        }
+        await tx.expense_inventory_items.delete({ where: { id: req.params.id } });
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== Maintenance API ====================
+
+  // --- Maintenance Zones ---
+
+  app.get('/api/maintenance-zones', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id } = req.query;
+      const whereClause = { is_active: true };
+      if (venue_id) whereClause.venue_id = venue_id;
+      const zones = await prisma.maintenance_zones.findMany({ where: whereClause, orderBy: { name: 'asc' } });
+      res.json(zones);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/maintenance-zones/:id', isAuthenticated, async (req, res) => {
+    try {
+      const zone = await prisma.maintenance_zones.findUnique({ where: { id: req.params.id } });
+      if (!zone) return res.status(404).json({ error: 'Zona no encontrada' });
+      res.json(zone);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/maintenance-zones', isAuthenticated, async (req, res) => {
+    try {
+      const zone = await prisma.maintenance_zones.create({ data: req.body });
+      res.json(zone);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/maintenance-zones/:id', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.maintenance_zones.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Zona no encontrada' });
+      const zone = await prisma.maintenance_zones.update({ where: { id: req.params.id }, data: { ...req.body, updated_at: new Date() } });
+      res.json(zone);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/maintenance-zones/:id', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.maintenance_zones.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Zona no encontrada' });
+      await prisma.maintenance_zones.update({ where: { id: req.params.id }, data: { is_active: false } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Maintenance Logs ---
+
+  app.get('/api/maintenance-logs', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, zone_id, provider_id, status, from_date, to_date } = req.query;
+      const userId = String(req.user.claims?.sub);
+      const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+
+      let accessibleOrgIds = null;
+      if (currentUser?.is_super_admin) {
+        const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+        accessibleOrgIds = userOrgs.map(uo => uo.organization_id);
+      } else {
+        accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+      }
+
+      const whereClause = {};
+      if (accessibleOrgIds !== null) {
+        if (accessibleOrgIds.length === 0) return res.json([]);
+        whereClause.organization_id = { in: accessibleOrgIds };
+      }
+      if (venue_id) whereClause.venue_id = venue_id;
+      if (zone_id) whereClause.zone_id = zone_id;
+      if (provider_id) whereClause.provider_id = provider_id;
+      if (status) whereClause.status = status;
+      if (from_date || to_date) {
+        whereClause.maintenance_date = {};
+        if (from_date) whereClause.maintenance_date.gte = new Date(from_date);
+        if (to_date) whereClause.maintenance_date.lte = new Date(to_date);
+      }
+
+      const logs = await prisma.maintenance_logs.findMany({
+        where: whereClause,
+        include: { zone: true, provider: true },
+        orderBy: { maintenance_date: 'desc' }
+      });
+
+      // Enrich with venue data
+      const venueIds = [...new Set(logs.filter(l => l.venue_id).map(l => l.venue_id))];
+      const venues = venueIds.length > 0 ? await prisma.venues.findMany({ where: { id: { in: venueIds } } }) : [];
+      const venuesMap = Object.fromEntries(venues.map(v => [v.id, v]));
+
+      const enriched = logs.map(l => ({ ...l, venue_data: l.venue_id ? venuesMap[l.venue_id] || null : null }));
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/maintenance-logs/:id', isAuthenticated, async (req, res) => {
+    try {
+      const log = await prisma.maintenance_logs.findUnique({
+        where: { id: req.params.id },
+        include: { zone: true, provider: true, supplies: { include: { inventory_item: true } }, images: true }
+      });
+      if (!log) return res.status(404).json({ error: 'Registro no encontrado' });
+      res.json(log);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/maintenance-logs', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const data = { ...req.body, created_by: userId };
+      if (data.maintenance_date) data.maintenance_date = new Date(data.maintenance_date);
+      const log = await prisma.maintenance_logs.create({ data });
+      res.json(log);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/maintenance-logs/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const existing = await prisma.maintenance_logs.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Registro no encontrado' });
+      const updateData = { ...req.body, updated_at: new Date(), updated_by: userId };
+      if (updateData.maintenance_date) updateData.maintenance_date = new Date(updateData.maintenance_date);
+      const log = await prisma.maintenance_logs.update({ where: { id: req.params.id }, data: updateData });
+      res.json(log);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/maintenance-logs/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const existing = await prisma.maintenance_logs.findUnique({
+        where: { id: req.params.id },
+        include: { supplies: true }
+      });
+      if (!existing) return res.status(404).json({ error: 'Registro no encontrado' });
+
+      await prisma.$transaction(async (tx) => {
+        // Restore consumed supply quantities
+        for (const supply of existing.supplies) {
+          const item = await tx.inventory_items.findUnique({ where: { id: supply.inventory_item_id } });
+          if (item) {
+            await tx.inventory_items.update({
+              where: { id: supply.inventory_item_id },
+              data: { quantity: parseFloat(item.quantity) + parseFloat(supply.quantity_used) }
+            });
+            await tx.inventory_movements.create({
+              data: { inventory_item_id: supply.inventory_item_id, organization_id: item.organization_id, venue_id: item.venue_id, type: 'adjustment', quantity_change: parseFloat(supply.quantity_used), reference_id: req.params.id, reference_type: 'maintenance_log_deletion', reason: 'Restauración por eliminación de registro de mantenimiento', created_by: userId }
+            });
+          }
+        }
+        await tx.maintenance_logs.delete({ where: { id: req.params.id } });
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/maintenance-logs/:id/status', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const existing = await prisma.maintenance_logs.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Registro no encontrado' });
+      const log = await prisma.maintenance_logs.update({
+        where: { id: req.params.id },
+        data: { status: req.body.status, updated_at: new Date(), updated_by: userId }
+      });
+      res.json(log);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Maintenance Supplies ---
+
+  app.post('/api/maintenance-logs/:id/supplies', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { inventory_item_id, quantity_used, notes } = req.body;
+
+      const log = await prisma.maintenance_logs.findUnique({ where: { id: req.params.id } });
+      if (!log) return res.status(404).json({ error: 'Registro no encontrado' });
+
+      const item = await prisma.inventory_items.findUnique({ where: { id: inventory_item_id } });
+      if (!item) return res.status(404).json({ error: 'Item no encontrado' });
+
+      const result = await prisma.$transaction(async (tx) => {
+        const supply = await tx.maintenance_supplies.create({
+          data: { maintenance_log_id: req.params.id, inventory_item_id, quantity_used, unit_cost_at_time: item.unit_cost || null, notes: notes || null }
+        });
+        await tx.inventory_items.update({
+          where: { id: inventory_item_id },
+          data: { quantity: parseFloat(item.quantity) - parseFloat(quantity_used) }
+        });
+        await tx.inventory_movements.create({
+          data: { inventory_item_id, organization_id: item.organization_id, venue_id: item.venue_id, type: 'consumption_maintenance', quantity_change: -parseFloat(quantity_used), reference_id: req.params.id, reference_type: 'maintenance_log', reason: 'Consumo en mantenimiento', created_by: userId }
+        });
+        return supply;
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/maintenance-supplies/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const record = await prisma.maintenance_supplies.findUnique({ where: { id: req.params.id } });
+      if (!record) return res.status(404).json({ error: 'Registro no encontrado' });
+
+      const item = await prisma.inventory_items.findUnique({ where: { id: record.inventory_item_id } });
+
+      await prisma.$transaction(async (tx) => {
+        if (item) {
+          await tx.inventory_items.update({
+            where: { id: record.inventory_item_id },
+            data: { quantity: parseFloat(item.quantity) + parseFloat(record.quantity_used) }
+          });
+          await tx.inventory_movements.create({
+            data: { inventory_item_id: record.inventory_item_id, organization_id: item.organization_id, venue_id: item.venue_id, type: 'adjustment', quantity_change: parseFloat(record.quantity_used), reference_id: record.maintenance_log_id, reference_type: 'maintenance_supply_reversal', reason: 'Reversión de consumo en mantenimiento', created_by: userId }
+          });
+        }
+        await tx.maintenance_supplies.delete({ where: { id: req.params.id } });
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Maintenance Images ---
+
+  app.post('/api/maintenance-logs/:id/images', isAuthenticated, async (req, res) => {
+    try {
+      const log = await prisma.maintenance_logs.findUnique({ where: { id: req.params.id } });
+      if (!log) return res.status(404).json({ error: 'Registro no encontrado' });
+      const image = await prisma.maintenance_images.create({
+        data: { maintenance_log_id: req.params.id, image_url: req.body.image_url, type: req.body.type || null, description: req.body.description || null, sort_order: req.body.sort_order || 0 }
+      });
+      res.json(image);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/maintenance-images/:id', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.maintenance_images.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Imagen no encontrada' });
+      await prisma.maintenance_images.delete({ where: { id: req.params.id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Maintenance Dashboard ---
+
+  app.get('/api/maintenance-dashboard', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id } = req.query;
+      if (!venue_id) return res.status(400).json({ error: 'venue_id es requerido' });
+
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+      const [pendingCount, inProgressCount, completedThisMonth, recentLogs, zones, lowStockSupplies] = await Promise.all([
+        prisma.maintenance_logs.count({ where: { venue_id, status: 'pending' } }),
+        prisma.maintenance_logs.count({ where: { venue_id, status: 'in_progress' } }),
+        prisma.maintenance_logs.count({ where: { venue_id, status: 'completed', maintenance_date: { gte: startOfMonth } } }),
+        prisma.maintenance_logs.findMany({ where: { venue_id }, include: { zone: true, provider: true }, orderBy: { maintenance_date: 'desc' }, take: 10 }),
+        prisma.maintenance_zones.findMany({ where: { venue_id, is_active: true }, orderBy: { name: 'asc' } }),
+        prisma.inventory_items.findMany({
+          where: { venue_id, type: 'supply', is_active: true, OR: [{ quantity: { lte: 0 } }, { AND: [{ minimum_stock: { not: null } }] }] },
+          include: { category: true }
+        })
+      ]);
+
+      // Filter low stock properly (Prisma can't do field comparison easily)
+      const actualLowStock = lowStockSupplies.filter(item => item.minimum_stock !== null ? parseFloat(item.quantity) <= parseFloat(item.minimum_stock) : parseFloat(item.quantity) <= 0);
+
+      // Enrich zones with last maintenance info
+      const zoneStatus = await Promise.all(zones.map(async (zone) => {
+        const lastLog = await prisma.maintenance_logs.findFirst({
+          where: { zone_id: zone.id },
+          include: { provider: true },
+          orderBy: { maintenance_date: 'desc' }
+        });
+        return {
+          ...zone,
+          last_maintenance_date: lastLog?.maintenance_date || null,
+          last_provider_name: lastLog?.provider?.name || null,
+          days_since_maintenance: lastLog ? Math.floor((now - new Date(lastLog.maintenance_date)) / (1000 * 60 * 60 * 24)) : null
+        };
+      }));
+
+      res.json({
+        pending_count: pendingCount,
+        in_progress_count: inProgressCount,
+        completed_this_month: completedThisMonth,
+        recent_logs: recentLogs,
+        zone_status: zoneStatus,
+        low_stock_supplies: actualLowStock
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== End Maintenance API ====================
+
   // Serve static files from Vue build in production
   const distPath = path.join(__dirname, '..', 'dist');
   app.use(express.static(distPath));
