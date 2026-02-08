@@ -162,6 +162,73 @@
                 />
               </CCol>
             </CRow>
+            <!-- Inventory Items Section (only when editing) -->
+            <template v-if="isEditing">
+              <hr class="my-4" />
+              <h6 class="mb-3">
+                <CIcon name="cil-clipboard" class="me-2" />
+                Items de Inventario (Compras)
+              </h6>
+              <div class="mb-3">
+                <CRow class="g-2 align-items-end">
+                  <CCol :md="5">
+                    <CFormLabel>Item de Inventario</CFormLabel>
+                    <CFormSelect v-model="newInventoryItemId">
+                      <option value="">Seleccionar item...</option>
+                      <option v-for="item in availableInventoryItems" :key="item.id" :value="item.id">
+                        {{ item.name }} ({{ item.quantity }} {{ item.unit || 'und' }})
+                      </option>
+                    </CFormSelect>
+                  </CCol>
+                  <CCol :md="3">
+                    <CFormLabel>Cantidad</CFormLabel>
+                    <CFormInput type="number" v-model="newInventoryQty" placeholder="0" min="0.01" step="0.01" />
+                  </CCol>
+                  <CCol :md="2">
+                    <CFormLabel>Costo Unit.</CFormLabel>
+                    <CFormInput type="number" v-model="newInventoryUnitCost" placeholder="0" min="0" step="0.01" />
+                  </CCol>
+                  <CCol :md="2">
+                    <CButton color="success" size="sm" class="w-100" @click="addExpenseInventoryItem" :disabled="!newInventoryItemId || !newInventoryQty">
+                      <CIcon name="cil-plus" class="me-1" /> Agregar
+                    </CButton>
+                  </CCol>
+                </CRow>
+              </div>
+              <div v-if="expenseInventoryItems.length > 0" class="table-responsive mb-3">
+                <table class="table table-sm table-bordered align-middle">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Item</th>
+                      <th class="text-end">Cantidad</th>
+                      <th class="text-end">Costo Unit.</th>
+                      <th class="text-end">Subtotal</th>
+                      <th style="width: 50px;"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="ei in expenseInventoryItems" :key="ei.id">
+                      <td>
+                        {{ ei.inventory_item?.name || 'N/A' }}
+                        <span v-if="ei.inventory_item?.unit" class="text-muted small">({{ ei.inventory_item.unit }})</span>
+                      </td>
+                      <td class="text-end">{{ ei.quantity }}</td>
+                      <td class="text-end">{{ ei.unit_cost ? formatCurrency(ei.unit_cost) : '-' }}</td>
+                      <td class="text-end">{{ ei.unit_cost ? formatCurrency(ei.quantity * ei.unit_cost) : '-' }}</td>
+                      <td class="text-center">
+                        <CButton color="danger" size="sm" variant="ghost" @click="removeExpenseInventoryItem(ei.id)">
+                          <CIcon name="cil-trash" />
+                        </CButton>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-else class="text-muted small mb-3">
+                No hay items de inventario vinculados a este gasto.
+              </div>
+            </template>
+
             <CRow class="mb-3">
               <CCol :md="12">
                 <CFormLabel>Comprobante</CFormLabel>
@@ -445,6 +512,87 @@ const hideProviderSuggestions = () => {
   }, 200)
 }
 
+// --- Inventory Items linked to expense ---
+const expenseInventoryItems = ref([])
+const availableInventoryItems = ref([])
+const newInventoryItemId = ref('')
+const newInventoryQty = ref('')
+const newInventoryUnitCost = ref('')
+
+const formatCurrency = (value) => {
+  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(value)
+}
+
+const loadExpenseInventoryItems = async () => {
+  if (!isEditing.value) return
+  try {
+    const response = await fetch(`/api/expenses/${route.params.id}/inventory-items`, { credentials: 'include' })
+    if (response.ok) {
+      expenseInventoryItems.value = await response.json()
+    }
+  } catch (error) {
+    console.error('Error loading expense inventory items:', error)
+  }
+}
+
+const loadAvailableInventory = async () => {
+  try {
+    const params = new URLSearchParams({ type: 'supply' })
+    if (form.value.venue_id) params.append('venue_id', form.value.venue_id)
+    const response = await fetch(`/api/inventory?${params}`, { credentials: 'include' })
+    if (response.ok) {
+      availableInventoryItems.value = await response.json()
+    }
+  } catch (error) {
+    console.error('Error loading inventory items:', error)
+  }
+}
+
+const addExpenseInventoryItem = async () => {
+  if (!newInventoryItemId.value || !newInventoryQty.value) return
+  try {
+    const response = await fetch(`/api/expenses/${route.params.id}/inventory-items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        inventory_item_id: newInventoryItemId.value,
+        quantity: parseFloat(newInventoryQty.value),
+        unit_cost: newInventoryUnitCost.value ? parseFloat(newInventoryUnitCost.value) : null,
+      })
+    })
+    if (response.ok) {
+      newInventoryItemId.value = ''
+      newInventoryQty.value = ''
+      newInventoryUnitCost.value = ''
+      await Promise.all([loadExpenseInventoryItems(), loadAvailableInventory()])
+    } else {
+      const error = await response.json()
+      alert(error.error || 'Error al agregar item de inventario')
+    }
+  } catch (error) {
+    console.error('Error adding inventory item:', error)
+  }
+}
+
+const removeExpenseInventoryItem = async (id) => {
+  if (!confirm('¿Eliminar este item? Se revertirá el stock agregado.')) return
+  try {
+    const response = await fetch(`/api/expense-inventory-items/${id}`, {
+      method: 'DELETE',
+      credentials: 'include'
+    })
+    if (response.ok) {
+      await Promise.all([loadExpenseInventoryItems(), loadAvailableInventory()])
+    } else {
+      const error = await response.json()
+      alert(error.error || 'Error al eliminar item')
+    }
+  } catch (error) {
+    console.error('Error removing inventory item:', error)
+  }
+}
+
 const loadOrganizations = async () => {
   try {
     const response = await fetch('/api/organizations', { credentials: 'include' })
@@ -693,9 +841,13 @@ const saveExpense = async () => {
   }
 }
 
+watch(() => form.value.venue_id, () => {
+  if (isEditing.value) loadAvailableInventory()
+})
+
 onMounted(async () => {
   await Promise.all([loadOrganizations(), loadVenues(), loadCategories()])
-  
+
   if (route.query.venue_id && !isEditing.value) {
     form.value.venue_id = route.query.venue_id
     const venue = venues.value.find(v => String(v.id) === String(route.query.venue_id))
@@ -703,8 +855,12 @@ onMounted(async () => {
       form.value.organization_id = venue.organization
     }
   }
-  
-  loadExpense()
+
+  await loadExpense()
+
+  if (isEditing.value) {
+    await Promise.all([loadExpenseInventoryItems(), loadAvailableInventory()])
+  }
 })
 </script>
 
