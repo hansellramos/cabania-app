@@ -1,13 +1,29 @@
-const { discovery } = require('openid-client');
-const { Strategy } = require('openid-client/passport');
 const passport = require('passport');
 const session = require('express-session');
 const memoize = require('memoizee');
 const connectPg = require('connect-pg-simple');
 const { prisma } = require('../db');
 
+// openid-client v6 is ESM-only, so we use dynamic import() only when needed
+let _oidcModule = null;
+async function getOidcModule() {
+  if (!_oidcModule) {
+    _oidcModule = await import('openid-client');
+  }
+  return _oidcModule;
+}
+
+let _oidcPassportModule = null;
+async function getOidcPassportModule() {
+  if (!_oidcPassportModule) {
+    _oidcPassportModule = await import('openid-client/passport');
+  }
+  return _oidcPassportModule;
+}
+
 const getOidcConfig = memoize(
   async () => {
+    const { discovery } = await getOidcModule();
     const issuerUrl = new URL(process.env.ISSUER_URL || 'https://replit.com/oidc');
     return await discovery(issuerUrl, process.env.REPL_ID);
   },
@@ -181,6 +197,7 @@ async function setupAuth(app) {
   app.use(passport.session());
 
   const config = await getOidcConfig();
+  const { Strategy } = await getOidcPassportModule();
 
   const verify = async (tokens, verified) => {
     try {
@@ -385,7 +402,7 @@ const isAuthenticated = async (req, res, next) => {
   }
 
   try {
-    const { refreshTokenGrant } = require('openid-client');
+    const { refreshTokenGrant } = await getOidcModule();
     const config = await getOidcConfig();
     const tokenResponse = await refreshTokenGrant(config, refreshToken);
     updateUserSession(user, tokenResponse);
