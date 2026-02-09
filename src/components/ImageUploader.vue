@@ -56,9 +56,12 @@
       <div v-else class="text-center">
         <CIcon name="cil-cloud-upload" size="xl" class="mb-2 text-secondary" />
         <div class="mb-2">{{ placeholder }}</div>
-        <div class="d-flex justify-content-center gap-2">
+        <div class="d-flex justify-content-center gap-2 flex-wrap">
           <CButton color="primary" size="sm" @click.stop="triggerFileInput">
             <CIcon name="cil-folder-open" class="me-1" /> Seleccionar archivo
+          </CButton>
+          <CButton color="info" size="sm" @click.stop="triggerCamera">
+            <CIcon name="cil-camera" class="me-1" /> Tomar Foto
           </CButton>
           <CButton color="secondary" size="sm" @click.stop="pasteFromClipboard">
             <CIcon name="cil-clipboard" class="me-1" /> Pegar
@@ -71,6 +74,14 @@
         accept="image/*"
         class="d-none"
         :multiple="multiple"
+        @change="handleFileSelect"
+      />
+      <input
+        ref="cameraInput"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        class="d-none"
         @change="handleFileSelect"
       />
     </div>
@@ -139,6 +150,7 @@ const props = defineProps({
 const emit = defineEmits(['upload', 'delete', 'set-cover', 'preview', 'error'])
 
 const fileInput = ref(null)
+const cameraInput = ref(null)
 const isDragging = ref(false)
 const uploading = ref(false)
 const uploadError = ref('')
@@ -146,6 +158,10 @@ const previewImage = ref(null)
 
 const triggerFileInput = () => {
   fileInput.value?.click()
+}
+
+const triggerCamera = () => {
+  cameraInput.value?.click()
 }
 
 const handlePaste = (event) => {

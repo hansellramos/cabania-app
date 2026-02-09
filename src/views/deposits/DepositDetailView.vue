@@ -189,20 +189,31 @@
                 <div v-else class="text-center">
                   <CIcon :icon="cilCloudUpload" size="xl" class="mb-2 text-secondary" />
                   <div class="mb-2">Arrastrar imagen aquí o Ctrl+V para pegar</div>
-                  <div class="d-flex justify-content-center gap-2">
+                  <div class="d-flex justify-content-center gap-2 flex-wrap">
                     <CButton color="primary" size="sm" @click.stop="triggerFileInput">
                       <CIcon :icon="cilFolderOpen" class="me-1" /> Seleccionar archivo
+                    </CButton>
+                    <CButton color="info" size="sm" @click.stop="triggerCamera">
+                      <CIcon :icon="cilCamera" class="me-1" /> Tomar Foto
                     </CButton>
                     <CButton color="secondary" size="sm" @click.stop="pasteFromClipboard">
                       <CIcon :icon="cilClipboard" class="me-1" /> Pegar
                     </CButton>
                   </div>
                 </div>
-                <input 
-                  ref="fileInput" 
-                  type="file" 
-                  accept="image/*" 
-                  class="d-none" 
+                <input
+                  ref="fileInput"
+                  type="file"
+                  accept="image/*"
+                  class="d-none"
+                  @change="handleFileSelect"
+                />
+                <input
+                  ref="cameraInput"
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  class="d-none"
                   @change="handleFileSelect"
                 />
               </div>
@@ -335,7 +346,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
-import { cilTrash, cilCloudUpload, cilArrowCircleLeft, cilWarning, cilFolderOpen, cilClipboard } from '@coreui/icons'
+import { cilTrash, cilCloudUpload, cilArrowCircleLeft, cilWarning, cilFolderOpen, cilClipboard, cilCamera } from '@coreui/icons'
 
 const route = useRoute()
 const router = useRouter()
@@ -350,6 +361,7 @@ const selectedEvidence = ref(null)
 const processing = ref(false)
 
 const fileInput = ref(null)
+const cameraInput = ref(null)
 const isDragging = ref(false)
 const uploading = ref(false)
 const uploadError = ref('')
@@ -423,6 +435,10 @@ const openEvidenceModal = (item) => {
 
 const triggerFileInput = () => {
   fileInput.value?.click()
+}
+
+const triggerCamera = () => {
+  cameraInput.value?.click()
 }
 
 const handleFileSelect = (e) => {

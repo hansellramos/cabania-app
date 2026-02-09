@@ -194,13 +194,26 @@
       <CCard class="mb-4">
         <CCardHeader class="d-flex justify-content-between align-items-center">
           <strong>Imagenes</strong>
-          <CButton color="primary" size="sm" @click="triggerImageInput">
-            <CIcon name="cil-cloud-upload" class="me-1" /> Subir Imagen
-          </CButton>
+          <div class="d-flex gap-2">
+            <CButton color="primary" size="sm" @click="triggerImageInput">
+              <CIcon name="cil-cloud-upload" class="me-1" /> Subir Imagen
+            </CButton>
+            <CButton color="info" size="sm" @click="triggerCameraInput">
+              <CIcon name="cil-camera" class="me-1" /> Tomar Foto
+            </CButton>
+          </div>
           <input
             ref="imageInput"
             type="file"
             accept="image/*"
+            class="d-none"
+            @change="handleImageSelect"
+          />
+          <input
+            ref="cameraInput"
+            type="file"
+            accept="image/*"
+            capture="environment"
             class="d-none"
             @change="handleImageSelect"
           />
@@ -378,6 +391,7 @@ const saving = ref(false)
 const savingMovement = ref(false)
 const uploadingImage = ref(false)
 const imageInput = ref(null)
+const cameraInput = ref(null)
 
 const showUsageModal = ref(false)
 const showAdjustModal = ref(false)
@@ -569,6 +583,10 @@ const loadImages = async () => {
 
 const triggerImageInput = () => {
   imageInput.value?.click()
+}
+
+const triggerCameraInput = () => {
+  cameraInput.value?.click()
 }
 
 const handleImageSelect = async (e) => {

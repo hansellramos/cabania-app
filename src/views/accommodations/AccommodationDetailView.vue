@@ -360,8 +360,17 @@
       </div>
       <div class="mb-3">
         <label class="form-label">Comprobante de Devolución</label>
-        <CFormInput type="file" @change="handleRefundFile" accept="image/*" />
-        <div class="small text-muted mt-1">Adjunta el comprobante de la transferencia</div>
+        <div class="d-flex gap-2 mb-2">
+          <CButton color="primary" size="sm" @click="$refs.refundFileInput?.click()">
+            <CIcon name="cil-folder-open" class="me-1" /> Seleccionar archivo
+          </CButton>
+          <CButton color="info" size="sm" @click="$refs.refundCameraInput?.click()">
+            <CIcon name="cil-camera" class="me-1" /> Tomar Foto
+          </CButton>
+        </div>
+        <input ref="refundFileInput" type="file" accept="image/*" class="d-none" @change="handleRefundFile" />
+        <input ref="refundCameraInput" type="file" accept="image/*" capture="environment" class="d-none" @change="handleRefundFile" />
+        <div class="small text-muted">Adjunta el comprobante de la transferencia</div>
       </div>
     </CModalBody>
     <CModalFooter>
@@ -407,8 +416,17 @@
       </div>
       <div class="mb-3">
         <label class="form-label">Evidencia (fotos de daños)</label>
-        <CFormInput type="file" @change="handleClaimFile" accept="image/*" multiple />
-        <div class="small text-muted mt-1">Adjunta fotos de los daños como evidencia</div>
+        <div class="d-flex gap-2 mb-2">
+          <CButton color="primary" size="sm" @click="$refs.claimFileInput?.click()">
+            <CIcon name="cil-folder-open" class="me-1" /> Seleccionar archivos
+          </CButton>
+          <CButton color="info" size="sm" @click="$refs.claimCameraInput?.click()">
+            <CIcon name="cil-camera" class="me-1" /> Tomar Foto
+          </CButton>
+        </div>
+        <input ref="claimFileInput" type="file" accept="image/*" multiple class="d-none" @change="handleClaimFile" />
+        <input ref="claimCameraInput" type="file" accept="image/*" capture="environment" class="d-none" @change="handleClaimFile" />
+        <div class="small text-muted">Adjunta fotos de los daños como evidencia</div>
       </div>
     </CModalBody>
     <CModalFooter>
