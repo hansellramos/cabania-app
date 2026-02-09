@@ -584,7 +584,7 @@ const uploadImage = async (file) => {
   uploadingImage.value = true
   try {
     const formData = new FormData()
-    formData.append('image', file)
+    formData.append('file', file)
 
     const response = await fetch(`/api/inventory/${route.params.id}/images`, {
       method: 'POST',

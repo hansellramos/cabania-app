@@ -5637,16 +5637,18 @@ REGLAS:
 
   // --- Inventory Images ---
 
-  app.post('/api/inventory/:id/images', isAuthenticated, async (req, res) => {
+  app.post('/api/inventory/:id/images', isAuthenticated, upload.single('file'), async (req, res) => {
     try {
+      if (!req.file) return res.status(400).json({ error: 'No se proporcionó archivo o tipo no permitido' });
       const item = await prisma.inventory_items.findUnique({ where: { id: req.params.id } });
       if (!item) return res.status(404).json({ error: 'Item no encontrado' });
-      const { image_url, is_cover, description, sort_order } = req.body;
+      const result = await uploadImage(req.file.buffer, { type: 'inventory', mimetype: req.file.mimetype });
+      const is_cover = req.body.is_cover === 'true' || req.body.is_cover === true;
       if (is_cover) {
         await prisma.inventory_images.updateMany({ where: { inventory_item_id: req.params.id }, data: { is_cover: false } });
       }
       const image = await prisma.inventory_images.create({
-        data: { inventory_item_id: req.params.id, image_url, is_cover: is_cover || false, description: description || null, sort_order: sort_order || 0 }
+        data: { inventory_item_id: req.params.id, image_url: result.secure_url, is_cover: is_cover || false, description: req.body.description || null, sort_order: parseInt(req.body.sort_order) || 0 }
       });
       res.json(image);
     } catch (error) {
@@ -5658,6 +5660,10 @@ REGLAS:
     try {
       const existing = await prisma.inventory_images.findUnique({ where: { id: req.params.id } });
       if (!existing) return res.status(404).json({ error: 'Imagen no encontrada' });
+      if (existing.image_url) {
+        const publicId = extractPublicId(existing.image_url);
+        if (publicId) await deleteImage(publicId);
+      }
       await prisma.inventory_images.delete({ where: { id: req.params.id } });
       res.json({ success: true });
     } catch (error) {
@@ -6030,12 +6036,14 @@ REGLAS:
 
   // --- Maintenance Images ---
 
-  app.post('/api/maintenance-logs/:id/images', isAuthenticated, async (req, res) => {
+  app.post('/api/maintenance-logs/:id/images', isAuthenticated, upload.single('file'), async (req, res) => {
     try {
+      if (!req.file) return res.status(400).json({ error: 'No se proporcionó archivo o tipo no permitido' });
       const log = await prisma.maintenance_logs.findUnique({ where: { id: req.params.id } });
       if (!log) return res.status(404).json({ error: 'Registro no encontrado' });
+      const result = await uploadImage(req.file.buffer, { type: 'maintenance', mimetype: req.file.mimetype });
       const image = await prisma.maintenance_images.create({
-        data: { maintenance_log_id: req.params.id, image_url: req.body.image_url, type: req.body.type || null, description: req.body.description || null, sort_order: req.body.sort_order || 0 }
+        data: { maintenance_log_id: req.params.id, image_url: result.secure_url, type: req.body.type || null, description: req.body.description || null, sort_order: parseInt(req.body.sort_order) || 0 }
       });
       res.json(image);
     } catch (error) {
@@ -6047,6 +6055,10 @@ REGLAS:
     try {
       const existing = await prisma.maintenance_images.findUnique({ where: { id: req.params.id } });
       if (!existing) return res.status(404).json({ error: 'Imagen no encontrada' });
+      if (existing.image_url) {
+        const publicId = extractPublicId(existing.image_url);
+        if (publicId) await deleteImage(publicId);
+      }
       await prisma.maintenance_images.delete({ where: { id: req.params.id } });
       res.json({ success: true });
     } catch (error) {
