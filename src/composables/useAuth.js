@@ -1,4 +1,5 @@
 import { ref, computed, onMounted } from 'vue';
+import { resetAuthState } from '@/router';
 
 const user = ref(null);
 const isLoading = ref(true);
@@ -8,7 +9,7 @@ async function fetchUser() {
   try {
     isLoading.value = true;
     error.value = null;
-    
+
     const response = await fetch('/api/auth/user', {
       credentials: 'include',
     });
@@ -34,12 +35,44 @@ async function fetchUser() {
   }
 }
 
-function login() {
-  window.location.href = '/api/login';
+async function login(email, password) {
+  try {
+    error.value = null;
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.message || 'Error al iniciar sesión');
+    }
+
+    // Reset router auth cache so navigation guard re-checks
+    resetAuthState();
+    // Fetch user data after successful login
+    await fetchUser();
+    return true;
+  } catch (err) {
+    error.value = err.message;
+    return false;
+  }
 }
 
-function logout() {
-  window.location.href = '/api/logout';
+async function logout() {
+  try {
+    await fetch('/api/auth/logout', {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch (_) {
+    // ignore
+  }
+  user.value = null;
+  resetAuthState();
+  window.location.href = '/#/pages/login';
 }
 
 export function useAuth() {
@@ -68,6 +101,6 @@ export function isUnauthorizedError(error) {
 
 export function redirectToLogin(delay = 500) {
   setTimeout(() => {
-    window.location.href = '/api/login';
+    window.location.href = '/#/pages/login';
   }, delay);
 }

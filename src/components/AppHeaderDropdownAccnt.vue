@@ -48,7 +48,7 @@ const userInitials = computed(() => {
       </template>
       
       <template v-else>
-        <CDropdownItem @click="login">
+        <CDropdownItem :href="'#/pages/login'">
           <CIcon icon="cil-account-logout" /> Iniciar sesión
         </CDropdownItem>
       </template>

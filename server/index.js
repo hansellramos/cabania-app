@@ -1,8 +1,10 @@
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const { Storage } = require('@google-cloud/storage');
-const { randomUUID } = require('crypto');
+const multer = require('multer');
+const { uploadImage, deleteImage, extractPublicId } = require('./upload-service');
 const { prisma } = require('./db');
 const { setupAuth, isAuthenticated } = require('./auth/replitAuth');
 const { loadUserPermissions, hasPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
@@ -11,57 +13,14 @@ const llmService = require('./llm-service');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const REPLIT_SIDECAR_ENDPOINT = 'http://127.0.0.1:1106';
-
-const objectStorageClient = new Storage({
-  credentials: {
-    audience: 'replit',
-    subject_token_type: 'access_token',
-    token_url: `${REPLIT_SIDECAR_ENDPOINT}/token`,
-    type: 'external_account',
-    credential_source: {
-      url: `${REPLIT_SIDECAR_ENDPOINT}/credential`,
-      format: {
-        type: 'json',
-        subject_token_field_name: 'access_token',
-      },
-    },
-    universe_domain: 'googleapis.com',
-  },
-  projectId: '',
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    cb(null, allowed.includes(file.mimetype));
+  }
 });
-
-async function getUploadURL() {
-  const privateObjectDir = process.env.PRIVATE_OBJECT_DIR || '';
-  if (!privateObjectDir) {
-    throw new Error('PRIVATE_OBJECT_DIR not set');
-  }
-  
-  const objectId = randomUUID();
-  const fullPath = `${privateObjectDir}/receipts/${objectId}`;
-  
-  const pathParts = fullPath.startsWith('/') ? fullPath.slice(1).split('/') : fullPath.split('/');
-  const bucketName = pathParts[0];
-  const objectName = pathParts.slice(1).join('/');
-  
-  const response = await fetch(`${REPLIT_SIDECAR_ENDPOINT}/object-storage/signed-object-url`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      bucket_name: bucketName,
-      object_name: objectName,
-      method: 'PUT',
-      expires_at: new Date(Date.now() + 900 * 1000).toISOString(),
-    }),
-  });
-  
-  if (!response.ok) {
-    throw new Error(`Failed to sign object URL: ${response.status}`);
-  }
-  
-  const { signed_url } = await response.json();
-  return { uploadURL: signed_url, objectPath: `/objects/receipts/${objectId}` };
-}
 
 app.use(cors({
   origin: true,
@@ -196,68 +155,17 @@ async function startServer() {
   
   app.use(loadUserPermissions);
 
-  // Upload endpoints for receipts
-  const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-  const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-  
-  app.post('/api/uploads/request-url', isAuthenticated, async (req, res) => {
+  // Upload endpoints - Cloudinary
+  app.post('/api/uploads/receipt', isAuthenticated, upload.single('file'), async (req, res) => {
     try {
-      const { contentType, size } = req.body;
-      
-      if (!contentType || !ALLOWED_IMAGE_TYPES.includes(contentType)) {
-        return res.status(400).json({ error: 'Solo se permiten imágenes (JPEG, PNG, GIF, WebP)' });
+      if (!req.file) {
+        return res.status(400).json({ error: 'No se proporcionó archivo o tipo no permitido' });
       }
-      
-      if (size && size > MAX_FILE_SIZE) {
-        return res.status(400).json({ error: 'El archivo no puede superar 10MB' });
-      }
-      
-      const result = await getUploadURL();
-      res.json(result);
+      const result = await uploadImage(req.file.buffer, { type: 'receipt', mimetype: req.file.mimetype });
+      res.json({ imageUrl: result.secure_url });
     } catch (error) {
-      console.error('Error generating upload URL:', error);
-      res.status(500).json({ error: 'Failed to generate upload URL' });
-    }
-  });
-
-  // Serve objects - public for venues/plans, authenticated for receipts
-  app.get('/objects/:type/:id', async (req, res, next) => {
-    const { type } = req.params;
-    // Allow public access for venue and plan images
-    if (type === 'venues' || type === 'plans') {
-      return next();
-    }
-    // Require authentication for receipts and other types
-    return isAuthenticated(req, res, next);
-  }, async (req, res) => {
-    try {
-      const objectPath = `${req.params.type}/${req.params.id}`;
-      const privateObjectDir = process.env.PRIVATE_OBJECT_DIR || '';
-      const fullPath = `${privateObjectDir}/${objectPath}`;
-      
-      const pathParts = fullPath.startsWith('/') ? fullPath.slice(1).split('/') : fullPath.split('/');
-      const bucketName = pathParts[0];
-      const objectName = pathParts.slice(1).join('/');
-      
-      const bucket = objectStorageClient.bucket(bucketName);
-      const file = bucket.file(objectName);
-      
-      const [exists] = await file.exists();
-      if (!exists) {
-        return res.status(404).json({ error: 'Object not found' });
-      }
-      
-      const [metadata] = await file.getMetadata();
-      const isPublicType = ['venues', 'plans'].includes(req.params.type);
-      res.set({
-        'Content-Type': metadata.contentType || 'application/octet-stream',
-        'Cache-Control': isPublicType ? 'public, max-age=31536000' : 'private, max-age=3600',
-      });
-      
-      file.createReadStream().pipe(res);
-    } catch (error) {
-      console.error('Error serving object:', error);
-      res.status(500).json({ error: 'Failed to serve object' });
+      console.error('Error uploading receipt:', error);
+      res.status(500).json({ error: 'Error al subir la imagen' });
     }
   });
 
@@ -2477,6 +2385,11 @@ async function startServer() {
 
   app.delete('/api/plan-images/:id', isAuthenticated, async (req, res) => {
     try {
+      const image = await prisma.plan_images.findUnique({ where: { id: req.params.id } });
+      if (image?.image_url) {
+        const publicId = extractPublicId(image.image_url);
+        if (publicId) await deleteImage(publicId);
+      }
       await prisma.plan_images.delete({ where: { id: req.params.id } });
       res.json({ success: true });
     } catch (error) {
@@ -2551,6 +2464,11 @@ async function startServer() {
 
   app.delete('/api/venue-images/:id', isAuthenticated, async (req, res) => {
     try {
+      const image = await prisma.venue_images.findUnique({ where: { id: req.params.id } });
+      if (image?.image_url) {
+        const publicId = extractPublicId(image.image_url);
+        if (publicId) await deleteImage(publicId);
+      }
       await prisma.venue_images.delete({ where: { id: req.params.id } });
       res.json({ success: true });
     } catch (error) {
@@ -2559,51 +2477,17 @@ async function startServer() {
   });
 
   // Generic upload URL for plans/venues images
-  app.post('/api/uploads/image-url', isAuthenticated, async (req, res) => {
+  app.post('/api/uploads/image', isAuthenticated, upload.single('file'), async (req, res) => {
     try {
-      const { contentType, size, type } = req.body; // type: 'plan' or 'venue'
-      
-      if (!contentType || !ALLOWED_IMAGE_TYPES.includes(contentType)) {
-        return res.status(400).json({ error: 'Solo se permiten imágenes (JPEG, PNG, GIF, WebP)' });
+      if (!req.file) {
+        return res.status(400).json({ error: 'No se proporcionó archivo o tipo no permitido' });
       }
-      
-      if (size && size > MAX_FILE_SIZE) {
-        return res.status(400).json({ error: 'El archivo no puede superar 10MB' });
-      }
-      
-      const privateObjectDir = process.env.PRIVATE_OBJECT_DIR || '';
-      if (!privateObjectDir) {
-        throw new Error('PRIVATE_OBJECT_DIR not set');
-      }
-      
-      const objectId = randomUUID();
-      const folder = type === 'venue' ? 'venues' : 'plans';
-      const fullPath = `${privateObjectDir}/${folder}/${objectId}`;
-      
-      const pathParts = fullPath.startsWith('/') ? fullPath.slice(1).split('/') : fullPath.split('/');
-      const bucketName = pathParts[0];
-      const objectName = pathParts.slice(1).join('/');
-      
-      const response = await fetch(`${REPLIT_SIDECAR_ENDPOINT}/object-storage/signed-object-url`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bucket_name: bucketName,
-          object_name: objectName,
-          method: 'PUT',
-          expires_at: new Date(Date.now() + 900 * 1000).toISOString(),
-        }),
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to sign object URL: ${response.status}`);
-      }
-      
-      const { signed_url } = await response.json();
-      res.json({ uploadURL: signed_url, objectPath: `/objects/${folder}/${objectId}` });
+      const type = req.body.type || 'venue';
+      const result = await uploadImage(req.file.buffer, { type, mimetype: req.file.mimetype });
+      res.json({ imageUrl: result.secure_url });
     } catch (error) {
-      console.error('Error generating upload URL:', error);
-      res.status(500).json({ error: 'Failed to generate upload URL' });
+      console.error('Error uploading image:', error);
+      res.status(500).json({ error: 'Error al subir la imagen' });
     }
   });
 
@@ -3695,7 +3579,16 @@ async function startServer() {
           return res.status(403).json({ error: 'No tiene acceso a este depósito' });
         }
       }
-      
+
+      // Delete evidence images from Cloudinary before deleting the deposit
+      const evidence = await prisma.deposit_evidence.findMany({ where: { deposit_id: req.params.id } });
+      for (const ev of evidence) {
+        const publicId = extractPublicId(ev.image_url);
+        if (publicId) {
+          await deleteImage(publicId).catch(err => console.error('Error deleting image from Cloudinary:', err));
+        }
+      }
+
       await prisma.deposits.delete({
         where: { id: req.params.id }
       });
@@ -4340,56 +4233,17 @@ async function startServer() {
         return res.status(500).json({ error: `API key no configurada (${modelConfig.env_key})` });
       }
       
-      // Fetch the image from object storage
+      // Fetch the image (Cloudinary URLs are public, fetch directly)
       const imageFetchStartTime = Date.now();
       let imageBuffer;
       let contentType = 'image/jpeg';
-      
-      if (imageUrl.startsWith('/objects/')) {
-        // Internal object storage path - fetch from sidecar
-        const objectPath = imageUrl.replace('/objects/', '');
-        const pathParts = objectPath.split('/');
-        const objectType = pathParts[0];
-        const objectId = pathParts[1];
-        
-        const privateObjectDir = process.env.PRIVATE_OBJECT_DIR || '';
-        const fullPath = `${privateObjectDir}/${objectType}/${objectId}`;
-        const pathSegments = fullPath.startsWith('/') ? fullPath.slice(1).split('/') : fullPath.split('/');
-        const bucketName = pathSegments[0];
-        const objectName = pathSegments.slice(1).join('/');
-        
-        const signedUrlResponse = await fetch(`${REPLIT_SIDECAR_ENDPOINT}/object-storage/signed-object-url`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            bucket_name: bucketName,
-            object_name: objectName,
-            method: 'GET',
-            expires_at: new Date(Date.now() + 300 * 1000).toISOString(),
-          }),
-        });
-        
-        if (!signedUrlResponse.ok) {
-          throw new Error('No se pudo obtener la imagen del almacenamiento');
-        }
-        
-        const { signed_url } = await signedUrlResponse.json();
-        const imageResponse = await fetch(signed_url);
-        if (!imageResponse.ok) {
-          throw new Error('No se pudo descargar la imagen');
-        }
-        
-        imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-        contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
-      } else {
-        // External URL
-        const imageResponse = await fetch(imageUrl);
-        if (!imageResponse.ok) {
-          throw new Error('No se pudo descargar la imagen');
-        }
-        imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-        contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
+
+      const imageResponse = await fetch(imageUrl);
+      if (!imageResponse.ok) {
+        throw new Error('No se pudo descargar la imagen');
       }
+      imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+      contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
       timings.imageFetch = Date.now() - imageFetchStartTime;
       console.log(`[extract-receipt] Image fetch: ${timings.imageFetch}ms, size: ${imageBuffer.length} bytes`);
       
@@ -6278,4 +6132,11 @@ REGLAS:
   });
 }
 
-startServer().catch(console.error);
+// When running standalone (node index.js), start the server
+if (!process.env.VERCEL) {
+  startServer().catch(console.error);
+}
+
+// For Vercel serverless: export a ready promise and the app
+const readyPromise = process.env.VERCEL ? startServer() : Promise.resolve();
+module.exports = { app, readyPromise };

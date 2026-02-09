@@ -391,35 +391,22 @@ const uploadFile = async (file) => {
   uploadError.value = ''
   
   try {
-    const urlResponse = await fetch('/api/uploads/request-url', {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const response = await fetch('/api/uploads/receipt', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({
-        name: file.name,
-        size: file.size,
-        contentType: file.type
-      })
+      body: formData
     })
-    
-    if (!urlResponse.ok) {
-      const err = await urlResponse.json()
-      throw new Error(err.error || 'Error al obtener URL de subida')
+
+    if (!response.ok) {
+      const err = await response.json()
+      throw new Error(err.error || 'Error al subir imagen')
     }
-    
-    const { uploadURL, objectPath } = await urlResponse.json()
-    
-    const uploadResponse = await fetch(uploadURL, {
-      method: 'PUT',
-      body: file,
-      headers: { 'Content-Type': file.type }
-    })
-    
-    if (!uploadResponse.ok) {
-      throw new Error('Error al subir archivo')
-    }
-    
-    form.value.receipt_url = objectPath
+
+    const { imageUrl } = await response.json()
+    form.value.receipt_url = imageUrl
     imageLoadError.value = false
   } catch (error) {
     console.error('Upload error:', error)

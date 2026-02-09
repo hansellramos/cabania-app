@@ -2,34 +2,71 @@
   <div class="wrapper min-vh-100 d-flex flex-row align-items-center">
     <CContainer>
       <CRow class="justify-content-center">
-        <CCol :md="6">
+        <CCol :md="5">
           <CCard class="p-4">
-            <CCardBody class="text-center">
-              <h1>Bienvenido</h1>
-              <p class="text-body-secondary mb-4">
-                Inicia sesión con tu cuenta de Replit para acceder al panel de administración.
+            <CCardBody>
+              <h1 class="text-center mb-1">Cabanero</h1>
+              <p class="text-body-secondary text-center mb-4">
+                Inicia sesión para acceder al panel
               </p>
-              <div v-if="isLoading" class="mb-4">
+
+              <div v-if="isLoading" class="text-center mb-4">
                 <CSpinner color="primary" />
                 <p class="mt-2">Verificando sesión...</p>
               </div>
-              <div v-else-if="isAuthenticated">
+
+              <div v-else-if="isAuthenticated" class="text-center">
                 <p class="text-success mb-3">
-                  ¡Bienvenido, {{ user?.display_name || user?.email }}!
+                  Bienvenido, {{ user?.display_name || user?.email }}
                 </p>
                 <CButton color="primary" size="lg" @click="goToDashboard">
                   Ir al Dashboard
                 </CButton>
               </div>
-              <div v-else>
-                <CButton color="primary" size="lg" @click="login" class="mb-3">
-                  <CIcon icon="cil-user" class="me-2" />
-                  Iniciar sesión con Replit
+
+              <form v-else @submit.prevent="handleLogin">
+                <CAlert v-if="error" color="danger" dismissible @close="error = null">
+                  {{ error }}
+                </CAlert>
+
+                <CInputGroup class="mb-3">
+                  <CInputGroupText>
+                    <CIcon icon="cil-envelope-closed" />
+                  </CInputGroupText>
+                  <CFormInput
+                    v-model="email"
+                    type="email"
+                    placeholder="Correo electrónico"
+                    autocomplete="email"
+                    required
+                    :disabled="submitting"
+                  />
+                </CInputGroup>
+
+                <CInputGroup class="mb-4">
+                  <CInputGroupText>
+                    <CIcon icon="cil-lock-locked" />
+                  </CInputGroupText>
+                  <CFormInput
+                    v-model="password"
+                    type="password"
+                    placeholder="Contraseña"
+                    autocomplete="current-password"
+                    required
+                    :disabled="submitting"
+                  />
+                </CInputGroup>
+
+                <CButton
+                  type="submit"
+                  color="primary"
+                  class="w-100"
+                  :disabled="submitting"
+                >
+                  <CSpinner v-if="submitting" size="sm" class="me-2" />
+                  Iniciar sesión
                 </CButton>
-                <p class="text-body-secondary small mt-3">
-                  Puedes usar tu cuenta de Google, GitHub, Apple o email.
-                </p>
-              </div>
+              </form>
             </CCardBody>
           </CCard>
         </CCol>
@@ -39,13 +76,27 @@
 </template>
 
 <script setup>
-import { useRouter } from "vue-router";
-import { useAuth } from "@/composables/useAuth";
+import { ref } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAuth } from '@/composables/useAuth';
 
 const router = useRouter();
-const { user, isAuthenticated, isLoading, login } = useAuth();
+const { user, isAuthenticated, isLoading, login, error } = useAuth();
+
+const email = ref('');
+const password = ref('');
+const submitting = ref(false);
 
 const goToDashboard = () => {
-  router.push("/");
+  router.push('/');
+};
+
+const handleLogin = async () => {
+  submitting.value = true;
+  const success = await login(email.value, password.value);
+  submitting.value = false;
+  if (success) {
+    router.push('/');
+  }
 };
 </script>

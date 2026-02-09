@@ -679,9 +679,7 @@ router.beforeEach(async (to, from) => {
   const authStatus = await checkAuth()
   
   if (!authStatus.authenticated) {
-    // Redirect to login
-    window.location.href = '/api/login'
-    return false
+    return { path: '/pages/login' }
   }
   
   // Super admins bypass subscription check

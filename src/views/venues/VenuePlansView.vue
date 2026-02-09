@@ -574,16 +574,16 @@ const toggleAmenity = (id) => {
   }
 }
 
-const handleImageUpload = async (objectPath) => {
+const handleImageUpload = async (imageUrl) => {
   if (!editingPlan.value) {
-    planImages.value.push({ image_url: objectPath, is_cover: planImages.value.length === 0 })
+    planImages.value.push({ image_url: imageUrl, is_cover: planImages.value.length === 0 })
   } else {
     try {
       const response = await fetch(`/api/venue-plans/${editingPlan.value.id}/images`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ image_url: objectPath, is_cover: planImages.value.length === 0 })
+        body: JSON.stringify({ image_url: imageUrl, is_cover: planImages.value.length === 0 })
       })
       if (response.ok) {
         const newImage = await response.json()

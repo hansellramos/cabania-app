@@ -241,13 +241,13 @@ const loadVenueImages = async () => {
   }
 }
 
-const handleImageUpload = async (objectPath) => {
+const handleImageUpload = async (imageUrl) => {
   try {
     const response = await fetch(`/api/venues/${route.params.id}/images`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ image_url: objectPath })
+      body: JSON.stringify({ image_url: imageUrl })
     })
     if (response.ok) {
       await loadVenueImages()

@@ -1,0 +1,7 @@
+/* CoreUI sidebar layout fix */
+.wrapper {
+  width: 100%;
+  transition: margin-inline-start 0.15s;
+  will-change: margin-inline-start;
+  padding-inline-start: var(--cui-sidebar-occupy-start, 0);
+}

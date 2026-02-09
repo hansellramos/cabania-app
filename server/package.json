@@ -1,0 +1,27 @@
+{
+  "name": "cabanero-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^6.0.0",
+    "@prisma/client": "^6.0.0",
+    "cloudinary": "^2.9.0",
+    "connect-pg-simple": "^10.0.0",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.4",
+    "express": "^4.21.0",
+    "express-session": "^1.18.0",
+    "memoizee": "^0.4.17",
+    "multer": "^2.0.0",
+    "openid-client": "^6.0.0",
+    "passport": "^0.7.0",
+    "passport-local": "^1.0.0",
+    "prisma": "^6.0.0",
+    "uuid": "^11.0.0"
+  }
+}

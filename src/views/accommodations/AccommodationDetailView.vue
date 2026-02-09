@@ -287,6 +287,14 @@
                   <CButton color="danger" size="sm" variant="outline" @click="openClaimModal">
                     Retener Depósito
                   </CButton>
+                  <CButton
+                    v-if="!deposit.verified"
+                    color="danger"
+                    size="sm"
+                    @click="confirmDeleteDeposit"
+                  >
+                    Eliminar Depósito
+                  </CButton>
                 </div>
                 
                 <div class="mt-3" v-if="deposit.evidence && deposit.evidence.length > 0">
@@ -809,6 +817,23 @@ function depositStatusLabel(status) {
   return labels[status] || status
 }
 
+async function confirmDeleteDeposit() {
+  if (!confirm('¿Estás seguro de eliminar este depósito? Esta acción no se puede deshacer.')) return
+  try {
+    const res = await fetch(`/api/deposits/${deposit.value.id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+    if (!res.ok) {
+      const data = await res.json()
+      throw new Error(data.error || 'Error al eliminar depósito')
+    }
+    deposit.value = null
+  } catch (err) {
+    alert(err.message)
+  }
+}
+
 function openRefundModal() {
   refundForm.value = {
     refund_amount: deposit.value?.amount || '',
@@ -837,33 +862,22 @@ function handleClaimFile(event) {
 }
 
 async function uploadEvidence(file, type) {
-  const urlResponse = await fetch('/api/uploads/request-url', {
+  const formData = new FormData()
+  formData.append('file', file)
+
+  const response = await fetch('/api/uploads/receipt', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     credentials: 'include',
-    body: JSON.stringify({
-      name: file.name,
-      size: file.size,
-      contentType: file.type
-    })
+    body: formData
   })
-  
-  if (!urlResponse.ok) {
-    const err = await urlResponse.json()
-    throw new Error(err.error || 'Error al obtener URL de subida')
+
+  if (!response.ok) {
+    const err = await response.json()
+    throw new Error(err.error || 'Error al subir imagen')
   }
-  
-  const { uploadURL, objectPath } = await urlResponse.json()
-  
-  const uploadResponse = await fetch(uploadURL, {
-    method: 'PUT',
-    body: file,
-    headers: { 'Content-Type': file.type }
-  })
-  
-  if (!uploadResponse.ok) throw new Error('Error al subir archivo')
-  
-  return { image_url: objectPath, type }
+
+  const { imageUrl } = await response.json()
+  return { image_url: imageUrl, type }
 }
 
 async function processRefund() {
