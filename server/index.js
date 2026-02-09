@@ -5506,4 +5506,11 @@ REGLAS:
   });
 }
 
-startServer().catch(console.error);
+// When running standalone (node index.js), start the server
+if (!process.env.VERCEL) {
+  startServer().catch(console.error);
+}
+
+// For Vercel serverless: export a ready promise and the app
+const readyPromise = process.env.VERCEL ? startServer() : Promise.resolve();
+module.exports = { app, readyPromise };
