@@ -5600,8 +5600,20 @@ REGLAS:
     try {
       const userId = String(req.user.claims?.sub);
       const data = { ...req.body, created_by: userId };
-      if (data.purchase_date) data.purchase_date = new Date(data.purchase_date);
-      if (data.warranty_expiry) data.warranty_expiry = new Date(data.warranty_expiry);
+      // Sanitize empty strings to null for optional fields
+      const optionalDecimalFields = ['quantity', 'minimum_stock', 'unit_cost'];
+      const optionalStringFields = ['description', 'notes', 'condition', 'brand', 'model_name', 'serial_number', 'location_notes', 'unit'];
+      for (const f of optionalDecimalFields) {
+        if (data[f] === '' || data[f] === undefined) data[f] = null;
+        else if (data[f] !== null) data[f] = parseFloat(data[f]);
+      }
+      for (const f of optionalStringFields) {
+        if (data[f] === '') data[f] = null;
+      }
+      if (data.purchase_date && data.purchase_date !== '') data.purchase_date = new Date(data.purchase_date);
+      else data.purchase_date = null;
+      if (data.warranty_expiry && data.warranty_expiry !== '') data.warranty_expiry = new Date(data.warranty_expiry);
+      else data.warranty_expiry = null;
       const item = await prisma.inventory_items.create({ data });
       res.json(item);
     } catch (error) {
@@ -5615,8 +5627,19 @@ REGLAS:
       const existing = await prisma.inventory_items.findUnique({ where: { id: req.params.id } });
       if (!existing) return res.status(404).json({ error: 'Item no encontrado' });
       const updateData = { ...req.body, updated_at: new Date(), updated_by: userId };
-      if (updateData.purchase_date) updateData.purchase_date = new Date(updateData.purchase_date);
-      if (updateData.warranty_expiry) updateData.warranty_expiry = new Date(updateData.warranty_expiry);
+      const optionalDecimalFields = ['quantity', 'minimum_stock', 'unit_cost'];
+      const optionalStringFields = ['description', 'notes', 'condition', 'brand', 'model_name', 'serial_number', 'location_notes', 'unit'];
+      for (const f of optionalDecimalFields) {
+        if (updateData[f] === '' || updateData[f] === undefined) updateData[f] = null;
+        else if (updateData[f] !== null) updateData[f] = parseFloat(updateData[f]);
+      }
+      for (const f of optionalStringFields) {
+        if (updateData[f] === '') updateData[f] = null;
+      }
+      if (updateData.purchase_date && updateData.purchase_date !== '') updateData.purchase_date = new Date(updateData.purchase_date);
+      else updateData.purchase_date = null;
+      if (updateData.warranty_expiry && updateData.warranty_expiry !== '') updateData.warranty_expiry = new Date(updateData.warranty_expiry);
+      else updateData.warranty_expiry = null;
       const item = await prisma.inventory_items.update({ where: { id: req.params.id }, data: updateData });
       res.json(item);
     } catch (error) {
@@ -5908,7 +5931,12 @@ REGLAS:
     try {
       const userId = String(req.user.claims?.sub);
       const data = { ...req.body, created_by: userId };
-      if (data.maintenance_date) data.maintenance_date = new Date(data.maintenance_date);
+      if (data.maintenance_date && data.maintenance_date !== '') data.maintenance_date = new Date(data.maintenance_date);
+      else data.maintenance_date = null;
+      const mlOptDecimal = ['cost'];
+      const mlOptString = ['work_performed', 'pending_items', 'notes', 'entry_time', 'exit_time', 'priority', 'provider_id', 'zone_id'];
+      for (const f of mlOptDecimal) { if (data[f] === '' || data[f] === undefined) data[f] = null; else if (data[f] !== null) data[f] = parseFloat(data[f]); }
+      for (const f of mlOptString) { if (data[f] === '') data[f] = null; }
       const log = await prisma.maintenance_logs.create({ data });
       res.json(log);
     } catch (error) {
@@ -5922,7 +5950,12 @@ REGLAS:
       const existing = await prisma.maintenance_logs.findUnique({ where: { id: req.params.id } });
       if (!existing) return res.status(404).json({ error: 'Registro no encontrado' });
       const updateData = { ...req.body, updated_at: new Date(), updated_by: userId };
-      if (updateData.maintenance_date) updateData.maintenance_date = new Date(updateData.maintenance_date);
+      if (updateData.maintenance_date && updateData.maintenance_date !== '') updateData.maintenance_date = new Date(updateData.maintenance_date);
+      else updateData.maintenance_date = null;
+      const mlOptDecimal2 = ['cost'];
+      const mlOptString2 = ['work_performed', 'pending_items', 'notes', 'entry_time', 'exit_time', 'priority', 'provider_id', 'zone_id'];
+      for (const f of mlOptDecimal2) { if (updateData[f] === '' || updateData[f] === undefined) updateData[f] = null; else if (updateData[f] !== null) updateData[f] = parseFloat(updateData[f]); }
+      for (const f of mlOptString2) { if (updateData[f] === '') updateData[f] = null; }
       const log = await prisma.maintenance_logs.update({ where: { id: req.params.id }, data: updateData });
       res.json(log);
     } catch (error) {
