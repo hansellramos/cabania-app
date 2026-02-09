@@ -22,6 +22,7 @@
     "@mapbox/mapbox-gl-geocoder": "^5.1.2",
     "@prisma/adapter-pg": "^6.19.2",
     "@prisma/client": "^6.19.2",
+    "bcryptjs": "^3.0.3",
     "chart.js": "^4.5.1",
     "cloudinary": "^2.9.0",
     "connect-pg-simple": "^10.0.0",
