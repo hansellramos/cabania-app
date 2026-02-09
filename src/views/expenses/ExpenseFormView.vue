@@ -746,13 +746,13 @@ const extractReceiptData = async () => {
     if (result.success && result.data) {
       const { amount, reference, payment_date } = result.data
       
-      if (amount !== null) {
+      if (amount !== null && (!form.value.amount || Number(form.value.amount) === 0)) {
         form.value.amount = amount
       }
-      if (reference) {
+      if (reference && !form.value.reference) {
         form.value.reference = reference
       }
-      if (payment_date) {
+      if (payment_date && !form.value.expense_date) {
         form.value.expense_date = payment_date
       }
       
