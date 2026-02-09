@@ -1,4 +1,4 @@
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const cloudinary = require('./cloudinary');
 
 const FOLDER_PREFIX = process.env.CLOUDINARY_FOLDER_PREFIX || 'cabanero-dev';
@@ -10,7 +10,7 @@ async function uploadImage(fileBuffer, { type, mimetype }) {
     throw new Error(`Tipo de upload no válido: ${type}. Permitidos: ${ALLOWED_TYPES.join(', ')}`);
   }
 
-  const id = uuidv4();
+  const id = crypto.randomUUID();
   const folder = `${FOLDER_PREFIX}/${type}s`;
   const publicId = `${folder}/${id}`;
 
