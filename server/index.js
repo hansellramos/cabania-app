@@ -1,3 +1,5 @@
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
+
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
@@ -3577,7 +3579,16 @@ async function startServer() {
           return res.status(403).json({ error: 'No tiene acceso a este depósito' });
         }
       }
-      
+
+      // Delete evidence images from Cloudinary before deleting the deposit
+      const evidence = await prisma.deposit_evidence.findMany({ where: { deposit_id: req.params.id } });
+      for (const ev of evidence) {
+        const publicId = extractPublicId(ev.image_url);
+        if (publicId) {
+          await deleteImage(publicId).catch(err => console.error('Error deleting image from Cloudinary:', err));
+        }
+      }
+
       await prisma.deposits.delete({
         where: { id: req.params.id }
       });

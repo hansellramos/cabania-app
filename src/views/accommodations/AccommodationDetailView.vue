@@ -287,6 +287,14 @@
                   <CButton color="danger" size="sm" variant="outline" @click="openClaimModal">
                     Retener Depósito
                   </CButton>
+                  <CButton
+                    v-if="!deposit.verified"
+                    color="danger"
+                    size="sm"
+                    @click="confirmDeleteDeposit"
+                  >
+                    Eliminar Depósito
+                  </CButton>
                 </div>
                 
                 <div class="mt-3" v-if="deposit.evidence && deposit.evidence.length > 0">
@@ -807,6 +815,23 @@ function depositStatusLabel(status) {
     claimed: 'Retenido'
   }
   return labels[status] || status
+}
+
+async function confirmDeleteDeposit() {
+  if (!confirm('¿Estás seguro de eliminar este depósito? Esta acción no se puede deshacer.')) return
+  try {
+    const res = await fetch(`/api/deposits/${deposit.value.id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+    if (!res.ok) {
+      const data = await res.json()
+      throw new Error(data.error || 'Error al eliminar depósito')
+    }
+    deposit.value = null
+  } catch (err) {
+    alert(err.message)
+  }
 }
 
 function openRefundModal() {

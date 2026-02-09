@@ -8,6 +8,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.39",
+    "@ai-sdk/openai": "^3.0.26",
     "@coreui/coreui": "^5.5.0",
     "@coreui/icons": "^3.0.1",
     "@coreui/icons-vue": "^2.2.0",
@@ -22,6 +24,7 @@
     "@mapbox/mapbox-gl-geocoder": "^5.1.2",
     "@prisma/adapter-pg": "^6.19.2",
     "@prisma/client": "^6.19.2",
+    "ai": "^6.0.77",
     "bcryptjs": "^3.0.3",
     "chart.js": "^4.5.1",
     "cloudinary": "^2.9.0",

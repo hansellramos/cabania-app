@@ -4,18 +4,18 @@
       <CFormLabel for="venue">Cabaña</CFormLabel>
       <VenueAutocomplete v-model="form.venue" @venue-selected="onVenueSelected" />
     </div>
-    
+
     <template v-if="form.venue">
       <div class="mb-3">
         <CFormLabel for="plan">Plan</CFormLabel>
-        <CFormSelect id="plan" v-model="form.plan_id" @change="onPlanChange">
+        <CFormSelect id="plan" v-model="form.plan_id">
           <option value="">-- Seleccionar plan --</option>
           <option v-for="plan in availablePlans" :key="plan.id" :value="plan.id">
             {{ plan.name }} ({{ planTypeLabel(plan.plan_type) }})
           </option>
         </CFormSelect>
         <div v-if="selectedPlan" class="small text-muted mt-1">
-          Precio adulto: ${{ formatCurrency(selectedPlan.adult_price) }} | 
+          Precio adulto: ${{ formatCurrency(selectedPlan.adult_price) }} |
           Precio niño: ${{ formatCurrency(selectedPlan.child_price) }}
           <template v-if="selectedPlan.free_children_qty > 0">
             | {{ selectedPlan.free_children_qty }} niños gratis (hasta {{ selectedPlan.free_children_max_age }} años)
@@ -51,19 +51,19 @@
       <div class="row mb-3">
         <div class="col-4">
           <CFormLabel for="adults">Adultos</CFormLabel>
-          <CFormInput id="adults" v-model.number="form.adults" type="number" min="0" @input="calculatePrice" />
+          <CFormInput id="adults" v-model.number="form.adults" type="number" min="0" />
         </div>
         <div class="col-4">
           <CFormLabel for="children">Niños</CFormLabel>
-          <CFormInput id="children" v-model.number="form.children" type="number" min="0" @input="calculatePrice" />
+          <CFormInput id="children" v-model.number="form.children" type="number" min="0" />
         </div>
         <div class="col-4">
           <CFormLabel>Total asistentes</CFormLabel>
           <div class="form-control-plaintext fw-bold">{{ totalAttendees }}</div>
         </div>
       </div>
-      
-      <div class="row mb-3" v-if="selectedPlan">
+
+      <div class="row mb-3" v-if="selectedPlan || form.calculated_price">
         <div class="col-6">
           <CFormLabel>Precio calculado</CFormLabel>
           <div class="form-control-plaintext">
@@ -73,11 +73,11 @@
         </div>
         <div class="col-6">
           <CFormLabel for="agreed_price">Precio acordado</CFormLabel>
-          <CFormInput 
-            id="agreed_price" 
-            v-model.number="form.agreed_price" 
-            type="number" 
-            min="0" 
+          <CFormInput
+            id="agreed_price"
+            v-model.number="form.agreed_price"
+            type="number"
+            min="0"
             step="1000"
             placeholder="Igual al calculado si está vacío"
           />
@@ -93,11 +93,11 @@
           </div>
         </div>
       </div>
-      
+
       <CButton type="submit" color="primary">{{ isEdit ? 'Actualizar' : 'Crear' }}</CButton>
       <CButton color="secondary" variant="outline" class="ms-2" @click="onCancel">Cancelar</CButton>
     </template>
-    
+
     <div v-else class="text-muted">
       Selecciona una cabaña para continuar
     </div>
@@ -189,20 +189,15 @@ function onVenueSelected(venue) {
   form.value.agreed_price = null
 }
 
-function onPlanChange() {
-  calculatePrice()
-}
-
 function calculatePrice() {
   const plan = selectedPlan.value
   if (!plan) {
-    form.value.calculated_price = null
     priceBreakdown.value = ''
     return
   }
 
-  const adults = form.value.adults || 0
-  const children = form.value.children || 0
+  const adults = Number(form.value.adults) || 0
+  const children = Number(form.value.children) || 0
   const adultPrice = parseFloat(plan.adult_price) || 0
   const childPrice = parseFloat(plan.child_price) || 0
   const freeChildrenQty = plan.free_children_qty || 0
@@ -238,6 +233,16 @@ function calculatePrice() {
   }
   priceBreakdown.value = breakdown
 }
+
+// Recalculate price reactively when adults, children, or plan change
+watch(
+  () => [form.value.adults, form.value.children, form.value.plan_id],
+  () => {
+    if (selectedPlan.value) {
+      calculatePrice()
+    }
+  }
+)
 
 function planTypeLabel(type) {
   const labels = {
@@ -294,9 +299,11 @@ function removeDay() {
 
 watch(() => form.value.venue, async (newVenueId) => {
   if (newVenueId && !selectedVenue.value) {
+    // Save plan_id before async fetch — the select resets it when options aren't loaded yet
+    const savedPlanId = form.value.plan_id
     await fetchPlansForVenue(newVenueId)
-    if (form.value.plan_id && availablePlans.value.length > 0) {
-      calculatePrice()
+    if (savedPlanId && availablePlans.value.find(p => p.id === savedPlanId)) {
+      form.value.plan_id = savedPlanId
     }
   }
 }, { immediate: true })
