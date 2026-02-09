@@ -119,6 +119,63 @@ async function upsertUser(claims) {
 
 async function setupAuth(app) {
   app.set('trust proxy', 1);
+
+  // Local development mode: skip OIDC, use mock user
+  if (!process.env.REPL_ID && !process.env.REPLIT_DEPLOYMENT) {
+    console.log('[auth] Development mode: using mock authentication');
+
+    // Find the first admin user to use as dev user
+    const devUser = await prisma.users.findFirst({
+      where: { is_super_admin: true }
+    }) || await prisma.users.findFirst();
+
+    if (!devUser) {
+      console.warn('[auth] No users found in database for dev mode');
+    }
+
+    app.use((req, res, next) => {
+      if (devUser) {
+        req.user = {
+          claims: { sub: devUser.id },
+          expires_at: Math.floor(Date.now() / 1000) + 86400,
+        };
+        req.isAuthenticated = () => true;
+      } else {
+        req.isAuthenticated = () => false;
+      }
+      next();
+    });
+
+    // Stub auth routes
+    app.get('/api/login', (req, res) => res.redirect('/'));
+    app.get('/api/callback', (req, res) => res.redirect('/'));
+    app.get('/api/logout', (req, res) => res.redirect('/'));
+
+    app.get('/api/auth/user', isAuthenticated, async (req, res) => {
+      try {
+        const userId = String(req.user.claims.sub);
+        const user = await prisma.users.findUnique({
+          where: { id: userId },
+          include: { profile: true }
+        });
+        let permissionDetails = [];
+        if (user?.profile?.permissions && Array.isArray(user.profile.permissions)) {
+          const permissions = await prisma.permissions.findMany({
+            where: { code: { in: user.profile.permissions } },
+            orderBy: { code: 'asc' }
+          });
+          permissionDetails = permissions;
+        }
+        res.json({ ...user, permissionDetails, subscription: null });
+      } catch (error) {
+        console.error('Error fetching user:', error);
+        res.status(500).json({ message: 'Failed to fetch user' });
+      }
+    });
+
+    return;
+  }
+
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());
