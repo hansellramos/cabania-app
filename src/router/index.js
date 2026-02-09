@@ -8,6 +8,7 @@ import paymentsRoutes from './routes/payments'
 import profilesRoutes from './routes/profiles'
 import inventoryRoutes from './routes/inventory'
 import maintenanceRoutes from './routes/maintenance'
+import commissionRoutes from './routes/commissions'
 
 let authChecked = false
 let isAuthenticated = false
@@ -442,6 +443,7 @@ const routes = [
       ...profilesRoutes,
       ...inventoryRoutes,
       ...maintenanceRoutes,
+      ...commissionRoutes,
       {
         path: '/admin/amenities',
         name: 'AmenityList',

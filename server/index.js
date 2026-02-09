@@ -6154,6 +6154,366 @@ REGLAS:
 
   // ==================== End Maintenance API ====================
 
+  // ==================== Commissions API ====================
+
+  // --- Commission Agents CRUD ---
+
+  app.get('/api/commission-agents', isAuthenticated, async (req, res) => {
+    try {
+      const orgIds = await getAccessibleOrganizationIds(req.user);
+      const where = { organization_id: { in: orgIds } };
+      if (req.query.venue_id) where.venue_id = req.query.venue_id;
+      if (req.query.is_active !== undefined) where.is_active = req.query.is_active === 'true';
+      if (req.query.search) where.name = { contains: req.query.search, mode: 'insensitive' };
+
+      const agents = await prisma.commission_agents.findMany({
+        where,
+        include: { provider: true, rules: { orderBy: [{ plan_type: 'asc' }, { sort_order: 'asc' }] }, _count: { select: { payments: true } } },
+        orderBy: { created_at: 'desc' }
+      });
+      res.json(agents);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/commission-agents/:id', isAuthenticated, async (req, res) => {
+    try {
+      const agent = await prisma.commission_agents.findUnique({
+        where: { id: req.params.id },
+        include: {
+          provider: true,
+          rules: { orderBy: [{ plan_type: 'asc' }, { sort_order: 'asc' }] },
+          payments: { orderBy: { created_at: 'desc' }, take: 10 }
+        }
+      });
+      if (!agent) return res.status(404).json({ error: 'Comisionista no encontrado' });
+      res.json(agent);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/commission-agents', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { provider_id, organization_id, venue_id, name, notes, is_active, rules } = req.body;
+
+      if (venue_id) {
+        const existing = await prisma.commission_agents.findFirst({ where: { venue_id, is_active: true } });
+        if (existing) return res.status(400).json({ error: 'Ya existe un comisionista activo para esta sede' });
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        const agent = await tx.commission_agents.create({
+          data: { provider_id, organization_id: organization_id || null, venue_id: venue_id || null, name, notes: notes || null, is_active: is_active !== false, created_by: userId }
+        });
+        if (rules && rules.length > 0) {
+          await tx.commission_rules.createMany({
+            data: rules.map((r, i) => ({
+              agent_id: agent.id,
+              plan_type: r.plan_type,
+              min_adults: r.min_adults || 1,
+              max_adults: r.max_adults || null,
+              rate_percent: r.rate_percent,
+              sort_order: r.sort_order ?? i
+            }))
+          });
+        }
+        return tx.commission_agents.findUnique({
+          where: { id: agent.id },
+          include: { provider: true, rules: { orderBy: [{ plan_type: 'asc' }, { sort_order: 'asc' }] } }
+        });
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/commission-agents/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { provider_id, organization_id, venue_id, name, notes, is_active, rules } = req.body;
+
+      if (venue_id) {
+        const existing = await prisma.commission_agents.findFirst({ where: { venue_id, is_active: true, NOT: { id: req.params.id } } });
+        if (existing && is_active !== false) return res.status(400).json({ error: 'Ya existe otro comisionista activo para esta sede' });
+      }
+
+      const result = await prisma.$transaction(async (tx) => {
+        await tx.commission_agents.update({
+          where: { id: req.params.id },
+          data: { provider_id, organization_id: organization_id || null, venue_id: venue_id || null, name, notes: notes || null, is_active: is_active !== false, updated_by: userId, updated_at: new Date() }
+        });
+        await tx.commission_rules.deleteMany({ where: { agent_id: req.params.id } });
+        if (rules && rules.length > 0) {
+          await tx.commission_rules.createMany({
+            data: rules.map((r, i) => ({
+              agent_id: req.params.id,
+              plan_type: r.plan_type,
+              min_adults: r.min_adults || 1,
+              max_adults: r.max_adults || null,
+              rate_percent: r.rate_percent,
+              sort_order: r.sort_order ?? i
+            }))
+          });
+        }
+        return tx.commission_agents.findUnique({
+          where: { id: req.params.id },
+          include: { provider: true, rules: { orderBy: [{ plan_type: 'asc' }, { sort_order: 'asc' }] } }
+        });
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/commission-agents/:id', isAuthenticated, async (req, res) => {
+    try {
+      const paymentsCount = await prisma.commission_payments.count({ where: { agent_id: req.params.id } });
+      if (paymentsCount > 0) {
+        await prisma.commission_agents.update({ where: { id: req.params.id }, data: { is_active: false, updated_at: new Date() } });
+        return res.json({ success: true, soft_deleted: true, message: 'Comisionista desactivado (tiene pagos asociados)' });
+      }
+      await prisma.commission_agents.delete({ where: { id: req.params.id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Commission Calculation ---
+
+  app.post('/api/commissions/calculate', isAuthenticated, async (req, res) => {
+    try {
+      const { accommodation_id } = req.body;
+      if (!accommodation_id) return res.status(400).json({ error: 'accommodation_id requerido' });
+
+      const accommodation = await prisma.accommodations.findUnique({ where: { id: accommodation_id } });
+      if (!accommodation) return res.status(404).json({ error: 'Evento no encontrado' });
+      if (!accommodation.plan_id) return res.status(400).json({ error: 'El evento no tiene un plan asignado' });
+
+      const plan = await prisma.venue_plans.findUnique({ where: { id: accommodation.plan_id } });
+      if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+
+      const agent = await prisma.commission_agents.findFirst({
+        where: { venue_id: accommodation.venue, is_active: true },
+        include: { provider: true, rules: { where: { plan_type: plan.plan_type }, orderBy: { sort_order: 'asc' } } }
+      });
+
+      if (!agent) return res.json({ has_agent: false, message: 'No hay comisionista asignado para esta sede' });
+      if (!agent.rules.length) return res.json({ has_agent: true, agent: { id: agent.id, name: agent.name, provider: agent.provider }, no_rules: true, message: `No hay reglas configuradas para tipo "${plan.plan_type}"` });
+
+      const adults = accommodation.adults || 0;
+      const agreedPrice = parseFloat(accommodation.agreed_price || accommodation.calculated_price || 0);
+
+      if (adults === 0 || agreedPrice === 0) {
+        return res.json({ has_agent: true, agent: { id: agent.id, name: agent.name, provider: agent.provider }, total_commission: 0, breakdown: [], message: 'Sin adultos o precio para calcular' });
+      }
+
+      const perAdultPrice = agreedPrice / adults;
+      let remaining = adults;
+      let totalCommission = 0;
+      const breakdown = [];
+
+      for (const rule of agent.rules) {
+        if (remaining <= 0) break;
+        const capacity = rule.max_adults ? (rule.max_adults - rule.min_adults + 1) : remaining;
+        const inTier = Math.min(remaining, capacity);
+        const tierAmount = inTier * perAdultPrice * (parseFloat(rule.rate_percent) / 100);
+
+        breakdown.push({
+          min_adults: rule.min_adults,
+          max_adults: rule.max_adults,
+          adults_in_tier: inTier,
+          rate_percent: parseFloat(rule.rate_percent),
+          per_adult_price: Math.round(perAdultPrice),
+          tier_amount: Math.round(tierAmount)
+        });
+
+        totalCommission += tierAmount;
+        remaining -= inTier;
+      }
+
+      // Check for existing payment for this accommodation
+      const existingPayment = await prisma.commission_payments.findFirst({
+        where: { agent_id: agent.id, accommodation_id }
+      });
+
+      res.json({
+        has_agent: true,
+        agent: { id: agent.id, name: agent.name, provider: agent.provider },
+        accommodation: { id: accommodation.id, adults, agreed_price: agreedPrice, plan_type: plan.plan_type },
+        total_commission: Math.round(totalCommission),
+        breakdown,
+        existing_payment: existingPayment || null
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Commission Payments ---
+
+  app.get('/api/commission-payments', isAuthenticated, async (req, res) => {
+    try {
+      const orgIds = await getAccessibleOrganizationIds(req.user);
+      const where = { organization_id: { in: orgIds } };
+      if (req.query.agent_id) where.agent_id = req.query.agent_id;
+      if (req.query.accommodation_id) where.accommodation_id = req.query.accommodation_id;
+      if (req.query.venue_id) where.venue_id = req.query.venue_id;
+      if (req.query.status) where.status = req.query.status;
+
+      const payments = await prisma.commission_payments.findMany({
+        where,
+        include: { agent: { include: { provider: true } } },
+        orderBy: { created_at: 'desc' }
+      });
+
+      // Enrich with accommodation data
+      const enriched = await Promise.all(payments.map(async (p) => {
+        const acc = await prisma.accommodations.findUnique({ where: { id: p.accommodation_id } });
+        const venue = acc?.venue ? await prisma.venues.findUnique({ where: { id: acc.venue } }) : null;
+        return { ...p, accommodation_data: acc, venue_data: venue };
+      }));
+
+      res.json(enriched);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/commission-payments', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { agent_id, accommodation_id, organization_id, venue_id, adults, agreed_price, calculated_amount, breakdown, status, payment_date, payment_method, reference, receipt_url, notes, create_expense, expense_category_id } = req.body;
+
+      const result = await prisma.$transaction(async (tx) => {
+        const payment = await tx.commission_payments.create({
+          data: {
+            agent_id, accommodation_id,
+            organization_id: organization_id || null, venue_id: venue_id || null,
+            adults, agreed_price, calculated_amount,
+            status: status || 'pending',
+            payment_date: payment_date ? new Date(payment_date) : null,
+            payment_method: payment_method || null,
+            reference: reference || null,
+            receipt_url: receipt_url || null,
+            notes: notes || null,
+            breakdown: breakdown || null,
+            created_by: userId
+          }
+        });
+
+        // Auto-create expense if paid and requested
+        if (status === 'paid' && create_expense) {
+          const agent = await tx.commission_agents.findUnique({ where: { id: agent_id }, include: { provider: true } });
+          const acc = await tx.accommodations.findUnique({ where: { id: accommodation_id } });
+
+          const expense = await tx.expenses.create({
+            data: {
+              organization_id: organization_id || null,
+              venue_id: venue_id || null,
+              category_id: expense_category_id || null,
+              provider_id: agent?.provider_id || null,
+              amount: calculated_amount,
+              description: `Comisión - ${agent?.name || 'Comisionista'} - Evento ${acc?.date ? new Date(acc.date).toLocaleDateString('es-CO') : ''}`,
+              expense_date: payment_date ? new Date(payment_date) : new Date(),
+              reference: reference || null,
+              receipt_url: receipt_url || null,
+              notes: `Pago de comisión por evento con ${adults} adultos`,
+              created_by: userId
+            }
+          });
+
+          await tx.commission_payments.update({
+            where: { id: payment.id },
+            data: { expense_id: expense.id }
+          });
+
+          return { ...payment, expense_id: expense.id };
+        }
+
+        return payment;
+      });
+
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/commission-payments/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { status, payment_date, payment_method, reference, receipt_url, notes, create_expense, expense_category_id } = req.body;
+
+      const existing = await prisma.commission_payments.findUnique({ where: { id: req.params.id }, include: { agent: true } });
+      if (!existing) return res.status(404).json({ error: 'Pago no encontrado' });
+
+      const result = await prisma.$transaction(async (tx) => {
+        const updated = await tx.commission_payments.update({
+          where: { id: req.params.id },
+          data: {
+            status: status || existing.status,
+            payment_date: payment_date ? new Date(payment_date) : existing.payment_date,
+            payment_method: payment_method ?? existing.payment_method,
+            reference: reference ?? existing.reference,
+            receipt_url: receipt_url ?? existing.receipt_url,
+            notes: notes ?? existing.notes,
+            updated_by: userId, updated_at: new Date()
+          }
+        });
+
+        // Create expense when transitioning to paid
+        if (status === 'paid' && existing.status !== 'paid' && create_expense && !existing.expense_id) {
+          const acc = await tx.accommodations.findUnique({ where: { id: existing.accommodation_id } });
+          const expense = await tx.expenses.create({
+            data: {
+              organization_id: existing.organization_id,
+              venue_id: existing.venue_id,
+              category_id: expense_category_id || null,
+              provider_id: existing.agent?.provider_id || null,
+              amount: existing.calculated_amount,
+              description: `Comisión - ${existing.agent?.name || 'Comisionista'} - Evento ${acc?.date ? new Date(acc.date).toLocaleDateString('es-CO') : ''}`,
+              expense_date: payment_date ? new Date(payment_date) : new Date(),
+              reference: reference || null,
+              receipt_url: receipt_url || null,
+              notes: `Pago de comisión por evento con ${existing.adults} adultos`,
+              created_by: userId
+            }
+          });
+          await tx.commission_payments.update({ where: { id: req.params.id }, data: { expense_id: expense.id } });
+          return { ...updated, expense_id: expense.id };
+        }
+
+        return updated;
+      });
+
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/commission-payments/:id', isAuthenticated, async (req, res) => {
+    try {
+      const payment = await prisma.commission_payments.findUnique({ where: { id: req.params.id } });
+      if (!payment) return res.status(404).json({ error: 'Pago no encontrado' });
+      if (payment.status === 'paid' && payment.expense_id) {
+        return res.status(400).json({ error: 'No se puede eliminar un pago registrado con egreso. Elimine el egreso primero.' });
+      }
+      await prisma.commission_payments.delete({ where: { id: req.params.id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== End Commissions API ====================
+
   // Serve static files from Vue build in production
   const distPath = path.join(__dirname, '..', 'dist');
   app.use(express.static(distPath));

@@ -351,17 +351,18 @@ model expenses {
 }
 
 model providers {
-  id               String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name             String             @db.VarChar(255)
-  organization_id  String?            @db.Uuid
-  phone            String?            @db.VarChar(50)
-  email            String?            @db.VarChar(255)
-  address          String?            @db.Text
-  notes            String?            @db.Text
-  created_at       DateTime           @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime?          @db.Timestamptz(6)
-  expenses         expenses[]
-  maintenance_logs maintenance_logs[]
+  id                String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name              String              @db.VarChar(255)
+  organization_id   String?             @db.Uuid
+  phone             String?             @db.VarChar(50)
+  email             String?             @db.VarChar(255)
+  address           String?             @db.Text
+  notes             String?             @db.Text
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?           @db.Timestamptz(6)
+  expenses          expenses[]
+  maintenance_logs  maintenance_logs[]
+  commission_agents commission_agents[]
 }
 
 model deposits {
@@ -643,4 +644,63 @@ model maintenance_images {
   sort_order         Int              @default(0)
   created_at         DateTime         @default(now()) @db.Timestamptz(6)
   maintenance_log    maintenance_logs @relation(fields: [maintenance_log_id], references: [id], onDelete: Cascade)
+}
+
+// ========================================
+// COMMISSIONS MODULE
+// ========================================
+
+model commission_agents {
+  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider_id     String                @db.Uuid
+  organization_id String?               @db.Uuid
+  venue_id        String?               @db.Uuid
+  name            String                @db.VarChar(255)
+  notes           String?               @db.Text
+  is_active       Boolean               @default(true)
+  created_by      String?               @db.VarChar(255)
+  created_at      DateTime              @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?             @db.Timestamptz(6)
+  updated_by      String?               @db.VarChar(255)
+  provider        providers             @relation(fields: [provider_id], references: [id])
+  rules           commission_rules[]
+  payments        commission_payments[]
+}
+
+model commission_rules {
+  id           String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agent_id     String            @db.Uuid
+  plan_type    String            @db.VarChar(50)
+  min_adults   Int               @default(1)
+  max_adults   Int?
+  rate_percent Decimal           @db.Decimal
+  sort_order   Int               @default(0)
+  created_at   DateTime          @default(now()) @db.Timestamptz(6)
+  agent        commission_agents @relation(fields: [agent_id], references: [id], onDelete: Cascade)
+
+  @@index([agent_id, plan_type, sort_order])
+}
+
+model commission_payments {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  agent_id          String            @db.Uuid
+  accommodation_id  String            @db.Uuid
+  organization_id   String?           @db.Uuid
+  venue_id          String?           @db.Uuid
+  adults            Int
+  agreed_price      Decimal           @db.Decimal
+  calculated_amount Decimal           @db.Decimal
+  status            String            @default("pending") @db.VarChar(50)
+  payment_date      DateTime?         @db.Date
+  payment_method    String?           @db.VarChar(100)
+  reference         String?           @db.VarChar(255)
+  receipt_url       String?           @db.Text
+  expense_id        String?           @unique @db.Uuid
+  notes             String?           @db.Text
+  breakdown         Json?             @db.Json
+  created_by        String?           @db.VarChar(255)
+  created_at        DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime?         @db.Timestamptz(6)
+  updated_by        String?           @db.VarChar(255)
+  agent             commission_agents @relation(fields: [agent_id], references: [id])
 }

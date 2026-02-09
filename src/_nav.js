@@ -88,6 +88,18 @@ export default [
     icon: 'cil-wallet',
   },
   {
+    component: 'CNavItem',
+    name: 'Comisionistas',
+    to: '/business/commissions/agents',
+    icon: 'cil-people',
+  },
+  {
+    component: 'CNavItem',
+    name: 'Pagos Comisiones',
+    to: '/business/commissions/payments',
+    icon: 'cil-dollar',
+  },
+  {
     component: 'CNavTitle',
     name: 'Inventario',
   },

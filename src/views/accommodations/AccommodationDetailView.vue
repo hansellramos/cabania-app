@@ -319,12 +319,21 @@
               </div>
             </CCol>
           </CRow>
+          <hr />
+          <CRow class="mt-3">
+            <CCol :xs="12">
+              <CommissionCalculator
+                :accommodation-id="route.params.id"
+                :accommodation="accommodation"
+              />
+            </CCol>
+          </CRow>
         </CCardBody>
         <CCardBody v-else>
           <p class="text-muted">Cargando...</p>
         </CCardBody>
       </CCard>
-      
+
       <MessageSuggestions v-if="accommodation" :accommodation="accommodation" />
     </CCol>
   </CRow>
@@ -555,6 +564,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import MessageSuggestions from '@/components/accommodations/MessageSuggestions.vue'
+import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
 import { deleteAccommodation } from '@/services/accommodationService'
 
 const route = useRoute()
