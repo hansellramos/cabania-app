@@ -121,6 +121,12 @@ export default [
   },
   {
     component: 'CNavItem',
+    name: 'Tareas Pendientes',
+    to: '/business/pending-tasks',
+    icon: 'cil-list',
+  },
+  {
+    component: 'CNavItem',
     name: 'Tablero',
     to: '/business/maintenance',
     icon: 'cil-speedometer',

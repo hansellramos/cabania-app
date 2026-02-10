@@ -6216,6 +6216,199 @@ REGLAS:
 
   // ==================== End Maintenance API ====================
 
+  // ==================== Pending Tasks API ====================
+
+  // --- Pending Tasks CRUD ---
+
+  app.get('/api/pending-tasks', isAuthenticated, async (req, res) => {
+    try {
+      const orgIds = await getAccessibleOrganizationIds(req.user);
+      const where = { organization_id: { in: orgIds } };
+      if (req.query.venue_id) where.venue_id = req.query.venue_id;
+      if (req.query.zone_id) where.zone_id = req.query.zone_id;
+      if (req.query.status) where.status = req.query.status;
+      if (req.query.priority) where.priority = req.query.priority;
+      if (req.query.search) {
+        where.OR = [
+          { title: { contains: req.query.search, mode: 'insensitive' } },
+          { description: { contains: req.query.search, mode: 'insensitive' } },
+        ];
+      }
+      const tasks = await prisma.pending_tasks.findMany({
+        where,
+        include: { zone: true, images: { orderBy: { sort_order: 'asc' } } },
+        orderBy: [{ status: 'asc' }, { priority: 'desc' }, { created_at: 'desc' }],
+      });
+      res.json(tasks);
+    } catch (err) {
+      console.error('Error fetching pending tasks:', err);
+      res.status(500).json({ error: 'Error al obtener tareas pendientes' });
+    }
+  });
+
+  app.get('/api/pending-tasks/:id', isAuthenticated, async (req, res) => {
+    try {
+      const task = await prisma.pending_tasks.findUnique({
+        where: { id: req.params.id },
+        include: { zone: true, images: { orderBy: { sort_order: 'asc' } } },
+      });
+      if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
+      res.json(task);
+    } catch (err) {
+      console.error('Error fetching pending task:', err);
+      res.status(500).json({ error: 'Error al obtener tarea' });
+    }
+  });
+
+  app.post('/api/pending-tasks', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub || req.user.id || '');
+      const data = { ...req.body, created_by: userId };
+      if (data.due_date && data.due_date !== '') data.due_date = new Date(data.due_date);
+      else data.due_date = null;
+      if (!data.zone_id) data.zone_id = null;
+      const task = await prisma.pending_tasks.create({ data });
+      res.json(task);
+    } catch (err) {
+      console.error('Error creating pending task:', err);
+      res.status(500).json({ error: 'Error al crear tarea' });
+    }
+  });
+
+  app.put('/api/pending-tasks/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub || req.user.id || '');
+      const data = { ...req.body, updated_by: userId, updated_at: new Date() };
+      if (data.due_date && data.due_date !== '') data.due_date = new Date(data.due_date);
+      else data.due_date = null;
+      if (!data.zone_id) data.zone_id = null;
+      if (data.status === 'completed' && !data.completed_at) data.completed_at = new Date();
+      if (data.status !== 'completed') data.completed_at = null;
+      const task = await prisma.pending_tasks.update({
+        where: { id: req.params.id },
+        data,
+        include: { zone: true, images: { orderBy: { sort_order: 'asc' } } },
+      });
+      res.json(task);
+    } catch (err) {
+      console.error('Error updating pending task:', err);
+      res.status(500).json({ error: 'Error al actualizar tarea' });
+    }
+  });
+
+  app.put('/api/pending-tasks/:id/status', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub || req.user.id || '');
+      const data = { status: req.body.status, updated_by: userId, updated_at: new Date() };
+      if (req.body.status === 'completed') data.completed_at = new Date();
+      if (req.body.status !== 'completed') data.completed_at = null;
+      const task = await prisma.pending_tasks.update({
+        where: { id: req.params.id },
+        data,
+        include: { zone: true, images: { orderBy: { sort_order: 'asc' } } },
+      });
+      res.json(task);
+    } catch (err) {
+      console.error('Error updating task status:', err);
+      res.status(500).json({ error: 'Error al actualizar estado' });
+    }
+  });
+
+  app.delete('/api/pending-tasks/:id', isAuthenticated, async (req, res) => {
+    try {
+      await prisma.$transaction([
+        prisma.pending_task_images.deleteMany({ where: { pending_task_id: req.params.id } }),
+        prisma.pending_tasks.delete({ where: { id: req.params.id } }),
+      ]);
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Error deleting pending task:', err);
+      res.status(500).json({ error: 'Error al eliminar tarea' });
+    }
+  });
+
+  // --- Pending Task: Create maintenance log from task ---
+
+  app.post('/api/pending-tasks/:id/create-maintenance', isAuthenticated, async (req, res) => {
+    try {
+      const task = await prisma.pending_tasks.findUnique({ where: { id: req.params.id } });
+      if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
+      const userId = String(req.user.claims?.sub || req.user.id || '');
+
+      const result = await prisma.$transaction(async (tx) => {
+        const log = await tx.maintenance_logs.create({
+          data: {
+            organization_id: task.organization_id,
+            venue_id: task.venue_id,
+            zone_id: task.zone_id,
+            maintenance_date: new Date(),
+            description: task.title + (task.description ? '\n\n' + task.description : ''),
+            status: 'pending',
+            priority: task.priority,
+            notes: task.notes,
+            created_by: userId,
+          },
+        });
+        const updatedTask = await tx.pending_tasks.update({
+          where: { id: task.id },
+          data: {
+            maintenance_log_id: log.id,
+            status: 'in_progress',
+            updated_by: userId,
+            updated_at: new Date(),
+          },
+          include: { zone: true, images: { orderBy: { sort_order: 'asc' } } },
+        });
+        return { log, task: updatedTask };
+      });
+      res.json(result);
+    } catch (err) {
+      console.error('Error creating maintenance from task:', err);
+      res.status(500).json({ error: 'Error al crear orden de mantenimiento' });
+    }
+  });
+
+  // --- Pending Task Images ---
+
+  app.post('/api/pending-tasks/:id/images', isAuthenticated, upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: 'No se proporcionó archivo' });
+      const task = await prisma.pending_tasks.findUnique({ where: { id: req.params.id } });
+      if (!task) return res.status(404).json({ error: 'Tarea no encontrada' });
+      const result = await uploadImage(req.file.buffer, { type: 'pending_task', mimetype: req.file.mimetype });
+      const image = await prisma.pending_task_images.create({
+        data: {
+          pending_task_id: req.params.id,
+          image_url: result.secure_url,
+          description: req.body.description || null,
+          sort_order: parseInt(req.body.sort_order) || 0,
+        },
+      });
+      res.json(image);
+    } catch (err) {
+      console.error('Error uploading task image:', err);
+      res.status(500).json({ error: 'Error al subir imagen' });
+    }
+  });
+
+  app.delete('/api/pending-task-images/:id', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.pending_task_images.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Imagen no encontrada' });
+      if (existing.image_url) {
+        const publicId = extractPublicId(existing.image_url);
+        if (publicId) await deleteImage(publicId);
+      }
+      await prisma.pending_task_images.delete({ where: { id: req.params.id } });
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Error deleting task image:', err);
+      res.status(500).json({ error: 'Error al eliminar imagen' });
+    }
+  });
+
+  // ==================== End Pending Tasks API ====================
+
   // ==================== Commissions API ====================
 
   // --- Commission Agents CRUD ---

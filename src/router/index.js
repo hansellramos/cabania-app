@@ -9,6 +9,7 @@ import profilesRoutes from './routes/profiles'
 import inventoryRoutes from './routes/inventory'
 import maintenanceRoutes from './routes/maintenance'
 import commissionRoutes from './routes/commissions'
+import pendingTaskRoutes from './routes/pending-tasks'
 
 let authChecked = false
 let isAuthenticated = false
@@ -444,6 +445,7 @@ const routes = [
       ...inventoryRoutes,
       ...maintenanceRoutes,
       ...commissionRoutes,
+      ...pendingTaskRoutes,
       {
         path: '/admin/amenities',
         name: 'AmenityList',
