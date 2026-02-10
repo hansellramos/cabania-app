@@ -361,8 +361,9 @@ model providers {
   notes            String?
   created_at       DateTime           @default(now()) @db.Timestamptz(6)
   updated_at       DateTime?          @db.Timestamptz(6)
-  expenses         expenses[]
-  maintenance_logs maintenance_logs[]
+  expenses           expenses[]
+  maintenance_logs   maintenance_logs[]
+  commission_agents  commission_agents[]
 }
 
 model deposits {
