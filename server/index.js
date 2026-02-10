@@ -3021,7 +3021,7 @@ async function startServer() {
   // Expenses API
   app.get('/api/expenses', isAuthenticated, async (req, res) => {
     try {
-      const { venue_id, organization_id, category_id, from_date, to_date, viewAll } = req.query;
+      const { venue_id, organization_id, category_id, accommodation_id, from_date, to_date, viewAll } = req.query;
       const viewAllFlag = viewAll === 'true';
       
       let accessibleOrgIds = null;
@@ -3056,6 +3056,7 @@ async function startServer() {
       if (venue_id) whereClause.venue_id = venue_id;
       if (organization_id) whereClause.organization_id = organization_id;
       if (category_id) whereClause.category_id = category_id;
+      if (accommodation_id) whereClause.accommodation_id = accommodation_id;
       
       if (from_date || to_date) {
         whereClause.expense_date = {};
@@ -3118,8 +3119,23 @@ async function startServer() {
           return res.status(403).json({ error: 'No tiene acceso a este gasto' });
         }
       }
-      
-      res.json(expense);
+
+      // Enrich with accommodation data if linked
+      let accommodation_data = null;
+      if (expense.accommodation_id) {
+        const acc = await prisma.accommodations.findUnique({
+          where: { id: expense.accommodation_id }
+        });
+        if (acc) {
+          let customer_data = null;
+          if (acc.customer) {
+            customer_data = await prisma.contacts.findUnique({ where: { id: acc.customer } });
+          }
+          accommodation_data = { ...acc, customer_data };
+        }
+      }
+
+      res.json({ ...expense, accommodation_data });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -3207,6 +3223,90 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // AI-powered expense receipt analysis (enhanced extraction with categories and inventory matching)
+  app.post('/api/expenses/analyze-receipt', isAuthenticated, async (req, res) => {
+    const startTime = Date.now();
+    try {
+      const { imageUrl, categories, subcategoryMap, inventoryItems } = req.body;
+      console.log(`[analyze-receipt] Starting for: ${imageUrl?.substring(0, 50)}...`);
+      if (!imageUrl) {
+        return res.status(400).json({ error: 'Se requiere la URL de la imagen' });
+      }
+
+      const { model, generateObject, z } = await getAIModelForReceipt('[analyze-receipt]');
+      const { base64Image, mediaType } = await fetchReceiptImage(imageUrl, '[analyze-receipt]');
+
+      // Build context sections for the prompt
+      let categoriesContext = '';
+      if (categories && categories.length > 0) {
+        categoriesContext = `\nCATEGORIAS DE GASTO DISPONIBLES (usa el ID exacto al asignar):\n${categories.map(c => `- ID: "${c.id}" | Nombre: "${c.name}"`).join('\n')}`;
+      }
+
+      let subcategoryContext = '';
+      if (subcategoryMap && Object.keys(subcategoryMap).length > 0) {
+        subcategoryContext = `\nSUBCATEGORIAS POR CATEGORIA (la subcategoria DEBE ser exactamente una de estas opciones, o null):\n${Object.entries(subcategoryMap).map(([cat, subs]) => `- ${cat}: ${subs.join(', ')}`).join('\n')}`;
+      }
+
+      let inventoryContext = '';
+      if (inventoryItems && inventoryItems.length > 0) {
+        inventoryContext = `\nITEMS DE INVENTARIO EXISTENTES (usa el ID exacto si hay coincidencia):\n${inventoryItems.map(i => `- ID: "${i.id}" | Nombre: "${i.name}" | Unidad: "${i.unit || 'und'}"`).join('\n')}`;
+      }
+
+      const prompt = `Analiza esta imagen de un recibo, factura o comprobante de compra y extrae la informacion detallada.
+
+INSTRUCCIONES:
+1. Extrae el monto total, numero de referencia/factura/tiquete, y fecha del documento.
+2. Determina la categoria del gasto basandote en el contenido del recibo.${categoriesContext}
+3. Si la categoria tiene subcategorias, sugiere la mas apropiada.${subcategoryContext}
+4. Genera una descripcion breve del gasto (que se compro o pago).
+5. Extrae CADA linea/item individual del recibo con nombre del producto, cantidad, precio unitario y subtotal. Si el recibo solo muestra un total sin desglose, devuelve line_items como array vacio.
+6. Para cada item extraido, intenta encontrar coincidencia en el inventario existente del venue.${inventoryContext}
+   - Asigna matched_inventory_id SOLO si hay coincidencia clara (mismo producto o equivalente directo).
+   - confidence: "high" si el nombre coincide bien, "medium" si es probable, "low" si es incierto.
+   - Si no hay inventario o no hay match, deja matched_inventory_id como null.
+
+Si algun dato no esta visible o no se puede determinar, devuelve null para ese campo.
+Presta atencion a recibos de tiendas, ferreterias, supermercados, peajes, servicios y proveedores colombianos.
+Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CUDE/CUFE que es un hash largo).`;
+
+      const aiStartTime = Date.now();
+      const result = await generateObject({
+        model,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', image: `data:${mediaType};base64,${base64Image}` },
+            { type: 'text', text: prompt }
+          ]
+        }],
+        schema: z.object({
+          amount: z.number().nullable().describe('Monto total del recibo sin simbolos de moneda'),
+          reference: z.string().nullable().describe('Numero de factura, tiquete o referencia (NO el CUDE/CUFE)'),
+          expense_date: z.string().nullable().describe('Fecha del gasto en formato YYYY-MM-DD'),
+          category_id: z.string().nullable().describe('ID de la categoria que mejor coincide'),
+          category_name: z.string().nullable().describe('Nombre de la categoria seleccionada'),
+          subcategory: z.string().nullable().describe('Subcategoria exacta de las opciones disponibles, o null'),
+          description: z.string().nullable().describe('Descripcion breve del gasto'),
+          line_items: z.array(z.object({
+            name: z.string().describe('Nombre del producto/item del recibo'),
+            quantity: z.number().describe('Cantidad comprada'),
+            unit_cost: z.number().describe('Precio unitario'),
+            subtotal: z.number().describe('Subtotal de la linea'),
+            matched_inventory_id: z.string().nullable().describe('ID del item de inventario coincidente, o null'),
+            matched_inventory_name: z.string().nullable().describe('Nombre del item de inventario coincidente'),
+            confidence: z.enum(['high', 'medium', 'low']).describe('Confianza en la coincidencia')
+          })).describe('Items individuales del recibo, array vacio si no hay desglose')
+        })
+      });
+
+      console.log(`[analyze-receipt] Done in ${Date.now() - startTime}ms (AI: ${Date.now() - aiStartTime}ms)`, JSON.stringify(result.object));
+      res.json({ success: true, data: result.object });
+    } catch (error) {
+      console.error(`[analyze-receipt] Error after ${Date.now() - startTime}ms:`, error);
+      res.status(500).json({ error: 'Error al analizar el recibo', details: error.message });
     }
   });
 
@@ -4199,136 +4299,98 @@ async function startServer() {
     }
   });
 
-  // AI-powered receipt data extraction
+  // ==========================================
+  // AI Receipt Helpers (shared by payment and expense extraction)
+  // ==========================================
+
+  async function getAIModelForReceipt(logPrefix = '[extract-receipt]') {
+    const aiSetting = await prisma.ai_settings.findUnique({
+      where: { setting_key: 'receipt_extraction' }
+    });
+    const providerCode = aiSetting?.provider_code || 'anthropic_claude';
+    const modelConfig = llmService.getModelConfig(providerCode);
+    if (!modelConfig) throw new Error('Modelo de IA no configurado');
+    const apiKey = llmService.getApiKeyForProvider(providerCode);
+    if (!apiKey) throw new Error(`API key no configurada (${modelConfig.env_key})`);
+
+    const { generateObject } = await import('ai');
+    const { z } = await import('zod');
+
+    let model;
+    if (modelConfig.provider === 'anthropic') {
+      const { anthropic } = await import('@ai-sdk/anthropic');
+      model = anthropic(modelConfig.model);
+    } else if (providerCode.startsWith('openai')) {
+      const { openai } = await import('@ai-sdk/openai');
+      model = openai(modelConfig.model);
+    } else {
+      const { createOpenAI } = await import('@ai-sdk/openai');
+      const provider = createOpenAI({ apiKey, baseURL: modelConfig.base_url });
+      model = provider(modelConfig.model);
+    }
+
+    console.log(`${logPrefix} Model ready: ${modelConfig.model} (${providerCode})`);
+    return { model, generateObject, z, modelConfig, providerCode };
+  }
+
+  async function fetchReceiptImage(imageUrl, logPrefix = '[extract-receipt]') {
+    const imageResponse = await fetch(imageUrl);
+    if (!imageResponse.ok) throw new Error('No se pudo descargar la imagen');
+    const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
+    const contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
+    const base64Image = imageBuffer.toString('base64');
+
+    let mediaType = 'image/jpeg';
+    if (contentType.includes('png')) mediaType = 'image/png';
+    else if (contentType.includes('gif')) mediaType = 'image/gif';
+    else if (contentType.includes('webp')) mediaType = 'image/webp';
+
+    console.log(`${logPrefix} Image fetched: ${imageBuffer.length} bytes, type: ${mediaType}`);
+    return { base64Image, mediaType };
+  }
+
+  // AI-powered receipt data extraction (payments)
   app.post('/api/payments/extract-receipt', isAuthenticated, async (req, res) => {
     const startTime = Date.now();
-    const timings = {};
-    
     try {
       const { imageUrl } = req.body;
       console.log(`[extract-receipt] Starting extraction for: ${imageUrl?.substring(0, 50)}...`);
-      
       if (!imageUrl) {
         return res.status(400).json({ error: 'Se requiere la URL de la imagen' });
       }
-      
-      // Get configured model for receipt extraction
-      const configStartTime = Date.now();
-      const aiSetting = await prisma.ai_settings.findUnique({
-        where: { setting_key: 'receipt_extraction' }
-      });
-      
-      // Default to anthropic if not configured
-      const providerCode = aiSetting?.provider_code || 'anthropic_claude';
-      const modelConfig = llmService.getModelConfig(providerCode);
-      timings.configLookup = Date.now() - configStartTime;
-      console.log(`[extract-receipt] Config lookup: ${timings.configLookup}ms, provider: ${providerCode}`);
-      
-      if (!modelConfig) {
-        return res.status(500).json({ error: 'Modelo de IA no configurado' });
-      }
-      
-      const apiKey = llmService.getApiKeyForProvider(providerCode);
-      if (!apiKey) {
-        return res.status(500).json({ error: `API key no configurada (${modelConfig.env_key})` });
-      }
-      
-      // Fetch the image (Cloudinary URLs are public, fetch directly)
-      const imageFetchStartTime = Date.now();
-      let imageBuffer;
-      let contentType = 'image/jpeg';
 
-      const imageResponse = await fetch(imageUrl);
-      if (!imageResponse.ok) {
-        throw new Error('No se pudo descargar la imagen');
-      }
-      imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
-      contentType = imageResponse.headers.get('content-type') || 'image/jpeg';
-      timings.imageFetch = Date.now() - imageFetchStartTime;
-      console.log(`[extract-receipt] Image fetch: ${timings.imageFetch}ms, size: ${imageBuffer.length} bytes`);
-      
-      // Convert to base64
-      const base64Image = imageBuffer.toString('base64');
-      
-      // Map content type to Anthropic's accepted media types
-      let mediaType = 'image/jpeg';
-      if (contentType.includes('png')) mediaType = 'image/png';
-      else if (contentType.includes('gif')) mediaType = 'image/gif';
-      else if (contentType.includes('webp')) mediaType = 'image/webp';
-      
-      // Use Vercel AI SDK with configured model
-      const { generateObject } = await import('ai');
-      const { z } = await import('zod');
-      
-      let model;
-      if (modelConfig.provider === 'anthropic') {
-        const { anthropic } = await import('@ai-sdk/anthropic');
-        model = anthropic(modelConfig.model);
-      } else if (providerCode.startsWith('openai')) {
-        const { openai } = await import('@ai-sdk/openai');
-        model = openai(modelConfig.model);
-      } else {
-        // Fallback to OpenAI-compatible for xAI Grok, etc.
-        const { createOpenAI } = await import('@ai-sdk/openai');
-        const provider = createOpenAI({
-          apiKey: apiKey,
-          baseURL: modelConfig.base_url
-        });
-        model = provider(modelConfig.model);
-      }
-      timings.modelSetup = Date.now() - imageFetchStartTime - timings.imageFetch;
-      console.log(`[extract-receipt] Model setup: ${timings.modelSetup}ms`);
-      
+      const { model, generateObject, z, modelConfig } = await getAIModelForReceipt();
+      const { base64Image, mediaType } = await fetchReceiptImage(imageUrl);
+
       const aiStartTime = Date.now();
-      console.log(`[extract-receipt] Starting AI extraction with model: ${modelConfig.model}`);
       const result = await generateObject({
         model,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'image',
-                image: `data:${mediaType};base64,${base64Image}`,
-              },
-              {
-                type: 'text',
-                text: `Analiza esta imagen de un comprobante de pago o transferencia bancaria y extrae la siguiente información:
-                
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', image: `data:${mediaType};base64,${base64Image}` },
+            { type: 'text', text: `Analiza esta imagen de un comprobante de pago o transferencia bancaria y extrae la siguiente información:
+
 1. Monto/valor de la transferencia (solo el número, sin símbolos de moneda)
 2. Número de referencia o transacción (puede estar etiquetado como "Referencia", "No. Transacción", "ID", "Comprobante", etc.)
 3. Fecha de la transferencia (en formato YYYY-MM-DD si es posible)
 
 Si algún dato no está visible o no se puede determinar, devuelve null para ese campo.
-Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otras entidades colombianas.`
-              }
-            ]
-          }
-        ],
+Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otras entidades colombianas.` }
+          ]
+        }],
         schema: z.object({
           amount: z.number().nullable().describe('Monto de la transferencia sin símbolos de moneda'),
           reference: z.string().nullable().describe('Número de referencia o transacción'),
           payment_date: z.string().nullable().describe('Fecha de la transferencia en formato YYYY-MM-DD')
         })
       });
-      timings.aiExtraction = Date.now() - aiStartTime;
-      timings.total = Date.now() - startTime;
-      
-      console.log(`[extract-receipt] AI extraction completed: ${timings.aiExtraction}ms`);
-      console.log(`[extract-receipt] Total time: ${timings.total}ms | Breakdown: config=${timings.configLookup}ms, imageFetch=${timings.imageFetch}ms, modelSetup=${timings.modelSetup}ms, aiExtraction=${timings.aiExtraction}ms`);
-      console.log(`[extract-receipt] Result:`, JSON.stringify(result.object));
-      
-      res.json({
-        success: true,
-        data: result.object
-      });
+
+      console.log(`[extract-receipt] Done in ${Date.now() - startTime}ms (AI: ${Date.now() - aiStartTime}ms)`, JSON.stringify(result.object));
+      res.json({ success: true, data: result.object });
     } catch (error) {
-      const errorTime = Date.now() - startTime;
-      console.error(`[extract-receipt] Error after ${errorTime}ms:`, error);
-      res.status(500).json({ 
-        error: 'Error al procesar el comprobante',
-        details: error.message 
-      });
+      console.error(`[extract-receipt] Error after ${Date.now() - startTime}ms:`, error);
+      res.status(500).json({ error: 'Error al procesar el comprobante', details: error.message });
     }
   });
 

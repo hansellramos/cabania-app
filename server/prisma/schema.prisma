@@ -331,8 +331,9 @@ model expense_categories {
 model expenses {
   id              String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organization_id String?                   @db.Uuid
-  venue_id        String?                   @db.Uuid
-  category_id     String?                   @db.Uuid
+  venue_id         String?                   @db.Uuid
+  accommodation_id String?                   @db.Uuid
+  category_id      String?                   @db.Uuid
   subcategory     String?                   @db.VarChar(100)
   provider_id     String?                   @db.Uuid
   amount          Decimal                   @db.Decimal

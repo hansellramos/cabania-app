@@ -53,6 +53,35 @@
                 </template>
               </CCol>
             </CRow>
+            <CAlert v-if="!form.venue_id" color="info" class="mt-3">
+              <CIcon name="cil-info" class="me-2" />
+              Seleccione una organización y sede para continuar registrando el gasto.
+            </CAlert>
+            <template v-if="form.venue_id">
+            <CRow class="mb-3" v-if="accommodations.length > 0 || lockedAccommodation">
+              <CCol :md="12">
+                <CFormLabel>Hospedaje (opcional)</CFormLabel>
+                <template v-if="lockedAccommodation">
+                  <div class="form-control-plaintext">
+                    <RouterLink :to="`/business/accommodations/${lockedAccommodation.id}`" class="text-decoration-none">
+                      <CBadge color="info" class="fs-6 py-2 px-3">
+                        <CIcon name="cil-calendar" class="me-1" />
+                        {{ formatAccommodationLabel(lockedAccommodation) }}
+                        <CIcon name="cil-external-link" size="sm" class="ms-1" />
+                      </CBadge>
+                    </RouterLink>
+                  </div>
+                </template>
+                <template v-else>
+                  <CFormSelect v-model="form.accommodation_id">
+                    <option value="">Sin hospedaje asociado</option>
+                    <option v-for="acc in accommodations" :key="acc.id" :value="acc.id">
+                      {{ formatAccommodationLabel(acc) }}
+                    </option>
+                  </CFormSelect>
+                </template>
+              </CCol>
+            </CRow>
             <CRow class="mb-3">
               <CCol :md="4">
                 <CFormLabel>Categoría *</CFormLabel>
@@ -162,14 +191,14 @@
                 />
               </CCol>
             </CRow>
-            <!-- Inventory Items Section (only when editing) -->
-            <template v-if="isEditing">
+            <!-- Inventory Items Section -->
+            <template v-if="isEditing || pendingInventoryItems.length > 0 || showSuggestedItems">
               <hr class="my-4" />
               <h6 class="mb-3">
                 <CIcon name="cil-clipboard" class="me-2" />
                 Items de Inventario (Compras)
               </h6>
-              <div class="mb-3">
+              <div v-if="isEditing" class="mb-3">
                 <CRow class="g-2 align-items-end">
                   <CCol :md="5">
                     <CFormLabel>Item de Inventario</CFormLabel>
@@ -195,6 +224,7 @@
                   </CCol>
                 </CRow>
               </div>
+              <!-- Existing linked items (edit mode) -->
               <div v-if="expenseInventoryItems.length > 0" class="table-responsive mb-3">
                 <table class="table table-sm table-bordered align-middle">
                   <thead class="table-light">
@@ -224,7 +254,38 @@
                   </tbody>
                 </table>
               </div>
-              <div v-else class="text-muted small mb-3">
+              <!-- Pending items (create mode - will be saved with expense) -->
+              <div v-if="pendingInventoryItems.length > 0" class="mb-3">
+                <CAlert color="info" class="py-2">
+                  <CIcon name="cil-info" class="me-1" />
+                  {{ pendingInventoryItems.length }} item(s) se agregarán al guardar el gasto.
+                </CAlert>
+                <table class="table table-sm table-bordered align-middle">
+                  <thead class="table-light">
+                    <tr>
+                      <th>Item</th>
+                      <th class="text-end">Cantidad</th>
+                      <th class="text-end">Costo Unit.</th>
+                      <th class="text-end">Subtotal</th>
+                      <th style="width: 50px;"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="(pi, idx) in pendingInventoryItems" :key="idx">
+                      <td>{{ pi.name }} <span class="text-muted small">({{ pi.unit || 'und' }})</span></td>
+                      <td class="text-end">{{ pi.quantity }}</td>
+                      <td class="text-end">{{ pi.unit_cost ? formatCurrency(pi.unit_cost) : '-' }}</td>
+                      <td class="text-end">{{ pi.unit_cost ? formatCurrency(pi.quantity * pi.unit_cost) : '-' }}</td>
+                      <td class="text-center">
+                        <CButton color="danger" size="sm" variant="ghost" @click="pendingInventoryItems.splice(idx, 1)">
+                          <CIcon name="cil-trash" />
+                        </CButton>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div v-if="!expenseInventoryItems.length && !pendingInventoryItems.length" class="text-muted small mb-3">
                 No hay items de inventario vinculados a este gasto.
               </div>
             </template>
@@ -325,6 +386,72 @@
                 </div>
               </CCol>
             </CRow>
+
+            <!-- AI Suggested Items Panel -->
+            <CCard v-if="showSuggestedItems && suggestedItems.length > 0" class="mb-3 border-info">
+              <CCardHeader class="d-flex justify-content-between align-items-center bg-info bg-opacity-10">
+                <span>
+                  <CIcon name="cil-lightbulb" class="me-2" />
+                  <strong>Items detectados por IA</strong>
+                  <CBadge color="info" class="ms-2">{{ suggestedItems.length }}</CBadge>
+                </span>
+                <CButton color="light" size="sm" @click="showSuggestedItems = false">
+                  <CIcon name="cil-x" />
+                </CButton>
+              </CCardHeader>
+              <CCardBody class="p-0">
+                <div class="table-responsive">
+                  <table class="table table-sm align-middle mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Item del Recibo</th>
+                        <th class="text-end">Cant.</th>
+                        <th class="text-end">P. Unit.</th>
+                        <th class="text-end">Subtotal</th>
+                        <th>Coincidencia</th>
+                        <th style="width: 100px;">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="(item, index) in suggestedItems" :key="index" :class="{ 'table-success': item.added }">
+                        <td>{{ item.name }}</td>
+                        <td class="text-end">{{ item.quantity }}</td>
+                        <td class="text-end">{{ item.unit_cost ? formatCurrency(item.unit_cost) : '-' }}</td>
+                        <td class="text-end">{{ item.subtotal ? formatCurrency(item.subtotal) : '-' }}</td>
+                        <td>
+                          <CBadge v-if="item.matched_inventory_name" :color="confidenceColor(item.confidence)">
+                            {{ item.matched_inventory_name }}
+                          </CBadge>
+                          <span v-else class="text-muted small">Sin coincidencia</span>
+                        </td>
+                        <td>
+                          <template v-if="item.added">
+                            <CIcon name="cil-check-circle" class="text-success" />
+                          </template>
+                          <template v-else-if="item.matched_inventory_id">
+                            <CButton color="success" size="sm" @click="acceptSuggestedItem(index)">
+                              <CIcon name="cil-plus" class="me-1" />Agregar
+                            </CButton>
+                          </template>
+                          <template v-else>
+                            <CButton color="warning" size="sm" @click="openCreateInventoryItem(index)">
+                              <CIcon name="cil-library-add" class="me-1" />Crear
+                            </CButton>
+                          </template>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </CCardBody>
+              <CCardFooter v-if="suggestedItems.some(i => i.matched_inventory_id && !i.added)" class="bg-info bg-opacity-10">
+                <CButton color="info" size="sm" @click="acceptAllMatchedItems">
+                  <CIcon name="cil-check-circle" class="me-1" />
+                  Agregar todos los coincidentes
+                </CButton>
+              </CCardFooter>
+            </CCard>
+
             <div class="d-flex justify-content-end gap-2">
               <CButton color="secondary" variant="outline" @click="goBack">
                 Cancelar
@@ -333,6 +460,7 @@
                 {{ saving ? 'Guardando...' : (isEditing ? 'Actualizar' : 'Guardar') }}
               </CButton>
             </div>
+            </template>
           </CForm>
         </CCardBody>
       </CCard>
@@ -360,16 +488,69 @@
       </CButton>
     </CModalFooter>
   </CModal>
+
+  <!-- Create Inventory Item Modal -->
+  <CModal
+    :visible="showCreateInventoryModal"
+    @close="showCreateInventoryModal = false"
+    size="md"
+  >
+    <CModalHeader close-button>
+      <CModalTitle>Crear Item de Inventario</CModalTitle>
+    </CModalHeader>
+    <CModalBody>
+      <CRow class="mb-3">
+        <CCol :md="12">
+          <CFormLabel>Nombre *</CFormLabel>
+          <CFormInput v-model="newInventoryItemData.name" placeholder="Nombre del item" />
+        </CCol>
+      </CRow>
+      <CRow class="mb-3">
+        <CCol :md="6">
+          <CFormLabel>Unidad</CFormLabel>
+          <CFormSelect v-model="newInventoryItemData.unit">
+            <option value="">Seleccionar...</option>
+            <option value="und">Unidad</option>
+            <option value="kg">Kilogramo</option>
+            <option value="lb">Libra</option>
+            <option value="lt">Litro</option>
+            <option value="gl">Galón</option>
+            <option value="mt">Metro</option>
+            <option value="paq">Paquete</option>
+            <option value="caja">Caja</option>
+          </CFormSelect>
+        </CCol>
+        <CCol :md="6">
+          <CFormLabel>Costo Unitario</CFormLabel>
+          <CFormInput type="number" v-model="newInventoryItemData.unit_cost" placeholder="0" min="0" step="0.01" />
+        </CCol>
+      </CRow>
+      <CRow class="mb-3">
+        <CCol :md="12">
+          <CFormLabel>Descripción</CFormLabel>
+          <CFormTextarea v-model="newInventoryItemData.description" rows="2" placeholder="Descripción opcional..." />
+        </CCol>
+      </CRow>
+    </CModalBody>
+    <CModalFooter>
+      <CButton color="secondary" variant="outline" @click="showCreateInventoryModal = false">
+        Cancelar
+      </CButton>
+      <CButton color="primary" @click="createInventoryItemAndLink" :disabled="!newInventoryItemData.name">
+        Crear y Agregar
+      </CButton>
+    </CModalFooter>
+  </CModal>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
-  CRow, CCol, CCard, CCardHeader, CCardBody, CButton,
+  CRow, CCol, CCard, CCardHeader, CCardBody, CCardFooter, CButton,
   CForm, CFormLabel, CFormInput, CFormTextarea, CFormSelect,
   CModal, CModalHeader, CModalTitle, CModalBody, CModalFooter,
-  CBadge, CSpinner
+  CAlert, CBadge, CSpinner, CTable, CTableHead, CTableRow, CTableHeaderCell, CTableBody, CTableDataCell
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 
@@ -392,9 +573,18 @@ const extractionSuccess = ref(false)
 const uploadError = ref('')
 const imageLoadError = ref(false)
 
+// AI suggestion state
+const suggestedItems = ref([])
+const showSuggestedItems = ref(false)
+const pendingInventoryItems = ref([])
+const showCreateInventoryModal = ref(false)
+const newInventoryItemData = ref({ name: '', unit: '', unit_cost: '', description: '' })
+const createInventoryIndex = ref(-1)
+
 const form = ref({
   organization_id: '',
   venue_id: '',
+  accommodation_id: '',
   category_id: '',
   subcategory: '',
   provider_id: '',
@@ -404,6 +594,15 @@ const form = ref({
   reference: '',
   receipt_url: '',
   notes: ''
+})
+
+// Accommodation selector
+const accommodations = ref([])
+const lockedAccommodation = computed(() => {
+  if (route.query.accommodation_id && !isEditing.value) {
+    return accommodations.value.find(a => a.id === route.query.accommodation_id)
+  }
+  return null
 })
 
 const providerSearch = ref('')
@@ -454,7 +653,11 @@ watch(() => form.value.venue_id, (newVenueId) => {
 })
 
 const goBack = () => {
-  router.push('/business/expenses')
+  if (route.query.accommodation_id) {
+    router.push(`/business/accommodations/${route.query.accommodation_id}`)
+  } else {
+    router.push('/business/expenses')
+  }
 }
 
 const onCategoryChange = () => {
@@ -605,6 +808,148 @@ const removeExpenseInventoryItem = async (id) => {
   }
 }
 
+// --- AI suggestion actions ---
+const confidenceColor = (confidence) => {
+  if (confidence === 'high') return 'success'
+  if (confidence === 'medium') return 'warning'
+  return 'secondary'
+}
+
+const acceptSuggestedItem = async (index) => {
+  const item = suggestedItems.value[index]
+  if (!item || item.added || !item.matched_inventory_id) return
+
+  if (isEditing.value) {
+    // Edit mode: POST directly to API
+    try {
+      const response = await fetch(`/api/expenses/${route.params.id}/inventory-items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          inventory_item_id: item.matched_inventory_id,
+          quantity: item.quantity || 1,
+          unit_cost: item.unit_cost || null,
+        })
+      })
+      if (response.ok) {
+        suggestedItems.value[index].added = true
+        await Promise.all([loadExpenseInventoryItems(), loadAvailableInventory()])
+      } else {
+        const err = await response.json()
+        alert(err.error || 'Error al agregar item')
+      }
+    } catch (error) {
+      console.error('Error adding suggested item:', error)
+    }
+  } else {
+    // Create mode: add to pending
+    const alreadyPending = pendingInventoryItems.value.some(
+      p => p.inventory_item_id === item.matched_inventory_id
+    )
+    if (!alreadyPending) {
+      pendingInventoryItems.value.push({
+        inventory_item_id: item.matched_inventory_id,
+        name: item.matched_inventory_name || item.name,
+        unit: item.unit || 'und',
+        quantity: item.quantity || 1,
+        unit_cost: item.unit_cost || null,
+      })
+    }
+    suggestedItems.value[index].added = true
+  }
+}
+
+const acceptAllMatchedItems = async () => {
+  for (let i = 0; i < suggestedItems.value.length; i++) {
+    const item = suggestedItems.value[i]
+    if (item.matched_inventory_id && !item.added) {
+      await acceptSuggestedItem(i)
+    }
+  }
+}
+
+const openCreateInventoryItem = (index) => {
+  const item = suggestedItems.value[index]
+  createInventoryIndex.value = index
+  newInventoryItemData.value = {
+    name: item.name || '',
+    unit: '',
+    unit_cost: item.unit_cost || '',
+    description: ''
+  }
+  showCreateInventoryModal.value = true
+}
+
+const createInventoryItemAndLink = async () => {
+  if (!newInventoryItemData.value.name) return
+
+  try {
+    // Create inventory item
+    const response = await fetch('/api/inventory', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        name: newInventoryItemData.value.name,
+        unit: newInventoryItemData.value.unit || 'und',
+        unit_cost: newInventoryItemData.value.unit_cost ? parseFloat(newInventoryItemData.value.unit_cost) : null,
+        description: newInventoryItemData.value.description || '',
+        venue_id: form.value.venue_id,
+        type: 'supply',
+        quantity: 0,
+      })
+    })
+
+    if (!response.ok) {
+      const err = await response.json()
+      alert(err.error || 'Error al crear item de inventario')
+      return
+    }
+
+    const newItem = await response.json()
+
+    // Update the suggested item with the new inventory ID
+    if (createInventoryIndex.value >= 0) {
+      suggestedItems.value[createInventoryIndex.value].matched_inventory_id = newItem.id
+      suggestedItems.value[createInventoryIndex.value].matched_inventory_name = newItem.name
+      suggestedItems.value[createInventoryIndex.value].confidence = 'high'
+      // Auto-add it
+      await acceptSuggestedItem(createInventoryIndex.value)
+    }
+
+    // Reload inventory list
+    await loadAvailableInventory()
+
+    showCreateInventoryModal.value = false
+    createInventoryIndex.value = -1
+  } catch (error) {
+    console.error('Error creating inventory item:', error)
+    alert('Error al crear item de inventario')
+  }
+}
+
+const loadAccommodations = async () => {
+  if (!form.value.venue_id) {
+    accommodations.value = []
+    return
+  }
+  try {
+    const response = await fetch(`/api/accommodations?venue_ids=${form.value.venue_id}`, { credentials: 'include' })
+    if (response.ok) {
+      accommodations.value = await response.json()
+    }
+  } catch (error) {
+    console.error('Error loading accommodations:', error)
+  }
+}
+
+const formatAccommodationLabel = (acc) => {
+  const date = acc.date ? new Date(acc.date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+  const customer = acc.customer_data?.fullname || ''
+  return `${date}${customer ? ' - ' + customer : ''}`
+}
+
 const loadOrganizations = async () => {
   try {
     const response = await fetch('/api/organizations', { credentials: 'include' })
@@ -647,6 +992,7 @@ const loadExpense = async () => {
       form.value = {
         organization_id: expense.organization_id || '',
         venue_id: expense.venue_id || '',
+        accommodation_id: expense.accommodation_id || '',
         category_id: expense.category_id || '',
         subcategory: expense.subcategory || '',
         provider_id: expense.provider_id || '',
@@ -724,40 +1070,77 @@ const pasteFromClipboard = async () => {
 
 const extractReceiptData = async () => {
   if (!form.value.receipt_url) return
-  
+
   extractingData.value = true
   extractionError.value = ''
   extractionSuccess.value = false
-  
+  suggestedItems.value = []
+  showSuggestedItems.value = false
+
   try {
-    const response = await fetch('/api/payments/extract-receipt', {
+    const response = await fetch('/api/expenses/analyze-receipt', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ imageUrl: form.value.receipt_url })
+      body: JSON.stringify({
+        imageUrl: form.value.receipt_url,
+        categories: categories.value.map(c => ({ id: c.id, name: c.name })),
+        subcategoryMap,
+        inventoryItems: availableInventoryItems.value.map(i => ({ id: i.id, name: i.name, unit: i.unit || 'und' }))
+      })
     })
-    
+
     const result = await response.json()
-    
+
     if (!response.ok) {
       throw new Error(result.error || 'Error al procesar comprobante')
     }
-    
+
     if (result.success && result.data) {
-      const { amount, reference, payment_date } = result.data
-      
+      const { amount, reference, expense_date, category_id, subcategory, description, line_items } = result.data
+
+      // Fill basic fields only if empty
       if (amount !== null && (!form.value.amount || Number(form.value.amount) === 0)) {
         form.value.amount = amount
       }
       if (reference && !form.value.reference) {
         form.value.reference = reference
       }
-      if (payment_date && !form.value.expense_date) {
-        form.value.expense_date = payment_date
+      if (expense_date && !form.value.expense_date) {
+        form.value.expense_date = expense_date
       }
-      
+      if (description && !form.value.description) {
+        form.value.description = description
+      }
+
+      // Auto-select category if empty and AI found a valid one
+      if (category_id && !form.value.category_id) {
+        const matchedCat = categories.value.find(c => c.id === category_id)
+        if (matchedCat) {
+          form.value.category_id = category_id
+          // Auto-select subcategory too
+          if (subcategory) {
+            const validSubs = subcategoryMap[matchedCat.name] || []
+            if (validSubs.includes(subcategory)) {
+              form.value.subcategory = subcategory
+            }
+          }
+        }
+      }
+
+      // Process line items
+      if (line_items && line_items.length > 0) {
+        // Filter out items already linked to this expense
+        const existingIds = new Set(expenseInventoryItems.value.map(ei => ei.inventory_item_id))
+        suggestedItems.value = line_items.map(item => ({
+          ...item,
+          added: existingIds.has(item.matched_inventory_id)
+        }))
+        showSuggestedItems.value = true
+      }
+
       extractionSuccess.value = true
-      setTimeout(() => { extractionSuccess.value = false }, 3000)
+      setTimeout(() => { extractionSuccess.value = false }, 5000)
     }
   } catch (error) {
     console.error('Extraction error:', error)
@@ -831,7 +1214,33 @@ const saveExpense = async () => {
     })
     
     if (response.ok) {
-      router.push('/business/expenses')
+      // If creating and there are pending inventory items, add them
+      if (!isEditing.value && pendingInventoryItems.value.length > 0) {
+        const created = await response.json()
+        const expenseId = created.id
+        for (const item of pendingInventoryItems.value) {
+          try {
+            await fetch(`/api/expenses/${expenseId}/inventory-items`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'include',
+              body: JSON.stringify({
+                inventory_item_id: item.inventory_item_id,
+                quantity: item.quantity,
+                unit_cost: item.unit_cost || null,
+              })
+            })
+          } catch (err) {
+            console.error('Error adding pending inventory item:', err)
+          }
+        }
+        pendingInventoryItems.value = []
+      }
+      if (route.query.accommodation_id) {
+        router.push(`/business/accommodations/${route.query.accommodation_id}`)
+      } else {
+        router.push('/business/expenses')
+      }
     } else {
       const error = await response.json()
       alert(error.error || 'Error al guardar el gasto')
@@ -844,13 +1253,20 @@ const saveExpense = async () => {
   }
 }
 
-watch(() => form.value.venue_id, () => {
-  if (isEditing.value) loadAvailableInventory()
+watch(() => form.value.venue_id, (newVal) => {
+  if (newVal) {
+    loadAvailableInventory()
+    loadAccommodations()
+  } else {
+    accommodations.value = []
+    form.value.accommodation_id = ''
+  }
 })
 
 onMounted(async () => {
   await Promise.all([loadOrganizations(), loadVenues(), loadCategories()])
 
+  // Handle venue_id query param (set synchronously so template renders immediately)
   if (route.query.venue_id && !isEditing.value) {
     form.value.venue_id = route.query.venue_id
     const venue = venues.value.find(v => String(v.id) === String(route.query.venue_id))
@@ -859,10 +1275,31 @@ onMounted(async () => {
     }
   }
 
+  // Handle accommodation_id query param (sets accommodation + may also set venue/org from API)
+  if (route.query.accommodation_id && !isEditing.value) {
+    form.value.accommodation_id = route.query.accommodation_id
+    try {
+      const accRes = await fetch(`/api/accommodations/${route.query.accommodation_id}`, { credentials: 'include' })
+      if (accRes.ok) {
+        const accData = await accRes.json()
+        if (accData.venue_data) {
+          form.value.venue_id = accData.venue_data.id
+          if (accData.venue_data.organization) {
+            form.value.organization_id = accData.venue_data.organization
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error loading accommodation:', e)
+    }
+  }
+
   await loadExpense()
 
   if (isEditing.value) {
-    await Promise.all([loadExpenseInventoryItems(), loadAvailableInventory()])
+    await Promise.all([loadExpenseInventoryItems(), loadAvailableInventory(), loadAccommodations()])
+  } else if (form.value.venue_id) {
+    await Promise.all([loadAvailableInventory(), loadAccommodations()])
   }
 })
 </script>

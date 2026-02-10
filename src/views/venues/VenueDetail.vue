@@ -101,6 +101,9 @@
               <RouterLink :to="{ path: '/business/expenses', query: { venue_id: venue.id } }">
                 <CButton color="warning" size="sm">Egresos</CButton>
               </RouterLink>
+              <RouterLink :to="{ path: '/business/expenses/create', query: { venue_id: venue.id } }">
+                <CButton color="warning" size="sm" variant="outline">+ Egreso</CButton>
+              </RouterLink>
               <RouterLink :to="{ path: '/next', query: { venues: venue.id } }">
                 <CButton color="info" size="sm">Próximos</CButton>
               </RouterLink>

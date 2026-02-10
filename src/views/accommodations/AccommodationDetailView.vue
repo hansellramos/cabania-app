@@ -111,6 +111,22 @@
                   </div>
                 </div>
               </div>
+              <div class="row g-3 mt-2">
+                <div class="col-md-6">
+                  <div class="p-3 border rounded text-center">
+                    <h6 class="text-muted mb-2">Total Egresos</h6>
+                    <p class="fs-4 fw-bold text-warning mb-0">{{ formatCurrency(totalExpenses) }}</p>
+                  </div>
+                </div>
+                <div class="col-md-6">
+                  <div class="p-3 border rounded text-center" :class="{ 'border-success': profit >= 0, 'border-danger': profit < 0 }">
+                    <h6 class="text-muted mb-2">Ganancia</h6>
+                    <p class="fs-4 fw-bold mb-0" :class="{ 'text-success': profit >= 0, 'text-danger': profit < 0 }">
+                      {{ formatCurrency(profit) }}
+                    </p>
+                  </div>
+                </div>
+              </div>
             </CCol>
           </CRow>
           <hr />
@@ -326,6 +342,46 @@
                 :accommodation-id="route.params.id"
                 :accommodation="accommodation"
               />
+              <hr class="my-3" />
+              <div class="d-flex justify-content-between align-items-center mb-3">
+                <h5 class="mb-0">Egresos del Evento</h5>
+                <CButton
+                  color="warning"
+                  size="sm"
+                  @click="$router.push(`/business/expenses/create?accommodation_id=${route.params.id}&venue_id=${accommodation.venue}`)"
+                >
+                  Registrar Egreso
+                </CButton>
+              </div>
+              <CTable hover responsive v-if="expenses.length > 0">
+                <CTableHead>
+                  <CTableRow>
+                    <CTableHeaderCell>Fecha</CTableHeaderCell>
+                    <CTableHeaderCell>Categoría</CTableHeaderCell>
+                    <CTableHeaderCell>Monto</CTableHeaderCell>
+                    <CTableHeaderCell class="d-mobile-none">Descripción</CTableHeaderCell>
+                  </CTableRow>
+                </CTableHead>
+                <CTableBody>
+                  <CTableRow v-for="expense in expenses" :key="expense.id">
+                    <CTableDataCell>{{ formatPaymentDate(expense.expense_date) }}</CTableDataCell>
+                    <CTableDataCell>
+                      <CBadge v-if="expense.category" :color="expense.category.color || 'secondary'">
+                        {{ expense.category?.name || '-' }}
+                      </CBadge>
+                      <span v-else>-</span>
+                    </CTableDataCell>
+                    <CTableDataCell>{{ formatCurrency(expense.amount) }}</CTableDataCell>
+                    <CTableDataCell class="d-mobile-none">{{ expense.description || '-' }}</CTableDataCell>
+                  </CTableRow>
+                </CTableBody>
+              </CTable>
+              <div v-else class="text-muted text-center py-3">
+                No hay egresos registrados para este hospedaje
+              </div>
+              <div v-if="expenses.length > 0" class="mt-2 p-2 border rounded">
+                <strong>Total egresos:</strong> {{ formatCurrency(totalExpenses) }}
+              </div>
             </CCol>
           </CRow>
         </CCardBody>
@@ -577,6 +633,7 @@ const selectedPayment = ref(null)
 const receiptLoadError = ref(false)
 const verifying = ref(false)
 
+const expenses = ref([])
 const deposit = ref(null)
 const showRefundModal = ref(false)
 const showClaimModal = ref(false)
@@ -707,6 +764,14 @@ const pendingBalance = computed(() => {
   return agreedPrice.value - totalPaid.value
 })
 
+const totalExpenses = computed(() => {
+  return expenses.value.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
+})
+
+const profit = computed(() => {
+  return agreedPrice.value - totalExpenses.value
+})
+
 const hasDiscount = computed(() => {
   if (!accommodation.value) return false
   const calc = parseFloat(accommodation.value.calculated_price) || 0
@@ -813,6 +878,17 @@ function calcCheckout(timeStr, duration, dateStr) {
   
   return end.toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' }) + 
     ' ' + String(end.getUTCHours()).padStart(2, '0') + ':' + String(end.getUTCMinutes()).padStart(2, '0')
+}
+
+async function loadExpenses() {
+  try {
+    const res = await fetch(`/api/expenses?accommodation_id=${route.params.id}`, { credentials: 'include' })
+    if (res.ok) {
+      expenses.value = await res.json()
+    }
+  } catch (error) {
+    console.error('Error loading expenses:', error)
+  }
 }
 
 async function loadDeposit() {
@@ -1004,5 +1080,6 @@ onMounted(() => {
   load()
   loadPayments()
   loadDeposit()
+  loadExpenses()
 })
 </script>
