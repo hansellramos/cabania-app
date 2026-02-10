@@ -1,6 +1,7 @@
 const data = [
   { name: 'Arreglos', description: 'Reparaciones y arreglos generales', icon: 'cilCog', color: '#4f5d73', is_system: true, is_active: true },
   { name: 'Construcción', description: 'Gastos de construcción y obras', icon: 'cilBuilding', color: '#321fdb', is_system: true, is_active: true },
+  { name: 'Donaciones', description: 'Donaciones y contribuciones voluntarias a terceros', icon: 'cilGift', color: '#e44d26', is_system: true, is_active: true },
   { name: 'Impuestos', description: 'Pago de impuestos y contribuciones', icon: 'cilFile', color: '#e55353', is_system: true, is_active: true },
   { name: 'Insumos', description: 'Compra de materiales y suministros', icon: 'cilCart', color: '#2eb85c', is_system: true, is_active: true },
   { name: 'Jardinería', description: 'Gastos de jardinería y áreas verdes', icon: 'cilFlower', color: '#6610f2', is_system: true, is_active: true },

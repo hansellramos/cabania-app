@@ -1,7 +1,7 @@
 const data = [
   { setting_key: 'customer_chat', provider_code: 'xai_grok', model: 'grok-3-mini' },
   { setting_key: 'message_suggestions', provider_code: 'xai_grok', model: 'grok-3-mini' },
-  { setting_key: 'receipt_extraction', provider_code: 'xai_grok', model: 'grok-3-mini' },
+  { setting_key: 'receipt_extraction', provider_code: 'xai_grok', model: 'grok-4-fast-reasoning' },
 ];
 
 async function seed(prisma) {

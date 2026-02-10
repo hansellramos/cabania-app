@@ -3154,13 +3154,15 @@ async function startServer() {
         }
       }
       
-      const expense = await prisma.expenses.create({
-        data: {
-          ...req.body,
-          expense_date: new Date(req.body.expense_date),
-          created_by: userId
-        }
-      });
+      const data = { ...req.body };
+      // Convert empty strings to null for optional fields
+      for (const key of ['accommodation_id', 'subcategory', 'notes', 'provider_id', 'receipt_url', 'reference']) {
+        if (data[key] === '') data[key] = null;
+      }
+      data.expense_date = new Date(data.expense_date);
+      data.created_by = userId;
+
+      const expense = await prisma.expenses.create({ data });
       res.json(expense);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -3186,6 +3188,10 @@ async function startServer() {
       }
       
       const updateData = { ...req.body, updated_at: new Date(), updated_by: userId };
+      // Convert empty strings to null for optional fields
+      for (const key of ['accommodation_id', 'subcategory', 'notes', 'provider_id', 'receipt_url', 'reference']) {
+        if (updateData[key] === '') updateData[key] = null;
+      }
       if (req.body.expense_date) {
         updateData.expense_date = new Date(req.body.expense_date);
       }
@@ -3230,7 +3236,7 @@ async function startServer() {
   app.post('/api/expenses/analyze-receipt', isAuthenticated, async (req, res) => {
     const startTime = Date.now();
     try {
-      const { imageUrl, categories, subcategoryMap, inventoryItems } = req.body;
+      const { imageUrl, categories, subcategoryMap, inventoryItems, organization_id } = req.body;
       console.log(`[analyze-receipt] Starting for: ${imageUrl?.substring(0, 50)}...`);
       if (!imageUrl) {
         return res.status(400).json({ error: 'Se requiere la URL de la imagen' });
@@ -3238,6 +3244,18 @@ async function startServer() {
 
       const { model, generateObject, z } = await getAIModelForReceipt('[analyze-receipt]');
       const { base64Image, mediaType } = await fetchReceiptImage(imageUrl, '[analyze-receipt]');
+
+      // Fetch existing providers for matching
+      let providers = [];
+      try {
+        providers = await prisma.providers.findMany({
+          where: organization_id ? { organization_id } : {},
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' }
+        });
+      } catch (e) {
+        console.warn('[analyze-receipt] Could not fetch providers:', e.message);
+      }
 
       // Build context sections for the prompt
       let categoriesContext = '';
@@ -3255,6 +3273,11 @@ async function startServer() {
         inventoryContext = `\nITEMS DE INVENTARIO EXISTENTES (usa el ID exacto si hay coincidencia):\n${inventoryItems.map(i => `- ID: "${i.id}" | Nombre: "${i.name}" | Unidad: "${i.unit || 'und'}"`).join('\n')}`;
       }
 
+      let providersContext = '';
+      if (providers.length > 0) {
+        providersContext = `\nPROVEEDORES EXISTENTES (si el emisor del recibo coincide con alguno, usa su nombre exacto):\n${providers.map(p => `- "${p.name}"`).join('\n')}`;
+      }
+
       const prompt = `Analiza esta imagen de un recibo, factura o comprobante de compra y extrae la informacion detallada.
 
 INSTRUCCIONES:
@@ -3267,11 +3290,13 @@ INSTRUCCIONES:
    - Asigna matched_inventory_id SOLO si hay coincidencia clara (mismo producto o equivalente directo).
    - confidence: "high" si el nombre coincide bien, "medium" si es probable, "low" si es incierto.
    - Si no hay inventario o no hay match, deja matched_inventory_id como null.
+7. Identifica el nombre del establecimiento, tienda, proveedor o emisor del recibo (quien vendio o presto el servicio).${providersContext}
 
 Si algun dato no esta visible o no se puede determinar, devuelve null para ese campo.
 Presta atencion a recibos de tiendas, ferreterias, supermercados, peajes, servicios y proveedores colombianos.
 Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CUDE/CUFE que es un hash largo).`;
 
+      console.log(`[analyze-receipt] Prompt:\n${prompt}`);
       const aiStartTime = Date.now();
       const result = await generateObject({
         model,
@@ -3298,12 +3323,27 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
             matched_inventory_id: z.string().nullable().describe('ID del item de inventario coincidente, o null'),
             matched_inventory_name: z.string().nullable().describe('Nombre del item de inventario coincidente'),
             confidence: z.enum(['high', 'medium', 'low']).describe('Confianza en la coincidencia')
-          })).describe('Items individuales del recibo, array vacio si no hay desglose')
+          })).describe('Items individuales del recibo, array vacio si no hay desglose'),
+          provider_name: z.string().nullable().describe('Nombre del establecimiento, tienda o proveedor que emitio el recibo')
         })
       });
 
-      console.log(`[analyze-receipt] Done in ${Date.now() - startTime}ms (AI: ${Date.now() - aiStartTime}ms)`, JSON.stringify(result.object));
-      res.json({ success: true, data: result.object });
+      // Try to match provider by name (case-insensitive)
+      const data = { ...result.object };
+      data.matched_provider_id = null;
+      data.matched_provider_name = null;
+      if (data.provider_name && providers.length > 0) {
+        const aiName = data.provider_name.toLowerCase().trim();
+        const match = providers.find(p => p.name.toLowerCase().trim() === aiName)
+          || providers.find(p => aiName.includes(p.name.toLowerCase().trim()) || p.name.toLowerCase().trim().includes(aiName));
+        if (match) {
+          data.matched_provider_id = match.id;
+          data.matched_provider_name = match.name;
+        }
+      }
+
+      console.log(`[analyze-receipt] Done in ${Date.now() - startTime}ms (AI: ${Date.now() - aiStartTime}ms)`, JSON.stringify(data));
+      res.json({ success: true, data });
     } catch (error) {
       console.error(`[analyze-receipt] Error after ${Date.now() - startTime}ms:`, error);
       res.status(500).json({ error: 'Error al analizar el recibo', details: error.message });
@@ -4313,23 +4353,26 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
     const apiKey = llmService.getApiKeyForProvider(providerCode);
     if (!apiKey) throw new Error(`API key no configurada (${modelConfig.env_key})`);
 
+    // Use model from ai_settings if available, otherwise fallback to hardcoded
+    const modelName = aiSetting?.model || modelConfig.model;
+
     const { generateObject } = await import('ai');
     const { z } = await import('zod');
 
     let model;
     if (modelConfig.provider === 'anthropic') {
       const { anthropic } = await import('@ai-sdk/anthropic');
-      model = anthropic(modelConfig.model);
+      model = anthropic(modelName);
     } else if (providerCode.startsWith('openai')) {
       const { openai } = await import('@ai-sdk/openai');
-      model = openai(modelConfig.model);
+      model = openai(modelName);
     } else {
       const { createOpenAI } = await import('@ai-sdk/openai');
       const provider = createOpenAI({ apiKey, baseURL: modelConfig.base_url });
-      model = provider(modelConfig.model);
+      model = provider(modelName);
     }
 
-    console.log(`${logPrefix} Model ready: ${modelConfig.model} (${providerCode})`);
+    console.log(`${logPrefix} Model ready: ${modelName} (${providerCode})`);
     return { model, generateObject, z, modelConfig, providerCode };
   }
 

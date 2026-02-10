@@ -414,10 +414,30 @@
                     </thead>
                     <tbody>
                       <tr v-for="(item, index) in suggestedItems" :key="index" :class="{ 'table-success': item.added }">
-                        <td>{{ item.name }}</td>
-                        <td class="text-end">{{ item.quantity }}</td>
-                        <td class="text-end">{{ item.unit_cost ? formatCurrency(item.unit_cost) : '-' }}</td>
-                        <td class="text-end">{{ item.subtotal ? formatCurrency(item.subtotal) : '-' }}</td>
+                        <td>
+                          <template v-if="item.editing">
+                            <CFormInput v-model="item.name" size="sm" />
+                          </template>
+                          <template v-else>{{ item.name }}</template>
+                        </td>
+                        <td class="text-end">
+                          <template v-if="item.editing">
+                            <CFormInput v-model.number="item.quantity" type="number" size="sm" min="0" step="1" style="width: 70px;" class="ms-auto" />
+                          </template>
+                          <template v-else>{{ item.quantity }}</template>
+                        </td>
+                        <td class="text-end">
+                          <template v-if="item.editing">
+                            <CFormInput v-model.number="item.unit_cost" type="number" size="sm" min="0" step="0.01" style="width: 100px;" class="ms-auto" />
+                          </template>
+                          <template v-else>{{ item.unit_cost ? formatCurrency(item.unit_cost) : '-' }}</template>
+                        </td>
+                        <td class="text-end">
+                          <template v-if="item.editing">
+                            <CFormInput v-model.number="item.subtotal" type="number" size="sm" min="0" step="0.01" style="width: 100px;" class="ms-auto" />
+                          </template>
+                          <template v-else>{{ item.subtotal ? formatCurrency(item.subtotal) : '-' }}</template>
+                        </td>
                         <td>
                           <CBadge v-if="item.matched_inventory_name" :color="confidenceColor(item.confidence)">
                             {{ item.matched_inventory_name }}
@@ -425,19 +445,30 @@
                           <span v-else class="text-muted small">Sin coincidencia</span>
                         </td>
                         <td>
-                          <template v-if="item.added">
-                            <CIcon name="cil-check-circle" class="text-success" />
-                          </template>
-                          <template v-else-if="item.matched_inventory_id">
-                            <CButton color="success" size="sm" @click="acceptSuggestedItem(index)">
-                              <CIcon name="cil-plus" class="me-1" />Agregar
+                          <div class="d-flex gap-1">
+                            <template v-if="item.added">
+                              <CIcon name="cil-check-circle" class="text-success mt-1" />
+                            </template>
+                            <template v-else-if="item.editing">
+                              <CButton color="success" size="sm" variant="ghost" @click="item.editing = false" title="Listo">
+                                <CIcon name="cil-check" />
+                              </CButton>
+                            </template>
+                            <template v-else>
+                              <CButton v-if="item.matched_inventory_id" color="success" size="sm" variant="ghost" @click="acceptSuggestedItem(index)" title="Agregar">
+                                <CIcon name="cil-plus" />
+                              </CButton>
+                              <CButton v-else color="warning" size="sm" variant="ghost" @click="openCreateInventoryItem(index)" title="Crear">
+                                <CIcon name="cil-library-add" />
+                              </CButton>
+                              <CButton color="info" size="sm" variant="ghost" @click="item.editing = true" title="Editar">
+                                <CIcon name="cil-pencil" />
+                              </CButton>
+                            </template>
+                            <CButton v-if="!item.added" color="danger" size="sm" variant="ghost" @click="removeSuggestedItem(index)" title="Eliminar">
+                              <CIcon name="cil-trash" />
                             </CButton>
-                          </template>
-                          <template v-else>
-                            <CButton color="warning" size="sm" @click="openCreateInventoryItem(index)">
-                              <CIcon name="cil-library-add" class="me-1" />Crear
-                            </CButton>
-                          </template>
+                          </div>
                         </td>
                       </tr>
                     </tbody>
@@ -869,6 +900,13 @@ const acceptAllMatchedItems = async () => {
   }
 }
 
+const removeSuggestedItem = (index) => {
+  suggestedItems.value.splice(index, 1)
+  if (suggestedItems.value.length === 0) {
+    showSuggestedItems.value = false
+  }
+}
+
 const openCreateInventoryItem = (index) => {
   const item = suggestedItems.value[index]
   createInventoryIndex.value = index
@@ -1086,7 +1124,8 @@ const extractReceiptData = async () => {
         imageUrl: form.value.receipt_url,
         categories: categories.value.map(c => ({ id: c.id, name: c.name })),
         subcategoryMap,
-        inventoryItems: availableInventoryItems.value.map(i => ({ id: i.id, name: i.name, unit: i.unit || 'und' }))
+        inventoryItems: availableInventoryItems.value.map(i => ({ id: i.id, name: i.name, unit: i.unit || 'und' })),
+        organization_id: form.value.organization_id || null
       })
     })
 
@@ -1097,7 +1136,7 @@ const extractReceiptData = async () => {
     }
 
     if (result.success && result.data) {
-      const { amount, reference, expense_date, category_id, subcategory, description, line_items } = result.data
+      const { amount, reference, expense_date, category_id, subcategory, description, line_items, matched_provider_id, matched_provider_name, provider_name } = result.data
 
       // Fill basic fields only if empty
       if (amount !== null && (!form.value.amount || Number(form.value.amount) === 0)) {
@@ -1128,13 +1167,24 @@ const extractReceiptData = async () => {
         }
       }
 
+      // Auto-select or pre-fill provider if not already set
+      if (!form.value.provider_id) {
+        if (matched_provider_id) {
+          selectProvider({ id: matched_provider_id, name: matched_provider_name })
+        } else if (provider_name) {
+          providerSearch.value = provider_name
+          showProviderSuggestions.value = false
+        }
+      }
+
       // Process line items
       if (line_items && line_items.length > 0) {
         // Filter out items already linked to this expense
         const existingIds = new Set(expenseInventoryItems.value.map(ei => ei.inventory_item_id))
         suggestedItems.value = line_items.map(item => ({
           ...item,
-          added: existingIds.has(item.matched_inventory_id)
+          added: existingIds.has(item.matched_inventory_id),
+          editing: false
         }))
         showSuggestedItems.value = true
       }
