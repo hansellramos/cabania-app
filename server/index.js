@@ -6591,24 +6591,30 @@ REGLAS:
 
       const accommodation = await prisma.accommodations.findUnique({ where: { id: accommodation_id } });
       if (!accommodation) return res.status(404).json({ error: 'Evento no encontrado' });
-      if (!accommodation.plan_id) return res.status(400).json({ error: 'El evento no tiene un plan asignado' });
+
+      // No plan assigned — return graceful info response
+      if (!accommodation.plan_id) {
+        return res.json({ no_agent: true, message: 'El evento no tiene un plan asignado' });
+      }
 
       const plan = await prisma.venue_plans.findUnique({ where: { id: accommodation.plan_id } });
-      if (!plan) return res.status(404).json({ error: 'Plan no encontrado' });
+      if (!plan) return res.json({ no_agent: true, message: 'Plan no encontrado' });
 
       const agent = await prisma.commission_agents.findFirst({
         where: { venue_id: accommodation.venue, is_active: true },
         include: { provider: true, rules: { where: { plan_type: plan.plan_type }, orderBy: { sort_order: 'asc' } } }
       });
 
-      if (!agent) return res.json({ has_agent: false, message: 'No hay comisionista asignado para esta sede' });
-      if (!agent.rules.length) return res.json({ has_agent: true, agent: { id: agent.id, name: agent.name, provider: agent.provider }, no_rules: true, message: `No hay reglas configuradas para tipo "${plan.plan_type}"` });
+      const agentInfo = (a) => ({ id: a.id, name: a.name, provider_name: a.provider?.name || null });
+
+      if (!agent) return res.json({ no_agent: true, message: 'No hay comisionista asignado para esta sede' });
+      if (!agent.rules.length) return res.json({ agent: agentInfo(agent), no_rules: true, message: `No hay reglas configuradas para tipo "${plan.plan_type}"` });
 
       const adults = accommodation.adults || 0;
       const agreedPrice = parseFloat(accommodation.agreed_price || accommodation.calculated_price || 0);
 
       if (adults === 0 || agreedPrice === 0) {
-        return res.json({ has_agent: true, agent: { id: agent.id, name: agent.name, provider: agent.provider }, total_commission: 0, breakdown: [], message: 'Sin adultos o precio para calcular' });
+        return res.json({ agent: agentInfo(agent), total_commission: 0, breakdown: [], message: 'Sin adultos o precio para calcular' });
       }
 
       const perAdultPrice = agreedPrice / adults;
@@ -6623,12 +6629,12 @@ REGLAS:
         const tierAmount = inTier * perAdultPrice * (parseFloat(rule.rate_percent) / 100);
 
         breakdown.push({
-          min_adults: rule.min_adults,
-          max_adults: rule.max_adults,
+          range_min: rule.min_adults,
+          range_max: rule.max_adults,
           adults_in_tier: inTier,
-          rate_percent: parseFloat(rule.rate_percent),
+          commission_percent: parseFloat(rule.rate_percent),
           per_adult_price: Math.round(perAdultPrice),
-          tier_amount: Math.round(tierAmount)
+          subtotal: Math.round(tierAmount)
         });
 
         totalCommission += tierAmount;
@@ -6641,8 +6647,7 @@ REGLAS:
       });
 
       res.json({
-        has_agent: true,
-        agent: { id: agent.id, name: agent.name, provider: agent.provider },
+        agent: agentInfo(agent),
         accommodation: { id: accommodation.id, adults, agreed_price: agreedPrice, plan_type: plan.plan_type },
         total_commission: Math.round(totalCommission),
         breakdown,

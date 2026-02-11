@@ -17,10 +17,10 @@
             {{ error }}
           </CAlert>
 
-          <!-- No agent assigned -->
+          <!-- No agent assigned / no plan -->
           <CAlert v-else-if="result && result.no_agent" color="info">
-            No hay comisionista asignado para esta sede.
-            <RouterLink to="/business/commissions/agents/create" class="alert-link ms-1">
+            {{ result.message || 'No hay comisionista asignado para esta sede.' }}
+            <RouterLink v-if="!result.message?.includes('plan')" to="/business/commissions/agents/create" class="alert-link ms-1">
               Crear comisionista
             </RouterLink>
           </CAlert>
@@ -29,8 +29,8 @@
           <CAlert v-else-if="result && result.no_rules" color="warning">
             {{ result.message || 'El comisionista no tiene reglas de comision configuradas.' }}
             <RouterLink
-              v-if="result.agent_id"
-              :to="`/business/commissions/agents/${result.agent_id}/edit`"
+              v-if="result.agent?.id"
+              :to="`/business/commissions/agents/${result.agent.id}/edit`"
               class="alert-link ms-1"
             >
               Editar comisionista
