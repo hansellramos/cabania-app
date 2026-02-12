@@ -4,6 +4,58 @@
 @use "@coreui/chartjs/scss/coreui-chartjs";
 @use "vendors/simplebar";
 
+// ============================================
+// CABANIA DESIGN TOKENS
+// ============================================
+
+:root {
+  // Backgrounds
+  --cabania-bg: #020617;
+  --cabania-card-bg: rgba(255, 255, 255, 0.05);
+  --cabania-input-bg: rgba(2, 6, 23, 0.4);
+  --cabania-hover-bg: rgba(255, 255, 255, 0.05);
+  --cabania-active-bg: rgba(16, 185, 129, 0.15);
+
+  // Borders
+  --cabania-border: rgba(255, 255, 255, 0.15);
+  --cabania-border-subtle: rgba(255, 255, 255, 0.1);
+  --cabania-active-border: rgba(16, 185, 129, 0.25);
+  --cabania-focus-border: rgba(14, 165, 233, 0.5);
+
+  // Text
+  --cabania-text: #f1f5f9;
+  --cabania-text-secondary: #cbd5e1;
+  --cabania-text-muted: #94a3b8;
+  --cabania-text-dim: #64748b;
+
+  // Accent colors
+  --cabania-emerald: #10b981;
+  --cabania-sky: #0ea5e9;
+  --cabania-gradient: linear-gradient(135deg, #10b981, #0ea5e9);
+
+  // Accent with opacity (for backgrounds)
+  --cabania-emerald-glow: rgba(16, 185, 129, 0.2);
+  --cabania-emerald-glow-subtle: rgba(16, 185, 129, 0.1);
+  --cabania-sky-glow: rgba(14, 165, 233, 0.2);
+  --cabania-emerald-shadow: rgba(16, 185, 129, 0.15);
+
+  // Danger / error
+  --cabania-danger-border: rgba(239, 68, 68, 0.3);
+  --cabania-danger-bg: rgba(239, 68, 68, 0.1);
+  --cabania-danger-text: #fca5a5;
+
+  // Shadows
+  --cabania-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+  --cabania-shadow-sm: 0 2px 8px rgba(16, 185, 129, 0.15);
+  --cabania-shadow-md: 0 4px 12px rgba(16, 185, 129, 0.15);
+
+  // Radii
+  --cabania-radius-sm: 0.5rem;
+  --cabania-radius: 0.75rem;
+  --cabania-radius-lg: 1rem;
+  --cabania-radius-xl: 1.5rem;
+}
+
 body {
   background-color: var(--cui-tertiary-bg);
 }
@@ -169,12 +221,12 @@ body {
 // ============================================
 
 .cabania-sidebar {
-  --cui-sidebar-bg: #020617;
-  --cui-sidebar-border-color: rgba(255, 255, 255, 0.1);
+  --cui-sidebar-bg: var(--cabania-bg);
+  --cui-sidebar-border-color: var(--cabania-border-subtle);
 
   // Nav titles (section headers)
   .nav-title {
-    color: #64748b;
+    color: var(--cabania-text-dim);
     font-size: 0.65rem;
     font-weight: 800;
     letter-spacing: 0.08em;
@@ -184,48 +236,48 @@ body {
 
   // Nav links
   .nav-link {
-    color: #cbd5e1;
+    color: var(--cabania-text-secondary);
     font-size: 0.8125rem;
     font-weight: 600;
-    border-radius: 0.5rem;
+    border-radius: var(--cabania-radius-sm);
     margin: 1px 0.5rem;
     padding: 0.5rem 0.75rem;
     transition: background 0.15s, color 0.15s;
 
     &:hover {
-      color: #f1f5f9;
-      background: rgba(255, 255, 255, 0.05);
+      color: var(--cabania-text);
+      background: var(--cabania-hover-bg);
     }
 
     &.active {
-      color: #f1f5f9;
-      background: rgba(16, 185, 129, 0.15);
-      border: 1px solid rgba(16, 185, 129, 0.25);
+      color: var(--cabania-text);
+      background: var(--cabania-active-bg);
+      border: 1px solid var(--cabania-active-border);
     }
 
     .nav-icon {
-      color: #64748b;
+      color: var(--cabania-text-dim);
       transition: color 0.15s;
     }
 
     &:hover .nav-icon,
     &.active .nav-icon {
-      color: #10b981;
+      color: var(--cabania-emerald);
     }
   }
 
   // Nav groups
   .nav-group-toggle {
-    color: #cbd5e1;
+    color: var(--cabania-text-secondary);
     font-size: 0.8125rem;
     font-weight: 600;
-    border-radius: 0.5rem;
+    border-radius: var(--cabania-radius-sm);
     margin: 1px 0.5rem;
     padding: 0.5rem 0.75rem;
 
     &:hover {
-      color: #f1f5f9;
-      background: rgba(255, 255, 255, 0.05);
+      color: var(--cabania-text);
+      background: var(--cabania-hover-bg);
     }
 
     &::after {
@@ -235,28 +287,28 @@ body {
 
   // Header
   .cabania-sidebar__header {
-    border-bottom-color: rgba(255, 255, 255, 0.1) !important;
+    border-bottom-color: var(--cabania-border-subtle) !important;
   }
 
   // Footer / toggler
   .sidebar-footer {
-    border-top-color: rgba(255, 255, 255, 0.1) !important;
+    border-top-color: var(--cabania-border-subtle) !important;
   }
 
   .sidebar-toggler {
-    color: #64748b;
+    color: var(--cabania-text-dim);
     background: transparent;
     border-color: transparent;
 
     &:hover {
-      color: #f1f5f9;
-      background: rgba(255, 255, 255, 0.05);
+      color: var(--cabania-text);
+      background: var(--cabania-hover-bg);
     }
   }
 
   // Scrollbar
   .simplebar-scrollbar::before {
-    background: rgba(255, 255, 255, 0.15);
+    background: var(--cabania-border);
   }
 }
 
@@ -277,9 +329,9 @@ body {
   width: 2rem;
   height: 2rem;
   border-radius: 0.625rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: linear-gradient(135deg, #10b981, #0ea5e9);
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.15);
+  border: 1px solid var(--cabania-border);
+  background: var(--cabania-gradient);
+  box-shadow: var(--cabania-shadow-sm);
   color: white;
   flex-shrink: 0;
 }
@@ -288,7 +340,7 @@ body {
   font-size: 1.125rem;
   font-weight: 800;
   letter-spacing: -0.02em;
-  color: #f1f5f9;
+  color: var(--cabania-text);
 }
 
 .cabania-sidebar__logo-narrow {
