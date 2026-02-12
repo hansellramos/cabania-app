@@ -1,187 +1,227 @@
 <template>
   <div>
-    <div class="cabania-filters mb-4">
-      <div class="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-2">
-        <h4 class="mb-0" style="font-weight: 800;">Análisis de Hospedajes</h4>
-        <div class="d-flex align-items-center gap-3 flex-wrap">
-          <div class="position-relative" style="min-width: 200px; max-width: 300px;">
-            <CFormInput
-              v-model="orgSearch"
-              placeholder="Filtrar por organizaciones..."
-              @input="onOrgSearchInput"
-              @focus="showOrgDropdown = true"
-              @blur="hideOrgDropdownWithDelay"
-              autocomplete="off"
-            />
-            <div v-if="showOrgDropdown && filteredOrganizations.length > 0" class="dropdown-menu show position-absolute w-100" style="max-height: 200px; overflow-y: auto; z-index: 1000;">
-              <button
-                v-for="org in filteredOrganizations"
+    <CRow class="mb-4">
+      <CCol :xs="12">
+        <CCard>
+          <CCardBody>
+            <div class="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-2">
+              <h4 class="mb-0">Análisis de Hospedajes</h4>
+              <div class="d-flex align-items-center gap-3 flex-wrap">
+                <div class="position-relative" style="min-width: 200px; max-width: 300px;">
+                  <CFormInput
+                    v-model="orgSearch"
+                    placeholder="Filtrar por organizaciones..."
+                    @input="onOrgSearchInput"
+                    @focus="showOrgDropdown = true"
+                    @blur="hideOrgDropdownWithDelay"
+                    autocomplete="off"
+                  />
+                  <div v-if="showOrgDropdown && filteredOrganizations.length > 0" class="dropdown-menu show position-absolute w-100" style="max-height: 200px; overflow-y: auto; z-index: 1000;">
+                    <button
+                      v-for="org in filteredOrganizations"
+                      :key="org.id"
+                      class="dropdown-item"
+                      @mousedown.prevent="selectOrganization(org)"
+                    >
+                      {{ org.name }}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div v-if="selectedOrganizations.length > 0" class="mt-2 d-flex flex-wrap gap-2">
+              <CBadge
+                v-for="org in selectedOrganizations"
                 :key="org.id"
-                class="dropdown-item"
-                @mousedown.prevent="selectOrganization(org)"
+                color="primary"
+                class="d-flex align-items-center gap-1 px-2 py-1"
+                style="cursor: pointer;"
+                @click="removeOrganization(org)"
               >
                 {{ org.name }}
-              </button>
+                <span class="ms-1">&times;</span>
+              </CBadge>
+              <CButton
+                v-if="selectedOrganizations.length > 1"
+                color="secondary"
+                size="sm"
+                variant="ghost"
+                @click="clearAllOrganizations"
+              >
+                Limpiar todos
+              </CButton>
             </div>
-          </div>
-        </div>
-      </div>
-      <div v-if="selectedOrganizations.length > 0" class="mt-2 d-flex flex-wrap gap-2">
-        <CBadge
-          v-for="org in selectedOrganizations"
-          :key="org.id"
-          class="d-flex align-items-center gap-1 px-2 py-1"
-          style="cursor: pointer;"
-          @click="removeOrganization(org)"
-        >
-          {{ org.name }}
-          <span class="ms-1">&times;</span>
-        </CBadge>
-        <button
-          v-if="selectedOrganizations.length > 1"
-          class="btn btn-sm"
-          style="color: var(--cabania-text-muted); font-size: 0.75rem;"
-          @click="clearAllOrganizations"
-        >
-          Limpiar todos
-        </button>
-      </div>
-    </div>
-
-    <CRow class="mb-4 g-3">
-      <CCol :xs="4" :lg="2">
-        <div class="cabania-metric cabania-metric--slate">
-          <div class="cabania-metric__value">{{ totalAccommodationsLast12 }}</div>
-          <div class="cabania-metric__label">Últimos 12M</div>
-        </div>
-      </CCol>
-      <CCol :xs="4" :lg="2">
-        <div class="cabania-metric cabania-metric--slate">
-          <div class="cabania-metric__value">{{ totalAccommodationsLast3 }}</div>
-          <div class="cabania-metric__label">Últimos 3M</div>
-        </div>
-      </CCol>
-      <CCol :xs="4" :lg="2">
-        <div class="cabania-metric cabania-metric--sky">
-          <div class="cabania-metric__value">{{ totalAccommodationsPreviousMonth }}</div>
-          <div class="cabania-metric__label">Mes Anterior</div>
-        </div>
-      </CCol>
-      <CCol :xs="4" :lg="2">
-        <div class="cabania-metric cabania-metric--emerald">
-          <div class="cabania-metric__value">{{ totalAccommodationsThisMonth }}</div>
-          <div class="cabania-metric__label">Este Mes</div>
-        </div>
-      </CCol>
-      <CCol :xs="4" :lg="2">
-        <div class="cabania-metric cabania-metric--amber">
-          <div class="cabania-metric__value">{{ totalAccommodationsNext3 }}</div>
-          <div class="cabania-metric__label">Próximos 3M</div>
-        </div>
-      </CCol>
-      <CCol :xs="4" :lg="2">
-        <div class="cabania-metric cabania-metric--emerald">
-          <div class="cabania-metric__value">{{ totalAccommodationsNext12 }}</div>
-          <div class="cabania-metric__label">Próximos 12M</div>
-        </div>
+          </CCardBody>
+        </CCard>
       </CCol>
     </CRow>
 
-    <CRow class="mb-4 g-3">
+    <CRow class="mb-4">
+      <CCol :xs="4" :lg="2">
+        <CCard class="text-white bg-secondary h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ totalAccommodationsLast12 }}
+            </div>
+            <div class="text-white-50 small">Últimos 12M</div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+      <CCol :xs="4" :lg="2">
+        <CCard class="text-white bg-dark h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ totalAccommodationsLast3 }}
+            </div>
+            <div class="text-white-50 small">Últimos 3M</div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+      <CCol :xs="4" :lg="2">
+        <CCard class="text-white bg-info h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ totalAccommodationsPreviousMonth }}
+            </div>
+            <div class="text-white-50 small">Mes Anterior</div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+      <CCol :xs="4" :lg="2">
+        <CCard class="text-white bg-primary h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ totalAccommodationsThisMonth }}
+            </div>
+            <div class="text-white-50 small">Este Mes</div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+      <CCol :xs="4" :lg="2">
+        <CCard class="text-white bg-warning h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ totalAccommodationsNext3 }}
+            </div>
+            <div class="text-white-50 small">Próximos 3M</div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+      <CCol :xs="4" :lg="2">
+        <CCard class="text-white bg-success h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ totalAccommodationsNext12 }}
+            </div>
+            <div class="text-white-50 small">Próximos 12M</div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+    </CRow>
+
+    <CRow class="mb-4">
       <CCol :md="6">
-        <div class="cabania-panel h-100">
-          <div class="cabania-panel__header">Hospedajes - Últimos 12 Meses</div>
-          <div class="cabania-panel__body">
+        <CCard class="h-100">
+          <CCardHeader>Hospedajes - Últimos 12 Meses</CCardHeader>
+          <CCardBody>
             <div v-if="accommodationsHistory.venues?.length > 0" style="height: 300px;">
               <Bar :data="historyChartData" :options="barChartOptions" />
             </div>
-            <div v-else class="cabania-empty">
+            <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes históricos
             </div>
-          </div>
-        </div>
+          </CCardBody>
+        </CCard>
       </CCol>
       <CCol :md="6">
-        <div class="cabania-panel h-100">
-          <div class="cabania-panel__header">Hospedajes - Próximos 12 Meses</div>
-          <div class="cabania-panel__body">
+        <CCard class="h-100">
+          <CCardHeader>Hospedajes - Próximos 12 Meses</CCardHeader>
+          <CCardBody>
             <div v-if="accommodationsForecast.venues?.length > 0" style="height: 300px;">
               <Bar :data="forecastChartData" :options="barChartOptions" />
             </div>
-            <div v-else class="cabania-empty">
+            <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes futuros
             </div>
-          </div>
-        </div>
+          </CCardBody>
+        </CCard>
       </CCol>
     </CRow>
 
-    <div class="cabania-filters mb-2">
-      <div class="d-flex align-items-center gap-2">
-        <span style="color: var(--cabania-text-muted); font-size: 0.8125rem; font-weight: 600;">Período de Ingresos:</span>
-        <CFormSelect
-          v-model="selectedIncomePeriod"
-          @change="loadPeriodData"
-          style="width: auto; min-width: 180px;"
-          size="sm"
-        >
-          <option v-for="opt in periodOptions" :key="opt.value" :value="opt.value">
-            {{ opt.label }}
-          </option>
-        </CFormSelect>
-      </div>
-    </div>
-
-    <CRow class="mb-4 g-3">
-      <CCol :sm="6" :lg="4">
-        <div class="cabania-metric cabania-metric--emerald">
-          <div class="cabania-metric__value">
-            {{ formatCurrency(incomeSummary.currentMonth.total) }}
-            <span v-if="incomeSummary.percentChange !== 0" class="cabania-metric__change" :class="incomeSummary.percentChange >= 0 ? 'cabania-metric__change--up' : 'cabania-metric__change--down'">
-              {{ incomeSummary.percentChange >= 0 ? '+' : '' }}{{ incomeSummary.percentChange }}%
-            </span>
-          </div>
-          <div class="cabania-metric__label">Ingresos Este Mes</div>
-        </div>
-      </CCol>
-      <CCol :sm="6" :lg="4">
-        <div class="cabania-metric cabania-metric--sky">
-          <div class="cabania-metric__value">
-            {{ formatCurrency(incomeSummary.previousMonth.total) }}
-          </div>
-          <div class="cabania-metric__label">Ingresos Mes Anterior</div>
-        </div>
-      </CCol>
-      <CCol :sm="6" :lg="4">
-        <div class="cabania-metric cabania-metric--violet">
-          <div class="cabania-metric__value">
-            {{ totalIncomeByVenue }}
-          </div>
-          <div class="cabania-metric__label">Ingresos Totales</div>
-          <div style="color: var(--cabania-text-dim); font-size: 0.75rem; margin-top: 0.125rem;">{{ incomeByVenue.length }} cabañas con ingresos</div>
+    <CRow class="mb-2">
+      <CCol :xs="12">
+        <div class="d-flex align-items-center gap-2">
+          <span class="text-body-secondary">Período de Ingresos:</span>
+          <CFormSelect
+            v-model="selectedIncomePeriod"
+            @change="loadPeriodData"
+            style="width: auto; min-width: 180px;"
+            size="sm"
+          >
+            <option v-for="opt in periodOptions" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </CFormSelect>
         </div>
       </CCol>
     </CRow>
 
     <CRow class="mb-4 g-3">
+      <CCol :sm="6" :lg="3">
+        <CCard class="text-white bg-primary h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ formatCurrency(incomeSummary.currentMonth.total) }}
+              <span v-if="incomeSummary.percentChange !== 0" class="fs-6 fw-normal ms-2" :class="incomeSummary.percentChange >= 0 ? 'text-white' : 'text-danger'">
+                {{ incomeSummary.percentChange >= 0 ? '+' : '' }}{{ incomeSummary.percentChange }}%
+              </span>
+            </div>
+            <div class="text-white-50">Ingresos Este Mes</div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+      <CCol :sm="6" :lg="3">
+        <CCard class="text-white bg-info h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ formatCurrency(incomeSummary.previousMonth.total) }}
+            </div>
+            <div class="text-white-50">Ingresos Mes Anterior</div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+      <CCol :sm="6" :lg="3">
+        <CCard class="text-white bg-success h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ totalIncomeByVenue }}
+            </div>
+            <div class="text-white-50">Ingresos Totales</div>
+            <small class="text-white-50">{{ incomeByVenue.length }} cabañas con ingresos</small>
+          </CCardBody>
+        </CCard>
+      </CCol>
+    </CRow>
+
+    <CRow>
       <CCol :md="6">
-        <div class="cabania-panel h-100">
-          <div class="cabania-panel__header">Hospedajes por Cabaña</div>
-          <div class="cabania-panel__body">
+        <CCard class="mb-4">
+          <CCardHeader>Hospedajes por Cabaña</CCardHeader>
+          <CCardBody>
             <div v-if="accommodationsByVenue.length > 0" style="height: 300px;">
               <Pie :data="accommodationsPieChartData" :options="pieChartOptions" />
             </div>
-            <div v-else class="cabania-empty">
+            <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes disponibles
             </div>
-          </div>
-        </div>
+          </CCardBody>
+        </CCard>
       </CCol>
       <CCol :md="6">
-        <div class="cabania-panel h-100">
-          <div class="cabania-panel__header">Hospedajes por Cabaña (Lista)</div>
-          <div class="cabania-panel__body">
-            <CTable v-if="accommodationsByVenue.length > 0" small hover class="table">
+        <CCard class="mb-4">
+          <CCardHeader>Hospedajes por Cabaña (Lista)</CCardHeader>
+          <CCardBody>
+            <CTable v-if="accommodationsByVenue.length > 0" small hover>
               <CTableHead>
                 <CTableRow>
                   <CTableHeaderCell>Cabaña</CTableHeaderCell>
@@ -195,11 +235,11 @@
                 </CTableRow>
               </CTableBody>
             </CTable>
-            <div v-else class="cabania-empty">
+            <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes disponibles
             </div>
-          </div>
-        </div>
+          </CCardBody>
+        </CCard>
       </CCol>
     </CRow>
   </div>
@@ -307,8 +347,8 @@ const totalAccommodationsPreviousMonth = computed(() => {
 })
 
 const chartColors = [
-  '#10b981', '#0ea5e9', '#8b5cf6', '#f59e0b', '#f43f5e',
-  '#06b6d4', '#a78bfa', '#34d399', '#fb923c', '#e879f9'
+  '#36A2EB', '#FF6384', '#FFCE56', '#4BC0C0', '#9966FF',
+  '#FF9F40', '#C9CBCF', '#7BC225', '#E83E8C', '#17A2B8'
 ]
 
 const pieChartData = computed(() => ({
@@ -333,10 +373,7 @@ const pieChartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: {
-      position: 'right',
-      labels: { color: '#94a3b8' }
-    }
+    legend: { position: 'right' }
   }
 }
 
@@ -364,23 +401,15 @@ const barChartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   scales: {
-    x: {
-      stacked: true,
-      ticks: { color: '#64748b' },
-      grid: { color: 'rgba(255,255,255,0.06)' }
-    },
+    x: { stacked: true },
     y: {
       stacked: true,
       beginAtZero: true,
-      ticks: { precision: 0, color: '#64748b' },
-      grid: { color: 'rgba(255,255,255,0.06)' }
+      ticks: { precision: 0 }
     }
   },
   plugins: {
-    legend: {
-      position: 'top',
-      labels: { color: '#94a3b8' }
-    }
+    legend: { position: 'top' }
   }
 }
 

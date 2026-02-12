@@ -1,118 +1,128 @@
 <template>
   <div>
-    <div class="cabania-filters mb-4">
-      <CRow class="g-3 align-items-end">
-        <CCol :xs="6" :md="3" :lg="2">
-          <label class="form-label">Período</label>
-          <CFormSelect v-model="selectedPeriod" @change="loadAllData">
-            <option v-for="opt in periodOptions" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </option>
-          </CFormSelect>
-        </CCol>
-        <CCol :xs="6" :md="3" :lg="2">
-          <label class="form-label">Cabaña</label>
-          <CFormSelect v-model="selectedVenueId" @change="loadAllData">
-            <option value="">Todas las cabañas</option>
-            <option v-for="venue in venues" :key="venue.id" :value="venue.id">
-              {{ venue.name }}
-            </option>
-          </CFormSelect>
-        </CCol>
-        <CCol :xs="6" :md="3" :lg="2">
-          <label class="form-label">Organización</label>
-          <CFormSelect v-model="selectedOrganizationId" @change="loadAllData">
-            <option value="">Todas las organizaciones</option>
-            <option v-for="org in organizations" :key="org.id" :value="org.id">
-              {{ org.name }}
-            </option>
-          </CFormSelect>
-        </CCol>
-      </CRow>
-    </div>
+    <CCard class="mb-4">
+      <CCardBody>
+        <CRow class="g-3 align-items-end">
+          <CCol :xs="6" :md="3" :lg="2">
+            <label class="form-label">Período</label>
+            <CFormSelect v-model="selectedPeriod" @change="loadAllData">
+              <option v-for="opt in periodOptions" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </CFormSelect>
+          </CCol>
+          <CCol :xs="6" :md="3" :lg="2">
+            <label class="form-label">Cabaña</label>
+            <CFormSelect v-model="selectedVenueId" @change="loadAllData">
+              <option value="">Todas las cabañas</option>
+              <option v-for="venue in venues" :key="venue.id" :value="venue.id">
+                {{ venue.name }}
+              </option>
+            </CFormSelect>
+          </CCol>
+          <CCol :xs="6" :md="3" :lg="2">
+            <label class="form-label">Organización</label>
+            <CFormSelect v-model="selectedOrganizationId" @change="loadAllData">
+              <option value="">Todas las organizaciones</option>
+              <option v-for="org in organizations" :key="org.id" :value="org.id">
+                {{ org.name }}
+              </option>
+            </CFormSelect>
+          </CCol>
+        </CRow>
+      </CCardBody>
+    </CCard>
 
     <CRow class="mb-4 g-3">
       <CCol :sm="6" :lg="3">
-        <div class="cabania-metric cabania-metric--emerald">
-          <div class="cabania-metric__value">
-            {{ formatCurrency(summary.income) }}
-          </div>
-          <div class="cabania-metric__label">Ingresos</div>
-        </div>
+        <CCard class="text-white bg-success h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ formatCurrency(summary.income) }}
+            </div>
+            <div class="text-white-50">Ingresos</div>
+          </CCardBody>
+        </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <div class="cabania-metric cabania-metric--rose">
-          <div class="cabania-metric__value">
-            {{ formatCurrency(summary.expenses) }}
-          </div>
-          <div class="cabania-metric__label">Egresos</div>
-        </div>
+        <CCard class="text-white bg-danger h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ formatCurrency(summary.expenses) }}
+            </div>
+            <div class="text-white-50">Egresos</div>
+          </CCardBody>
+        </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <div class="cabania-metric cabania-metric--amber">
-          <div class="cabania-metric__value">
-            {{ formatCurrency(summary.depositsHeld) }}
-          </div>
-          <div class="cabania-metric__label">Depósitos Retenidos</div>
-        </div>
+        <CCard class="text-white bg-warning h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ formatCurrency(summary.depositsHeld) }}
+            </div>
+            <div class="text-white-50">Depósitos Retenidos</div>
+          </CCardBody>
+        </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <div class="cabania-metric cabania-metric--sky">
-          <div class="cabania-metric__value">
-            {{ formatCurrency(summary.profit) }}
-          </div>
-          <div class="cabania-metric__label">Utilidad</div>
-        </div>
+        <CCard class="text-white bg-primary h-100">
+          <CCardBody class="pb-3">
+            <div class="fs-4 fw-semibold">
+              {{ formatCurrency(summary.profit) }}
+            </div>
+            <div class="text-white-50">Utilidad</div>
+          </CCardBody>
+        </CCard>
       </CCol>
     </CRow>
 
-    <CRow class="mb-4 g-3">
+    <CRow class="mb-4">
       <CCol :md="6">
-        <div class="cabania-panel h-100">
-          <div class="cabania-panel__header">Tendencia Mensual de Ingresos vs Egresos</div>
-          <div class="cabania-panel__body">
+        <CCard class="h-100">
+          <CCardHeader>Tendencia Mensual de Ingresos vs Egresos</CCardHeader>
+          <CCardBody>
             <div v-if="monthlyTrend.length > 0" style="height: 300px;">
               <CChartBar :data="barChartData" :options="barChartOptions" />
             </div>
-            <div v-else class="cabania-empty">
+            <div v-else class="text-center text-body-secondary py-5">
               <CSpinner v-if="loadingTrend" />
               <span v-else>No hay datos de tendencia disponibles</span>
             </div>
-          </div>
-        </div>
+          </CCardBody>
+        </CCard>
       </CCol>
       <CCol :md="6">
-        <div class="cabania-panel h-100">
-          <div class="cabania-panel__header">Egresos por Categoría</div>
-          <div class="cabania-panel__body">
+        <CCard class="h-100">
+          <CCardHeader>Egresos por Categoría</CCardHeader>
+          <CCardBody>
             <div v-if="expensesByCategory.length > 0" style="height: 300px;">
               <CChartDoughnut :data="doughnutChartData" :options="doughnutChartOptions" />
             </div>
-            <div v-else class="cabania-empty">
+            <div v-else class="text-center text-body-secondary py-5">
               <CSpinner v-if="loadingCategories" />
               <span v-else>No hay datos de egresos por categoría</span>
             </div>
-          </div>
-        </div>
+          </CCardBody>
+        </CCard>
       </CCol>
     </CRow>
 
-    <CRow v-if="expensesByCategory.length > 0" class="mb-4 g-3">
+    <CRow v-if="expensesByCategory.length > 0">
       <CCol :md="6">
-        <div class="cabania-panel h-100">
-          <div class="cabania-panel__header">Egresos por Categoría</div>
-          <div class="cabania-panel__body">
+        <CCard class="mb-4 h-100">
+          <CCardHeader>Egresos por Categoría</CCardHeader>
+          <CCardBody>
             <div style="height: 300px;">
               <CChartBar :data="expensesByCategoryBarData" :options="expensesByCategoryBarOptions" />
             </div>
-          </div>
-        </div>
+          </CCardBody>
+        </CCard>
       </CCol>
       <CCol :md="6">
-        <div class="cabania-panel h-100">
-          <div class="cabania-panel__header">Detalle de Egresos por Categoría</div>
-          <div class="cabania-panel__body" style="padding: 0;">
-            <CTable hover responsive small class="table mb-0">
+        <CCard class="mb-4 h-100">
+          <CCardHeader>Detalle de Egresos por Categoría</CCardHeader>
+          <CCardBody>
+            <CTable hover responsive small>
               <CTableHead>
                 <CTableRow>
                   <CTableHeaderCell>Categoría</CTableHeaderCell>
@@ -131,8 +141,8 @@
                 </CTableRow>
               </CTableBody>
             </CTable>
-          </div>
-        </div>
+          </CCardBody>
+        </CCard>
       </CCol>
     </CRow>
   </div>
@@ -178,9 +188,9 @@ const loadingTrend = ref(false)
 const loadingCategories = ref(false)
 
 const chartColors = [
-  '#10b981', '#0ea5e9', '#8b5cf6', '#f59e0b', '#f43f5e',
-  '#06b6d4', '#a78bfa', '#34d399', '#fb923c', '#e879f9',
-  '#22d3ee', '#facc15', '#f87171', '#818cf8', '#2dd4bf'
+  '#36A2EB', '#FF6384', '#FFCE56', '#4BC0C0', '#9966FF',
+  '#FF9F40', '#C9CBCF', '#7BC225', '#E83E8C', '#17A2B8',
+  '#6610F2', '#FD7E14', '#20C997', '#6F42C1', '#007BFF'
 ]
 
 // Mapeo de colores Bootstrap/CoreUI a hexadecimales
@@ -209,12 +219,12 @@ const barChartData = computed(() => ({
   datasets: [
     {
       label: 'Ingresos',
-      backgroundColor: '#10b981',
+      backgroundColor: '#28a745',
       data: monthlyTrend.value.map(item => item.income)
     },
     {
       label: 'Egresos',
-      backgroundColor: '#f43f5e',
+      backgroundColor: '#dc3545',
       data: monthlyTrend.value.map(item => item.expenses)
     }
   ]
@@ -224,21 +234,10 @@ const barChartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: {
-      position: 'top',
-      labels: { color: '#94a3b8' }
-    }
+    legend: { position: 'top' }
   },
   scales: {
-    x: {
-      ticks: { color: '#64748b' },
-      grid: { color: 'rgba(255,255,255,0.06)' }
-    },
-    y: {
-      beginAtZero: true,
-      ticks: { color: '#64748b' },
-      grid: { color: 'rgba(255,255,255,0.06)' }
-    }
+    y: { beginAtZero: true }
   }
 }
 
@@ -257,10 +256,7 @@ const doughnutChartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: {
-      position: 'right',
-      labels: { color: '#94a3b8' }
-    }
+    legend: { position: 'right' }
   }
 }
 
@@ -284,15 +280,7 @@ const expensesByCategoryBarOptions = {
     legend: { display: false }
   },
   scales: {
-    x: {
-      beginAtZero: true,
-      ticks: { color: '#64748b' },
-      grid: { color: 'rgba(255,255,255,0.06)' }
-    },
-    y: {
-      ticks: { color: '#94a3b8' },
-      grid: { color: 'rgba(255,255,255,0.06)' }
-    }
+    x: { beginAtZero: true }
   }
 }
 
