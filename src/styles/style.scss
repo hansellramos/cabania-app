@@ -4,6 +4,59 @@
 @use "@coreui/chartjs/scss/coreui-chartjs";
 @use "vendors/simplebar";
 
+// ============================================
+// CABANIA DESIGN TOKENS (Glassmorphism)
+// Solo variables pasivas - no afectan nada
+// hasta que se consuman explícitamente.
+// ============================================
+
+:root {
+  // Backgrounds
+  --cabania-bg: #020617;
+  --cabania-card-bg: rgba(255, 255, 255, 0.05);
+  --cabania-input-bg: rgba(2, 6, 23, 0.4);
+  --cabania-hover-bg: rgba(255, 255, 255, 0.05);
+  --cabania-active-bg: rgba(16, 185, 129, 0.15);
+
+  // Borders
+  --cabania-border: rgba(255, 255, 255, 0.15);
+  --cabania-border-subtle: rgba(255, 255, 255, 0.1);
+  --cabania-active-border: rgba(16, 185, 129, 0.25);
+  --cabania-focus-border: rgba(14, 165, 233, 0.5);
+
+  // Text
+  --cabania-text: #f1f5f9;
+  --cabania-text-secondary: #cbd5e1;
+  --cabania-text-muted: #94a3b8;
+  --cabania-text-dim: #64748b;
+
+  // Accent colors
+  --cabania-emerald: #10b981;
+  --cabania-sky: #0ea5e9;
+  --cabania-gradient: linear-gradient(135deg, #10b981, #0ea5e9);
+
+  // Accent with opacity (for backgrounds)
+  --cabania-emerald-glow: rgba(16, 185, 129, 0.2);
+  --cabania-emerald-glow-subtle: rgba(16, 185, 129, 0.1);
+  --cabania-sky-glow: rgba(14, 165, 233, 0.2);
+
+  // Danger / error
+  --cabania-danger-border: rgba(239, 68, 68, 0.3);
+  --cabania-danger-bg: rgba(239, 68, 68, 0.1);
+  --cabania-danger-text: #fca5a5;
+
+  // Shadows
+  --cabania-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+  --cabania-shadow-sm: 0 2px 8px rgba(16, 185, 129, 0.15);
+  --cabania-shadow-md: 0 4px 12px rgba(16, 185, 129, 0.15);
+
+  // Radii
+  --cabania-radius-sm: 0.5rem;
+  --cabania-radius: 0.75rem;
+  --cabania-radius-lg: 1rem;
+  --cabania-radius-xl: 1.5rem;
+}
+
 body {
   background-color: var(--cui-tertiary-bg);
 }
