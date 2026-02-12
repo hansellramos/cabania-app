@@ -26,7 +26,11 @@ app.use(cors({
   origin: true,
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({
+  verify: (req, res, buf) => {
+    if (req.url === '/api/bold/webhook') req.rawBody = buf;
+  }
+}));
 
 // Seed default message templates
 async function seedDefaultMessageTemplates() {
@@ -1124,8 +1128,322 @@ async function startServer() {
     }
   });
 
+  // ==========================================
+  // Bold Payment Gateway Integration
+  // ==========================================
+
+  const crypto = require('crypto');
+
+  function verifyBoldSignature(rawBody, signature) {
+    const secret = process.env.BOLD_WEBHOOK_SECRET || '';
+    const bodyBase64 = rawBody.toString('base64');
+    const computed = crypto.createHmac('sha256', secret).update(bodyBase64).digest('hex');
+    return computed === signature;
+  }
+
+  async function createPaymentFromBoldLink(link) {
+    const accommodation = await prisma.accommodations.findUnique({
+      where: { id: link.accommodation_id }
+    });
+    if (!accommodation) throw new Error('Accommodation not found');
+
+    let venue = null;
+    if (accommodation.venue) {
+      venue = await prisma.venues.findUnique({
+        where: { id: accommodation.venue }
+      });
+    }
+
+    const payment = await prisma.payments.create({
+      data: {
+        accommodation: link.accommodation_id,
+        amount: link.amount,
+        payment_method: `Bold - ${link.bold_payment_method || 'Online'}`,
+        payment_date: new Date(),
+        reference: link.bold_transaction_id || link.bold_link_id,
+        notes: `Pago automático via Bold. Link: ${link.bold_link_id}`,
+        verified: true,
+        verified_at: new Date(),
+        verified_by: 'system:bold',
+        type: 'income',
+        created_by: 'system:bold'
+      }
+    });
+
+    const incomeData = {
+      organization_id: venue?.organization || null,
+      venue_id: accommodation.venue || null,
+      amount: link.amount,
+      type: 'accommodation',
+      date: accommodation.date || new Date()
+    };
+
+    await prisma.incomes.upsert({
+      where: { payment_id: payment.id },
+      update: incomeData,
+      create: { payment_id: payment.id, ...incomeData }
+    });
+
+    await prisma.bold_payment_links.update({
+      where: { id: link.id },
+      data: {
+        payment_id: payment.id,
+        status: 'PAID',
+        updated_at: new Date()
+      }
+    });
+
+    return payment;
+  }
+
+  // POST /api/bold/create-link - Create Bold payment link
+  app.post('/api/bold/create-link', isAuthenticated, async (req, res) => {
+    try {
+      const { accommodation_id, amount, description, payer_email } = req.body;
+
+      if (!accommodation_id || !amount) {
+        return res.status(400).json({ error: 'accommodation_id y amount son requeridos' });
+      }
+
+      const accommodation = await prisma.accommodations.findUnique({
+        where: { id: accommodation_id }
+      });
+      if (!accommodation) {
+        return res.status(404).json({ error: 'Hospedaje no encontrado' });
+      }
+
+      const apiKey = process.env.BOLD_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ error: 'Bold API key no configurada' });
+      }
+
+      const isSandbox = process.env.BOLD_IS_SANDBOX === 'true';
+      const baseUrl = process.env.APP_URL || 'https://cabanero.vercel.app';
+      const callbackUrl = `${baseUrl}/#/payment-result`;
+
+      const expirationNanos = (Date.now() + 72 * 60 * 60 * 1000) * 1000000;
+      const expirationStr = String(expirationNanos);
+
+      const boldPayload = {
+        amount_type: 'CLOSE',
+        amount: {
+          currency: 'COP',
+          total_amount: Math.round(parseFloat(amount))
+        },
+        description: description || `Pago hospedaje - ${accommodation_id.substring(0, 8)}`,
+        expiration_date: expirationStr,
+        callback_url: callbackUrl,
+        payment_methods: ['PSE', 'NEQUI', 'DAVIPLATA', 'BANCOLOMBIA_TRANSFER', 'CREDIT_CARD']
+      };
+
+      if (payer_email) {
+        boldPayload.payer_email = payer_email;
+      }
+
+      const boldRes = await fetch('https://integrations.api.bold.co/online/link/v1', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `x-api-key ${apiKey}`
+        },
+        body: JSON.stringify(boldPayload)
+      });
+
+      if (!boldRes.ok) {
+        const errorText = await boldRes.text();
+        console.error('Bold API error:', boldRes.status, errorText);
+        return res.status(502).json({ error: `Error de Bold API: ${boldRes.status}` });
+      }
+
+      const boldData = await boldRes.json();
+      const userId = req.user?.claims?.sub ? String(req.user.claims.sub) : null;
+
+      const link = await prisma.bold_payment_links.create({
+        data: {
+          accommodation_id,
+          bold_link_id: boldData.payment_link,
+          bold_url: boldData.url,
+          amount: parseFloat(amount),
+          description: description || null,
+          payer_email: payer_email || null,
+          is_sandbox: isSandbox,
+          expiration_date: new Date(Date.now() + 72 * 60 * 60 * 1000),
+          created_by: userId
+        }
+      });
+
+      res.json(link);
+    } catch (error) {
+      console.error('Error creating Bold link:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/bold/links - List Bold links for an accommodation
+  app.get('/api/bold/links', isAuthenticated, async (req, res) => {
+    try {
+      const { accommodation_id } = req.query;
+      if (!accommodation_id) {
+        return res.status(400).json({ error: 'accommodation_id es requerido' });
+      }
+
+      const links = await prisma.bold_payment_links.findMany({
+        where: { accommodation_id },
+        orderBy: { created_at: 'desc' }
+      });
+
+      res.json(links);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/bold/links/:bold_link_id/status - Refresh status from Bold API
+  app.get('/api/bold/links/:bold_link_id/status', isAuthenticated, async (req, res) => {
+    try {
+      const { bold_link_id } = req.params;
+      const link = await prisma.bold_payment_links.findUnique({
+        where: { bold_link_id }
+      });
+      if (!link) {
+        return res.status(404).json({ error: 'Link no encontrado' });
+      }
+
+      if (link.payment_id) {
+        return res.json(link);
+      }
+
+      const apiKey = process.env.BOLD_API_KEY;
+      if (!apiKey) {
+        return res.json(link);
+      }
+
+      try {
+        const boldRes = await fetch(`https://integrations.api.bold.co/online/link/v1/${bold_link_id}`, {
+          headers: { 'Authorization': `x-api-key ${apiKey}` }
+        });
+
+        if (boldRes.ok) {
+          const boldData = await boldRes.json();
+          const newStatus = boldData.status || link.status;
+
+          const updateData = {
+            status: newStatus,
+            updated_at: new Date()
+          };
+
+          if (boldData.transaction_id) {
+            updateData.bold_transaction_id = boldData.transaction_id;
+          }
+          if (boldData.payment_method) {
+            updateData.bold_payment_method = boldData.payment_method;
+          }
+
+          const updated = await prisma.bold_payment_links.update({
+            where: { bold_link_id },
+            data: updateData
+          });
+
+          if (newStatus === 'PAID' && !link.payment_id) {
+            await createPaymentFromBoldLink(updated);
+            const final = await prisma.bold_payment_links.findUnique({ where: { bold_link_id } });
+            return res.json(final);
+          }
+
+          return res.json(updated);
+        }
+      } catch (boldError) {
+        console.error('Error fetching Bold status:', boldError);
+      }
+
+      res.json(link);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/bold/webhook - Bold webhook receiver (PUBLIC - no auth)
+  app.post('/api/bold/webhook', async (req, res) => {
+    try {
+      const signature = req.headers['x-bold-signature'];
+      if (req.rawBody && signature) {
+        if (!verifyBoldSignature(req.rawBody, signature)) {
+          console.error('Bold webhook: invalid signature');
+          return res.status(200).json({ status: 'invalid_signature' });
+        }
+      }
+
+      const payload = req.body;
+      console.log('Bold webhook received:', JSON.stringify(payload));
+
+      const boldLinkId = payload?.payment_link || payload?.data?.payment_link;
+      const transactionStatus = payload?.status || payload?.data?.status;
+      const transactionId = payload?.transaction_id || payload?.data?.transaction_id;
+      const paymentMethod = payload?.payment_method || payload?.data?.payment_method;
+
+      if (!boldLinkId) {
+        return res.status(200).json({ status: 'no_link_id' });
+      }
+
+      const link = await prisma.bold_payment_links.findUnique({
+        where: { bold_link_id: boldLinkId }
+      });
+
+      if (!link) {
+        console.error('Bold webhook: link not found:', boldLinkId);
+        return res.status(200).json({ status: 'link_not_found' });
+      }
+
+      const updateData = {
+        webhook_payload: payload,
+        updated_at: new Date()
+      };
+      if (transactionStatus) updateData.status = transactionStatus;
+      if (transactionId) updateData.bold_transaction_id = transactionId;
+      if (paymentMethod) updateData.bold_payment_method = paymentMethod;
+
+      const updated = await prisma.bold_payment_links.update({
+        where: { bold_link_id: boldLinkId },
+        data: updateData
+      });
+
+      if (transactionStatus === 'PAID' && !link.payment_id) {
+        await createPaymentFromBoldLink(updated);
+      }
+
+      res.status(200).json({ status: 'ok' });
+    } catch (error) {
+      console.error('Bold webhook error:', error);
+      res.status(200).json({ status: 'error' });
+    }
+  });
+
+  // GET /api/bold/payment-status/:bold_link_id - Public status for callback page
+  app.get('/api/bold/payment-status/:bold_link_id', async (req, res) => {
+    try {
+      const { bold_link_id } = req.params;
+      const link = await prisma.bold_payment_links.findUnique({
+        where: { bold_link_id }
+      });
+
+      if (!link) {
+        return res.status(404).json({ error: 'Link no encontrado' });
+      }
+
+      res.json({
+        status: link.status,
+        amount: link.amount,
+        is_sandbox: link.is_sandbox,
+        has_payment: !!link.payment_id,
+        description: link.description
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Analytics endpoints
-  
+
   // Helper function to get accessible organization IDs for analytics
   async function getAnalyticsOrgIds(req) {
     const { viewAll, organizations } = req.query;

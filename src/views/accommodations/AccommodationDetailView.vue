@@ -154,6 +154,12 @@
                   Registrar Pago
                 </CButton>
               </div>
+              <BoldPaymentSection
+                :accommodation-id="route.params.id"
+                :accommodation="accommodation"
+                :pending-balance="pendingBalance"
+                @payment-created="loadPayments"
+              />
               <CTable hover responsive v-if="payments.length > 0">
                 <CTableHead>
                   <CTableRow>
@@ -621,6 +627,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import MessageSuggestions from '@/components/accommodations/MessageSuggestions.vue'
 import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
+import BoldPaymentSection from '@/components/accommodations/BoldPaymentSection.vue'
 import { deleteAccommodation } from '@/services/accommodationService'
 
 const route = useRoute()
