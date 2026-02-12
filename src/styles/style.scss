@@ -348,3 +348,271 @@ body {
   align-items: center;
   justify-content: center;
 }
+
+// ============================================
+// CABANIA DASHBOARD / ANALYTICS THEME
+// ============================================
+
+// Metric cards (KPI style)
+.cabania-metric {
+  border: 1px solid var(--cabania-border);
+  border-radius: var(--cabania-radius);
+  background: var(--cabania-bg);
+  color: var(--cabania-text);
+  padding: 1.25rem;
+  height: 100%;
+
+  &__value {
+    font-size: 1.5rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+
+  &__label {
+    color: var(--cabania-text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-top: 0.25rem;
+  }
+
+  &__change {
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-left: 0.5rem;
+  }
+
+  &__change--up { color: var(--cabania-emerald); }
+  &__change--down { color: var(--cabania-danger-text); }
+
+  // Accent variants via top border
+  &--emerald { border-top: 3px solid var(--cabania-emerald); }
+  &--sky { border-top: 3px solid var(--cabania-sky); }
+  &--amber { border-top: 3px solid #f59e0b; }
+  &--rose { border-top: 3px solid #f43f5e; }
+  &--violet { border-top: 3px solid #8b5cf6; }
+  &--slate { border-top: 3px solid var(--cabania-text-dim); }
+}
+
+// Panel cards (charts, filters, tables)
+.cabania-panel {
+  border: 1px solid var(--cabania-border);
+  border-radius: var(--cabania-radius);
+  background: var(--cabania-bg);
+  color: var(--cabania-text);
+  overflow: hidden;
+
+  &__header {
+    padding: 0.875rem 1.25rem;
+    border-bottom: 1px solid var(--cabania-border-subtle);
+    font-weight: 700;
+    font-size: 0.875rem;
+    color: var(--cabania-text-secondary);
+  }
+
+  &__body {
+    padding: 1.25rem;
+  }
+
+  // For tables inside panels
+  .table {
+    color: var(--cabania-text-secondary);
+    --cui-table-bg: transparent;
+    --cui-table-border-color: var(--cabania-border-subtle);
+
+    th {
+      color: var(--cabania-text-muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      border-bottom-color: var(--cabania-border-subtle);
+    }
+
+    td {
+      border-bottom-color: var(--cabania-border-subtle);
+    }
+
+    tbody tr:hover {
+      background: var(--cabania-hover-bg);
+    }
+  }
+}
+
+// Filter bar
+.cabania-filters {
+  border: 1px solid var(--cabania-border);
+  border-radius: var(--cabania-radius);
+  background: var(--cabania-bg);
+  color: var(--cabania-text);
+  padding: 1rem 1.25rem;
+
+  .form-label {
+    color: var(--cabania-text-muted);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .form-control,
+  .form-select {
+    background: var(--cabania-input-bg);
+    border-color: var(--cabania-border);
+    color: var(--cabania-text);
+
+    &:focus {
+      border-color: var(--cabania-focus-border);
+      box-shadow: none;
+    }
+
+    &::placeholder {
+      color: var(--cabania-text-dim);
+    }
+  }
+
+  .form-select {
+    background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3e%3cpath fill='none' stroke='%2394a3b8' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/%3e%3c/svg%3e");
+  }
+
+  .dropdown-menu {
+    background: #0f172a;
+    border-color: var(--cabania-border);
+
+    .dropdown-item {
+      color: var(--cabania-text-secondary);
+      &:hover {
+        background: var(--cabania-hover-bg);
+        color: var(--cabania-text);
+      }
+    }
+  }
+
+  .badge {
+    border: 1px solid var(--cabania-active-border);
+    background: var(--cabania-active-bg) !important;
+    color: var(--cabania-text) !important;
+  }
+}
+
+// Empty state text
+.cabania-empty {
+  color: var(--cabania-text-dim);
+  font-size: 0.875rem;
+  padding: 2rem 0;
+  text-align: center;
+}
+
+// ============================================
+// CABANIA GLOBAL LAYOUT THEME
+// ============================================
+
+// Main body and wrapper
+body {
+  background-color: var(--cabania-bg) !important;
+  color: var(--cabania-text);
+}
+
+.wrapper {
+  background-color: var(--cabania-bg);
+  color: var(--cabania-text);
+}
+
+// Header
+.header {
+  background: var(--cabania-bg) !important;
+  border-bottom-color: var(--cabania-border-subtle) !important;
+
+  .container-fluid {
+    border-bottom-color: var(--cabania-border-subtle) !important;
+  }
+
+  .nav-link {
+    color: var(--cabania-text-secondary) !important;
+
+    &:hover {
+      color: var(--cabania-text) !important;
+    }
+
+    &.router-link-active,
+    &.active {
+      color: var(--cabania-emerald) !important;
+    }
+  }
+
+  .breadcrumb {
+    --cui-breadcrumb-divider-color: var(--cabania-text-dim);
+
+    .breadcrumb-item {
+      color: var(--cabania-text-dim);
+
+      a {
+        color: var(--cabania-text-muted);
+        &:hover { color: var(--cabania-text); }
+      }
+
+      &.active {
+        color: var(--cabania-text-secondary);
+      }
+    }
+  }
+
+  .btn-success {
+    background: var(--cabania-gradient) !important;
+    border-color: transparent !important;
+    color: #020617 !important;
+    font-weight: 700;
+
+    &:hover {
+      opacity: 0.9;
+    }
+  }
+
+  // Theme switcher & icons
+  .header-toggler,
+  .nav-link .icon {
+    color: var(--cabania-text-muted);
+  }
+
+  .dropdown-menu {
+    background: #0f172a;
+    border-color: var(--cabania-border);
+
+    .dropdown-item {
+      color: var(--cabania-text-secondary);
+
+      &:hover {
+        background: var(--cabania-hover-bg);
+        color: var(--cabania-text);
+      }
+
+      &.active {
+        background: var(--cabania-active-bg);
+        color: var(--cabania-emerald);
+      }
+    }
+  }
+
+  .vr {
+    border-color: var(--cabania-border-subtle) !important;
+    opacity: 0.3;
+  }
+}
+
+// Footer
+.footer {
+  background: var(--cabania-bg) !important;
+  border-top: 1px solid var(--cabania-border-subtle) !important;
+  color: var(--cabania-text-dim);
+
+  a {
+    color: var(--cabania-text-muted);
+    &:hover { color: var(--cabania-text); }
+  }
+}
+
+// CSpinner override for dark theme
+.cabania-empty .spinner-border,
+.cabania-panel .spinner-border {
+  color: var(--cabania-emerald);
+}
