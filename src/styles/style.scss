@@ -163,3 +163,136 @@ body {
     min-height: 200px !important;
   }
 }
+
+// ============================================
+// CABANIA SIDEBAR THEME
+// ============================================
+
+.cabania-sidebar {
+  --cui-sidebar-bg: #020617;
+  --cui-sidebar-border-color: rgba(255, 255, 255, 0.1);
+
+  // Nav titles (section headers)
+  .nav-title {
+    color: #64748b;
+    font-size: 0.65rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 1.25rem 1rem 0.5rem;
+  }
+
+  // Nav links
+  .nav-link {
+    color: #cbd5e1;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    border-radius: 0.5rem;
+    margin: 1px 0.5rem;
+    padding: 0.5rem 0.75rem;
+    transition: background 0.15s, color 0.15s;
+
+    &:hover {
+      color: #f1f5f9;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    &.active {
+      color: #f1f5f9;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.25);
+    }
+
+    .nav-icon {
+      color: #64748b;
+      transition: color 0.15s;
+    }
+
+    &:hover .nav-icon,
+    &.active .nav-icon {
+      color: #10b981;
+    }
+  }
+
+  // Nav groups
+  .nav-group-toggle {
+    color: #cbd5e1;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    border-radius: 0.5rem;
+    margin: 1px 0.5rem;
+    padding: 0.5rem 0.75rem;
+
+    &:hover {
+      color: #f1f5f9;
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    &::after {
+      filter: brightness(0.6);
+    }
+  }
+
+  // Header
+  .cabania-sidebar__header {
+    border-bottom-color: rgba(255, 255, 255, 0.1) !important;
+  }
+
+  // Footer / toggler
+  .sidebar-footer {
+    border-top-color: rgba(255, 255, 255, 0.1) !important;
+  }
+
+  .sidebar-toggler {
+    color: #64748b;
+    background: transparent;
+    border-color: transparent;
+
+    &:hover {
+      color: #f1f5f9;
+      background: rgba(255, 255, 255, 0.05);
+    }
+  }
+
+  // Scrollbar
+  .simplebar-scrollbar::before {
+    background: rgba(255, 255, 255, 0.15);
+  }
+}
+
+// Logo styles (not scoped, sidebar uses render function)
+.cabania-sidebar__brand {
+  text-decoration: none;
+}
+
+.cabania-sidebar__logo {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.cabania-sidebar__logo-icon {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.625rem;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: linear-gradient(135deg, #10b981, #0ea5e9);
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.15);
+  color: white;
+  flex-shrink: 0;
+}
+
+.cabania-sidebar__logo-text {
+  font-size: 1.125rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #f1f5f9;
+}
+
+.cabania-sidebar__logo-narrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
