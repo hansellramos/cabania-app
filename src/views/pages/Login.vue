@@ -122,8 +122,8 @@ const handleLogin = async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #020617;
-  color: #f1f5f9;
+  background-color: var(--cabania-bg);
+  color: var(--cabania-text);
   position: relative;
   overflow: hidden;
   padding: 1rem;
@@ -148,7 +148,7 @@ const handleLogin = async () => {
   left: -10%;
   width: 520px;
   height: 520px;
-  background: rgba(16, 185, 129, 0.2);
+  background: var(--cabania-emerald-glow);
 }
 
 .cabania-orb--sky {
@@ -156,7 +156,7 @@ const handleLogin = async () => {
   right: -10%;
   width: 520px;
   height: 520px;
-  background: rgba(14, 165, 233, 0.2);
+  background: var(--cabania-sky-glow);
 }
 
 .cabania-orb--emerald-bottom {
@@ -164,7 +164,7 @@ const handleLogin = async () => {
   left: 25%;
   width: 620px;
   height: 620px;
-  background: rgba(16, 185, 129, 0.1);
+  background: var(--cabania-emerald-glow-subtle);
 }
 
 /* Card */
@@ -174,12 +174,12 @@ const handleLogin = async () => {
   width: 100%;
   max-width: 420px;
   padding: 2.5rem;
-  border-radius: 1.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--cabania-radius-xl);
+  border: 1px solid var(--cabania-border);
+  background: var(--cabania-card-bg);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--cabania-shadow);
 }
 
 /* Logo */
@@ -196,10 +196,10 @@ const handleLogin = async () => {
   place-items: center;
   width: 2.5rem;
   height: 2.5rem;
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: linear-gradient(135deg, #10b981, #0ea5e9);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+  border-radius: var(--cabania-radius);
+  border: 1px solid var(--cabania-border);
+  background: var(--cabania-gradient);
+  box-shadow: var(--cabania-shadow-md);
   color: white;
 }
 
@@ -211,7 +211,7 @@ const handleLogin = async () => {
 
 .cabania-login__subtitle {
   text-align: center;
-  color: #94a3b8;
+  color: var(--cabania-text-muted);
   font-size: 0.875rem;
   margin-bottom: 2rem;
 }
@@ -219,7 +219,7 @@ const handleLogin = async () => {
 /* Loading */
 .cabania-login__loading {
   text-align: center;
-  color: #94a3b8;
+  color: var(--cabania-text-muted);
 }
 
 .cabania-login__loading p {
@@ -233,7 +233,7 @@ const handleLogin = async () => {
 }
 
 .cabania-login__welcome p {
-  color: #10b981;
+  color: var(--cabania-emerald);
   margin-bottom: 1rem;
   font-weight: 600;
 }
@@ -249,7 +249,7 @@ const handleLogin = async () => {
   left: 1rem;
   top: 50%;
   transform: translateY(-50%);
-  color: #64748b;
+  color: var(--cabania-text-dim);
   display: flex;
   align-items: center;
 }
@@ -257,10 +257,10 @@ const handleLogin = async () => {
 .cabania-input {
   width: 100%;
   padding: 0.75rem 1rem 0.75rem 2.75rem;
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(2, 6, 23, 0.4);
-  color: #f1f5f9;
+  border-radius: var(--cabania-radius);
+  border: 1px solid var(--cabania-border);
+  background: var(--cabania-input-bg);
+  color: var(--cabania-text);
   font-size: 0.875rem;
   outline: none;
   transition: border-color 0.2s;
@@ -268,11 +268,11 @@ const handleLogin = async () => {
 }
 
 .cabania-input::placeholder {
-  color: #64748b;
+  color: var(--cabania-text-dim);
 }
 
 .cabania-input:focus {
-  border-color: rgba(14, 165, 233, 0.5);
+  border-color: var(--cabania-focus-border);
 }
 
 .cabania-input:disabled {
@@ -287,8 +287,8 @@ const handleLogin = async () => {
   gap: 0.5rem;
   width: 100%;
   padding: 0.75rem 1.25rem;
-  border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--cabania-radius);
+  border: 1px solid var(--cabania-border);
   font-size: 0.875rem;
   font-weight: 800;
   cursor: pointer;
@@ -305,19 +305,19 @@ const handleLogin = async () => {
 }
 
 .cabania-btn--gradient {
-  background: linear-gradient(135deg, #10b981, #0ea5e9);
-  color: #020617;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+  background: var(--cabania-gradient);
+  color: var(--cabania-bg);
+  box-shadow: var(--cabania-shadow-md);
 }
 
 /* Alert */
 .cabania-alert {
   position: relative;
   padding: 0.75rem 2.5rem 0.75rem 1rem;
-  border-radius: 0.75rem;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  background: rgba(239, 68, 68, 0.1);
-  color: #fca5a5;
+  border-radius: var(--cabania-radius);
+  border: 1px solid var(--cabania-danger-border);
+  background: var(--cabania-danger-bg);
+  color: var(--cabania-danger-text);
   font-size: 0.875rem;
   margin-bottom: 1rem;
 }
@@ -329,7 +329,7 @@ const handleLogin = async () => {
   transform: translateY(-50%);
   background: none;
   border: none;
-  color: #fca5a5;
+  color: var(--cabania-danger-text);
   font-size: 1.25rem;
   cursor: pointer;
   line-height: 1;
@@ -339,8 +339,8 @@ const handleLogin = async () => {
 .cabania-spinner {
   width: 2rem;
   height: 2rem;
-  border: 3px solid rgba(255, 255, 255, 0.1);
-  border-top-color: #10b981;
+  border: 3px solid var(--cabania-border-subtle);
+  border-top-color: var(--cabania-emerald);
   border-radius: 9999px;
   animation: cabania-spin 0.6s linear infinite;
   margin: 0 auto;
@@ -350,7 +350,7 @@ const handleLogin = async () => {
   width: 1rem;
   height: 1rem;
   border-width: 2px;
-  border-top-color: #020617;
+  border-top-color: var(--cabania-bg);
   margin: 0;
 }
 
