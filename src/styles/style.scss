@@ -57,7 +57,18 @@
 }
 
 body {
-  background-color: var(--cui-tertiary-bg);
+  background-color: var(--cabania-bg);
+  color: var(--cabania-text);
+
+  // Override CoreUI variables for dark theme
+  --cui-body-bg: var(--cabania-bg);
+  --cui-body-color: var(--cabania-text);
+  --cui-tertiary-bg: var(--cabania-bg);
+  --cui-dark-bg-subtle: var(--cabania-bg);
+  --cui-border-color: var(--cabania-border);
+  --cui-card-bg: var(--cabania-bg);
+  --cui-card-border-color: var(--cabania-border);
+  --cui-header-bg: var(--cabania-bg);
 }
 
 .wrapper {
@@ -106,15 +117,13 @@ body {
 
 .footer {
   min-height: calc(3rem + 1px); // stylelint-disable-line function-disallowed-list
-}
+  background: var(--cabania-bg);
+  border-top: 1px solid var(--cabania-border-subtle);
+  color: var(--cabania-text-dim);
 
-@include color-mode(dark) {
-  body {
-    background-color: var(--cui-dark-bg-subtle);
-  }
-
-  .footer {
-    --cui-footer-bg: var(--cui-body-bg);
+  a {
+    color: var(--cabania-text-muted);
+    &:hover { color: var(--cabania-text); }
   }
 }
 
@@ -507,12 +516,6 @@ body {
 // CABANIA GLOBAL LAYOUT THEME
 // ============================================
 
-// Main body and wrapper
-body {
-  background-color: var(--cabania-bg) !important;
-  color: var(--cabania-text);
-}
-
 .wrapper {
   background-color: var(--cabania-bg);
   color: var(--cabania-text);
@@ -520,24 +523,30 @@ body {
 
 // Header
 .header {
-  background: var(--cabania-bg) !important;
-  border-bottom-color: var(--cabania-border-subtle) !important;
+  background: var(--cabania-bg);
+  border-bottom-color: var(--cabania-border-subtle);
+  --cui-header-bg: var(--cabania-bg);
 
   .container-fluid {
-    border-bottom-color: var(--cabania-border-subtle) !important;
+    border-bottom-color: var(--cabania-border-subtle);
   }
 
   .nav-link {
-    color: var(--cabania-text-secondary) !important;
+    color: var(--cabania-text-secondary);
 
     &:hover {
-      color: var(--cabania-text) !important;
+      color: var(--cabania-text);
     }
 
     &.router-link-active,
     &.active {
-      color: var(--cabania-emerald) !important;
+      color: var(--cabania-emerald);
     }
+  }
+
+  .header-toggler {
+    color: var(--cabania-text-muted);
+    --cui-header-toggler-hover-color: var(--cabania-text);
   }
 
   .breadcrumb {
@@ -558,20 +567,14 @@ body {
   }
 
   .btn-success {
-    background: var(--cabania-gradient) !important;
-    border-color: transparent !important;
-    color: #020617 !important;
+    background: var(--cabania-gradient);
+    border-color: transparent;
+    color: #020617;
     font-weight: 700;
 
     &:hover {
       opacity: 0.9;
     }
-  }
-
-  // Theme switcher & icons
-  .header-toggler,
-  .nav-link .icon {
-    color: var(--cabania-text-muted);
   }
 
   .dropdown-menu {
@@ -594,20 +597,13 @@ body {
   }
 
   .vr {
-    border-color: var(--cabania-border-subtle) !important;
+    border-color: var(--cabania-border-subtle);
     opacity: 0.3;
   }
-}
 
-// Footer
-.footer {
-  background: var(--cabania-bg) !important;
-  border-top: 1px solid var(--cabania-border-subtle) !important;
-  color: var(--cabania-text-dim);
-
-  a {
+  // Icon colors in header
+  .icon, svg {
     color: var(--cabania-text-muted);
-    &:hover { color: var(--cabania-text); }
   }
 }
 
