@@ -1,6 +1,8 @@
 <script setup>
 import { RouterLink } from 'vue-router'
 
+import { logo } from '@/assets/brand/logo'
+import { sygnet } from '@/assets/brand/sygnet'
 import { AppSidebarNav } from '@/components/AppSidebarNav.js'
 import { useSidebarStore } from '@/stores/sidebar.js'
 
@@ -9,35 +11,29 @@ const sidebar = useSidebarStore()
 
 <template>
   <CSidebar
-    class="border-end cabania-sidebar"
+    class="border-end"
     colorScheme="dark"
     position="fixed"
     :unfoldable="sidebar.unfoldable"
     :visible="sidebar.visible"
     @visible-change="(value) => sidebar.toggleVisible(value)"
   >
-    <CSidebarHeader class="border-bottom cabania-sidebar__header">
+    <CSidebarHeader class="border-bottom">
       <RouterLink custom to="/" v-slot="{ href, navigate }">
-        <CSidebarBrand v-bind="$attrs" as="a" :href="href" @click="navigate" class="cabania-sidebar__brand">
-          <!-- Full logo -->
-          <span class="cabania-sidebar__logo sidebar-brand-full">
-            <span class="cabania-sidebar__logo-icon">
-              <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
-                <path d="M4 20V10.5L12 4l8 6.5V20" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                <path d="M9 20v-6h6v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-              </svg>
-            </span>
-            <span class="cabania-sidebar__logo-text">CabanIA</span>
-          </span>
-          <!-- Narrow/collapsed logo (icon only) -->
-          <span class="cabania-sidebar__logo-narrow sidebar-brand-narrow">
-            <span class="cabania-sidebar__logo-icon">
-              <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
-                <path d="M4 20V10.5L12 4l8 6.5V20" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-                <path d="M9 20v-6h6v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-              </svg>
-            </span>
-          </span>
+        <CSidebarBrand v-bind="$attrs" as="a" :href="href" @click="navigate">
+          <!--Old  Logo
+          <CIcon custom-class-name="sidebar-brand-full" :icon="logo" :height="32" />
+          <CIcon custom-class-name="sidebar-brand-narrow" :icon="sygnet" :height="32" />
+          -->
+          <!--New Logo-->
+          <svg width="180" height="32" viewBox="0 0 180 32" style="display:block">
+            <g>
+              <g data-name="Layer 2" id="Layer_2" transform="scale(1.75) translate(0, -2)">
+                <path fill="#ffffff" d="M6.25,14.09A8.78,8.78,0,0,1,8.72,8.71,8,8,0,0,0,16,20h6V18H16A6,6,0,0,1,12.88,6.88,6,6,0,0,0,18,16h4V14H18a4,4,0,0,1-1.64-7.64A4,4,0,0,0,16,8a4,4,0,0,0,4,4h2V10H20a2,2,0,0,1,0-4h2V4H15A10.89,10.89,0,0,0,4.25,13.93,2.27,2.27,0,0,1,2,16v2A4.28,4.28,0,0,0,6.25,14.09Z"/>
+              </g>
+              <text fill="#ffffff" x="40" y="30" font-family="Arial" font-size="22" alignment-baseline="middle">abanero</text>
+            </g>
+          </svg>
         </CSidebarBrand>
       </RouterLink>
       <CCloseButton class="d-lg-none" dark @click="sidebar.toggleVisible()" />
