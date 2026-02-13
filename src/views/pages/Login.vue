@@ -117,19 +117,20 @@ const handleLogin = async () => {
 </script>
 
 <style scoped>
+/* ========== LIGHT MODE GLASSMORPHISM (PRUEBA) ========== */
 .cabania-login {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #020617;
-  color: #f1f5f9;
+  background-color: #f1f5f9;
+  color: #0f172a;
   position: relative;
   overflow: hidden;
   padding: 1rem;
 }
 
-/* Background glow orbs */
+/* Background glow orbs - más sutiles en light */
 .cabania-glow {
   position: fixed;
   inset: 0;
@@ -140,7 +141,7 @@ const handleLogin = async () => {
 .cabania-orb {
   position: absolute;
   border-radius: 9999px;
-  filter: blur(96px);
+  filter: blur(120px);
 }
 
 .cabania-orb--emerald {
@@ -148,7 +149,7 @@ const handleLogin = async () => {
   left: -10%;
   width: 520px;
   height: 520px;
-  background: rgba(16, 185, 129, 0.2);
+  background: rgba(16, 185, 129, 0.15);
 }
 
 .cabania-orb--sky {
@@ -156,7 +157,7 @@ const handleLogin = async () => {
   right: -10%;
   width: 520px;
   height: 520px;
-  background: rgba(14, 165, 233, 0.2);
+  background: rgba(14, 165, 233, 0.15);
 }
 
 .cabania-orb--emerald-bottom {
@@ -164,10 +165,10 @@ const handleLogin = async () => {
   left: 25%;
   width: 620px;
   height: 620px;
-  background: rgba(16, 185, 129, 0.1);
+  background: rgba(16, 185, 129, 0.08);
 }
 
-/* Card */
+/* Card - vidrio blanco esmerilado */
 .cabania-login__card {
   position: relative;
   z-index: 10;
@@ -175,11 +176,11 @@ const handleLogin = async () => {
   max-width: 420px;
   padding: 2.5rem;
   border-radius: 1.5rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.65);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.03);
 }
 
 /* Logo */
@@ -197,9 +198,9 @@ const handleLogin = async () => {
   width: 2.5rem;
   height: 2.5rem;
   border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.2);
   background: linear-gradient(135deg, #10b981, #0ea5e9);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25);
   color: white;
 }
 
@@ -207,11 +208,12 @@ const handleLogin = async () => {
   font-size: 1.5rem;
   font-weight: 800;
   letter-spacing: -0.02em;
+  color: #0f172a;
 }
 
 .cabania-login__subtitle {
   text-align: center;
-  color: #94a3b8;
+  color: #64748b;
   font-size: 0.875rem;
   margin-bottom: 2rem;
 }
@@ -219,7 +221,7 @@ const handleLogin = async () => {
 /* Loading */
 .cabania-login__loading {
   text-align: center;
-  color: #94a3b8;
+  color: #64748b;
 }
 
 .cabania-login__loading p {
@@ -233,7 +235,7 @@ const handleLogin = async () => {
 }
 
 .cabania-login__welcome p {
-  color: #10b981;
+  color: #059669;
   margin-bottom: 1rem;
   font-weight: 600;
 }
@@ -249,7 +251,7 @@ const handleLogin = async () => {
   left: 1rem;
   top: 50%;
   transform: translateY(-50%);
-  color: #64748b;
+  color: #94a3b8;
   display: flex;
   align-items: center;
 }
@@ -258,21 +260,22 @@ const handleLogin = async () => {
   width: 100%;
   padding: 0.75rem 1rem 0.75rem 2.75rem;
   border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  background: rgba(2, 6, 23, 0.4);
-  color: #f1f5f9;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.6);
+  color: #0f172a;
   font-size: 0.875rem;
   outline: none;
-  transition: border-color 0.2s;
+  transition: border-color 0.2s, box-shadow 0.2s;
   box-sizing: border-box;
 }
 
 .cabania-input::placeholder {
-  color: #64748b;
+  color: #94a3b8;
 }
 
 .cabania-input:focus {
   border-color: rgba(14, 165, 233, 0.5);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
 }
 
 .cabania-input:disabled {
@@ -288,26 +291,28 @@ const handleLogin = async () => {
   width: 100%;
   padding: 0.75rem 1.25rem;
   border-radius: 0.75rem;
-  border: 1px solid rgba(255, 255, 255, 0.15);
+  border: none;
   font-size: 0.875rem;
   font-weight: 800;
   cursor: pointer;
-  transition: opacity 0.2s;
+  transition: opacity 0.2s, transform 0.1s;
 }
 
 .cabania-btn:hover {
   opacity: 0.92;
+  transform: translateY(-1px);
 }
 
 .cabania-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+  transform: none;
 }
 
 .cabania-btn--gradient {
   background: linear-gradient(135deg, #10b981, #0ea5e9);
-  color: #020617;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+  color: white;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
 }
 
 /* Alert */
@@ -315,9 +320,9 @@ const handleLogin = async () => {
   position: relative;
   padding: 0.75rem 2.5rem 0.75rem 1rem;
   border-radius: 0.75rem;
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  background: rgba(239, 68, 68, 0.1);
-  color: #fca5a5;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  background: rgba(239, 68, 68, 0.06);
+  color: #dc2626;
   font-size: 0.875rem;
   margin-bottom: 1rem;
 }
@@ -329,7 +334,7 @@ const handleLogin = async () => {
   transform: translateY(-50%);
   background: none;
   border: none;
-  color: #fca5a5;
+  color: #dc2626;
   font-size: 1.25rem;
   cursor: pointer;
   line-height: 1;
@@ -339,7 +344,7 @@ const handleLogin = async () => {
 .cabania-spinner {
   width: 2rem;
   height: 2rem;
-  border: 3px solid rgba(255, 255, 255, 0.1);
+  border: 3px solid rgba(0, 0, 0, 0.08);
   border-top-color: #10b981;
   border-radius: 9999px;
   animation: cabania-spin 0.6s linear infinite;
@@ -350,7 +355,7 @@ const handleLogin = async () => {
   width: 1rem;
   height: 1rem;
   border-width: 2px;
-  border-top-color: #020617;
+  border-top-color: white;
   margin: 0;
 }
 
