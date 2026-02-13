@@ -4,8 +4,62 @@
 @use "@coreui/chartjs/scss/coreui-chartjs";
 @use "vendors/simplebar";
 
+// ============================================
+// CABANIA DESIGN TOKENS (Glassmorphism)
+// Solo variables pasivas - no afectan nada
+// hasta que se consuman explícitamente.
+// ============================================
+
+:root {
+  // Backgrounds
+  --cabania-bg: #020617;
+  --cabania-card-bg: rgba(255, 255, 255, 0.05);
+  --cabania-input-bg: rgba(2, 6, 23, 0.4);
+  --cabania-hover-bg: rgba(255, 255, 255, 0.05);
+  --cabania-active-bg: rgba(16, 185, 129, 0.15);
+
+  // Borders
+  --cabania-border: rgba(255, 255, 255, 0.15);
+  --cabania-border-subtle: rgba(255, 255, 255, 0.1);
+  --cabania-active-border: rgba(16, 185, 129, 0.25);
+  --cabania-focus-border: rgba(14, 165, 233, 0.5);
+
+  // Text
+  --cabania-text: #f1f5f9;
+  --cabania-text-secondary: #cbd5e1;
+  --cabania-text-muted: #94a3b8;
+  --cabania-text-dim: #64748b;
+
+  // Accent colors
+  --cabania-emerald: #10b981;
+  --cabania-sky: #0ea5e9;
+  --cabania-gradient: linear-gradient(135deg, #10b981, #0ea5e9);
+
+  // Accent with opacity (for backgrounds)
+  --cabania-emerald-glow: rgba(16, 185, 129, 0.2);
+  --cabania-emerald-glow-subtle: rgba(16, 185, 129, 0.1);
+  --cabania-sky-glow: rgba(14, 165, 233, 0.2);
+
+  // Danger / error
+  --cabania-danger-border: rgba(239, 68, 68, 0.3);
+  --cabania-danger-bg: rgba(239, 68, 68, 0.1);
+  --cabania-danger-text: #fca5a5;
+
+  // Shadows
+  --cabania-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+  --cabania-shadow-sm: 0 2px 8px rgba(16, 185, 129, 0.15);
+  --cabania-shadow-md: 0 4px 12px rgba(16, 185, 129, 0.15);
+
+  // Radii
+  --cabania-radius-sm: 0.5rem;
+  --cabania-radius: 0.75rem;
+  --cabania-radius-lg: 1rem;
+  --cabania-radius-xl: 1.5rem;
+}
+
 body {
-  background-color: var(--cui-tertiary-bg);
+  background-color: var(--cabania-bg);
+  color: var(--cabania-text);
 }
 
 .wrapper {
@@ -13,6 +67,8 @@ body {
   padding-inline: var(--cui-sidebar-occupy-start, 0) var(--cui-sidebar-occupy-end, 0);
   will-change: auto;
   @include transition(padding .15s);
+  background-color: var(--cabania-bg);
+  color: var(--cabania-text);
 }
 
 .header > .container-fluid,
@@ -63,6 +119,305 @@ body {
 
   .footer {
     --cui-footer-bg: var(--cui-body-bg);
+  }
+}
+
+// ============================================
+// CABANIA GLASSMORPHISM GLOBAL THEME
+// Scoped to .wrapper and .sidebar — Login page
+// lives outside DefaultLayout so these selectors
+// NEVER reach it.
+// ============================================
+
+// --- Cards ---
+.wrapper .card {
+  --cui-card-bg: var(--cabania-card-bg);
+  --cui-card-border-color: var(--cabania-border);
+  --cui-card-color: var(--cabania-text);
+  --cui-card-cap-bg: transparent;
+  --cui-card-cap-color: var(--cabania-text-secondary);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.wrapper .card .text-body-secondary,
+.wrapper .card .text-medium-emphasis {
+  color: var(--cabania-text-muted) !important;
+}
+
+// --- Header ---
+.wrapper > .header {
+  --cui-header-bg: var(--cabania-bg);
+  --cui-header-border-color: var(--cabania-border-subtle);
+  --cui-header-color: var(--cabania-text);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.wrapper .header .nav-link {
+  color: var(--cabania-text-muted);
+
+  &:hover,
+  &.active {
+    color: var(--cabania-text);
+  }
+}
+
+.wrapper .header .border-bottom {
+  border-color: var(--cabania-border-subtle) !important;
+}
+
+.wrapper .header .header-toggler {
+  color: var(--cabania-text-muted);
+
+  &:hover {
+    color: var(--cabania-text);
+  }
+}
+
+// --- Breadcrumbs ---
+.wrapper .breadcrumb {
+  --cui-breadcrumb-color: var(--cabania-text-muted);
+  --cui-breadcrumb-active-color: var(--cabania-text-dim);
+  --cui-breadcrumb-divider-color: var(--cabania-text-dim);
+}
+
+.wrapper .breadcrumb a {
+  color: var(--cabania-text-muted);
+
+  &:hover {
+    color: var(--cabania-text);
+  }
+}
+
+// --- Footer ---
+.wrapper .footer {
+  --cui-footer-bg: var(--cabania-bg);
+  --cui-footer-border-color: var(--cabania-border-subtle);
+  color: var(--cabania-text-dim);
+}
+
+// --- Forms ---
+.wrapper .form-control,
+.wrapper .form-select {
+  background-color: var(--cabania-input-bg);
+  border-color: var(--cabania-border);
+  color: var(--cabania-text);
+
+  &::placeholder {
+    color: var(--cabania-text-dim);
+  }
+
+  &:focus {
+    background-color: var(--cabania-input-bg);
+    border-color: var(--cabania-focus-border);
+    color: var(--cabania-text);
+    box-shadow: 0 0 0 0.25rem rgba(14, 165, 233, 0.15);
+  }
+
+  &:disabled,
+  &[readonly] {
+    background-color: rgba(255, 255, 255, 0.02);
+    color: var(--cabania-text-dim);
+  }
+}
+
+.wrapper .form-label,
+.wrapper label {
+  color: var(--cabania-text-secondary);
+}
+
+.wrapper .input-group-text {
+  background-color: rgba(255, 255, 255, 0.03);
+  border-color: var(--cabania-border);
+  color: var(--cabania-text-muted);
+}
+
+.wrapper .form-check-input {
+  background-color: var(--cabania-input-bg);
+  border-color: var(--cabania-border);
+
+  &:checked {
+    background-color: var(--cabania-emerald);
+    border-color: var(--cabania-emerald);
+  }
+}
+
+// --- Tables ---
+.wrapper .table {
+  --cui-table-bg: transparent;
+  --cui-table-color: var(--cabania-text);
+  --cui-table-border-color: var(--cabania-border-subtle);
+  --cui-table-hover-bg: var(--cabania-hover-bg);
+  --cui-table-hover-color: var(--cabania-text);
+  --cui-table-striped-bg: rgba(255, 255, 255, 0.02);
+  --cui-table-striped-color: var(--cabania-text);
+}
+
+.wrapper .table thead th {
+  color: var(--cabania-text-muted);
+  border-bottom-color: var(--cabania-border);
+}
+
+// --- Dropdowns ---
+.wrapper .dropdown-menu {
+  --cui-dropdown-bg: #0f172a;
+  --cui-dropdown-border-color: var(--cabania-border);
+  --cui-dropdown-color: var(--cabania-text);
+  --cui-dropdown-link-color: var(--cabania-text-secondary);
+  --cui-dropdown-link-hover-bg: var(--cabania-hover-bg);
+  --cui-dropdown-link-hover-color: var(--cabania-text);
+  --cui-dropdown-link-active-bg: var(--cabania-active-bg);
+  --cui-dropdown-link-active-color: var(--cabania-emerald);
+  --cui-dropdown-divider-bg: var(--cabania-border-subtle);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+// --- Modals (teleported to body, outside .wrapper) ---
+.modal-content {
+  background-color: #0f172a;
+  border-color: var(--cabania-border);
+  color: var(--cabania-text);
+}
+
+.modal-header {
+  border-bottom-color: var(--cabania-border-subtle);
+  color: var(--cabania-text);
+}
+
+.modal-footer {
+  border-top-color: var(--cabania-border-subtle);
+}
+
+.modal .btn-close {
+  filter: invert(1) grayscale(100%) brightness(200%);
+}
+
+// --- Pagination ---
+.wrapper .pagination {
+  --cui-pagination-bg: transparent;
+  --cui-pagination-border-color: var(--cabania-border);
+  --cui-pagination-color: var(--cabania-text-muted);
+  --cui-pagination-hover-bg: var(--cabania-hover-bg);
+  --cui-pagination-hover-border-color: var(--cabania-border);
+  --cui-pagination-hover-color: var(--cabania-text);
+  --cui-pagination-active-bg: var(--cabania-emerald);
+  --cui-pagination-active-border-color: var(--cabania-emerald);
+  --cui-pagination-active-color: #020617;
+  --cui-pagination-disabled-bg: transparent;
+  --cui-pagination-disabled-border-color: var(--cabania-border-subtle);
+  --cui-pagination-disabled-color: var(--cabania-text-dim);
+}
+
+// --- Nav tabs ---
+.wrapper .nav-tabs {
+  --cui-nav-tabs-border-color: var(--cabania-border);
+  --cui-nav-tabs-link-active-bg: var(--cabania-card-bg);
+  --cui-nav-tabs-link-active-border-color: var(--cabania-border) var(--cabania-border) transparent;
+  --cui-nav-tabs-link-active-color: var(--cabania-text);
+  --cui-nav-tabs-link-hover-border-color: var(--cabania-border-subtle) var(--cabania-border-subtle) var(--cabania-border);
+}
+
+.wrapper .nav-tabs .nav-link {
+  color: var(--cabania-text-muted);
+
+  &:hover {
+    color: var(--cabania-text);
+  }
+
+  &.active {
+    color: var(--cabania-text);
+  }
+}
+
+// --- List groups ---
+.wrapper .list-group-item {
+  background-color: transparent;
+  border-color: var(--cabania-border-subtle);
+  color: var(--cabania-text);
+}
+
+// --- Utility text overrides ---
+.wrapper .text-body {
+  color: var(--cabania-text) !important;
+}
+
+.wrapper .text-body-secondary {
+  color: var(--cabania-text-muted) !important;
+}
+
+.wrapper .text-muted {
+  color: var(--cabania-text-dim) !important;
+}
+
+// --- Vertical dividers ---
+.wrapper .vr {
+  color: var(--cabania-text-dim) !important;
+}
+
+// --- Sidebar ---
+.sidebar {
+  --cui-sidebar-bg: var(--cabania-bg);
+  --cui-sidebar-border-color: var(--cabania-border-subtle);
+  --cui-sidebar-color: var(--cabania-text-muted);
+
+  // Nav links
+  --cui-sidebar-nav-link-color: var(--cabania-text-muted);
+  --cui-sidebar-nav-link-hover-bg: var(--cabania-hover-bg);
+  --cui-sidebar-nav-link-hover-color: var(--cabania-text);
+  --cui-sidebar-nav-link-active-bg: var(--cabania-active-bg);
+  --cui-sidebar-nav-link-active-color: var(--cabania-emerald);
+  --cui-sidebar-nav-link-active-icon-color: var(--cabania-emerald);
+
+  // Icons
+  --cui-sidebar-nav-link-icon-color: var(--cabania-text-dim);
+  --cui-sidebar-nav-link-hover-icon-color: var(--cabania-text);
+
+  // Groups
+  --cui-sidebar-nav-group-bg: transparent;
+  --cui-sidebar-nav-group-toggle-show-color: var(--cabania-text);
+
+  // Toggler
+  --cui-sidebar-toggler-bg: transparent;
+  --cui-sidebar-toggler-hover-bg: var(--cabania-hover-bg);
+  --cui-sidebar-toggler-color: var(--cabania-text-dim);
+  --cui-sidebar-toggler-hover-color: var(--cabania-text);
+
+  // Header / Footer
+  --cui-sidebar-header-bg: transparent;
+  --cui-sidebar-footer-bg: transparent;
+  --cui-sidebar-footer-border-color: var(--cabania-border-subtle);
+
+  .border-bottom,
+  .border-top {
+    border-color: var(--cabania-border-subtle) !important;
+  }
+}
+
+// --- CabanIA Sidebar Logo ---
+.cabania-sidebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  text-decoration: none;
+
+  &__icon {
+    display: grid;
+    place-items: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.5rem;
+    background: var(--cabania-gradient);
+    color: white;
+    flex-shrink: 0;
+  }
+
+  &__text {
+    font-size: 1.25rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    color: var(--cabania-text);
   }
 }
 
