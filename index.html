@@ -1,11 +1,23 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-coreui-theme="dark">
   <head>
     <meta charset="UTF-8">
     <link rel="icon" href="/favicon.ico">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>CabanIA — La IA que responde, cobra y confirma reservas</title>
     <meta name="description" content="CabanIA centraliza reservas, pagos, disponibilidad y operación de cabañas/parcelas. Responde WhatsApp/Instagram/Facebook con IA, genera link de pago y confirma reservas." />
+    <script>
+      // Anti-FOUC: apply saved theme BEFORE any render.
+      // Default to 'dark' for Glassmorphism experience.
+      (function(){
+        var k='coreui-free-vue-admin-template-theme';
+        var t=localStorage.getItem(k)||'dark';
+        if(t==='auto'){
+          t=window.matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';
+        }
+        document.documentElement.setAttribute('data-coreui-theme',t);
+      })();
+    </script>
   </head>
   <body>
     <div id="app"></div>
