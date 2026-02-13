@@ -373,7 +373,10 @@ const pieChartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: { position: 'right' }
+    legend: {
+      position: 'right',
+      labels: { color: '#cbd5e1' }
+    }
   }
 }
 
@@ -401,15 +404,25 @@ const barChartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   scales: {
-    x: { stacked: true },
+    x: {
+      stacked: true,
+      ticks: { color: '#94a3b8' },
+      grid: { color: 'rgba(255,255,255,0.06)' },
+      border: { color: 'rgba(255,255,255,0.1)' }
+    },
     y: {
       stacked: true,
       beginAtZero: true,
-      ticks: { precision: 0 }
+      ticks: { precision: 0, color: '#94a3b8' },
+      grid: { color: 'rgba(255,255,255,0.06)' },
+      border: { color: 'rgba(255,255,255,0.1)' }
     }
   },
   plugins: {
-    legend: { position: 'top' }
+    legend: {
+      position: 'top',
+      labels: { color: '#cbd5e1' }
+    }
   }
 }
 

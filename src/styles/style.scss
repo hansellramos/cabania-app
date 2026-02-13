@@ -421,6 +421,59 @@ body {
   }
 }
 
+// --- Glass-tinted colored cards (replaces solid bg-*) ---
+// Each color becomes semi-transparent with backdrop-blur
+// creating "colored glass" effect on dark background.
+.wrapper .card.bg-primary {
+  --cui-primary-rgb: 50, 31, 219;
+  background-color: rgba(50, 31, 219, 0.2) !important;
+  border: 1px solid rgba(50, 31, 219, 0.3);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.wrapper .card.bg-success {
+  background-color: rgba(16, 185, 129, 0.2) !important;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.wrapper .card.bg-danger {
+  background-color: rgba(239, 68, 68, 0.2) !important;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.wrapper .card.bg-warning {
+  background-color: rgba(249, 177, 21, 0.15) !important;
+  border: 1px solid rgba(249, 177, 21, 0.25);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.wrapper .card.bg-info {
+  background-color: rgba(14, 165, 233, 0.2) !important;
+  border: 1px solid rgba(14, 165, 233, 0.3);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.wrapper .card.bg-secondary {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.wrapper .card.bg-dark {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
 // ============================================
 // RESPONSIVE STYLES
 // ============================================

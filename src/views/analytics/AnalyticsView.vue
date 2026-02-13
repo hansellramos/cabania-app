@@ -234,10 +234,23 @@ const barChartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: { position: 'top' }
+    legend: {
+      position: 'top',
+      labels: { color: '#cbd5e1' }
+    }
   },
   scales: {
-    y: { beginAtZero: true }
+    x: {
+      ticks: { color: '#94a3b8' },
+      grid: { color: 'rgba(255,255,255,0.06)' },
+      border: { color: 'rgba(255,255,255,0.1)' }
+    },
+    y: {
+      beginAtZero: true,
+      ticks: { color: '#94a3b8' },
+      grid: { color: 'rgba(255,255,255,0.06)' },
+      border: { color: 'rgba(255,255,255,0.1)' }
+    }
   }
 }
 
@@ -256,7 +269,10 @@ const doughnutChartOptions = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
-    legend: { position: 'right' }
+    legend: {
+      position: 'right',
+      labels: { color: '#cbd5e1' }
+    }
   }
 }
 
@@ -280,7 +296,17 @@ const expensesByCategoryBarOptions = {
     legend: { display: false }
   },
   scales: {
-    x: { beginAtZero: true }
+    x: {
+      beginAtZero: true,
+      ticks: { color: '#94a3b8' },
+      grid: { color: 'rgba(255,255,255,0.06)' },
+      border: { color: 'rgba(255,255,255,0.1)' }
+    },
+    y: {
+      ticks: { color: '#94a3b8' },
+      grid: { color: 'rgba(255,255,255,0.06)' },
+      border: { color: 'rgba(255,255,255,0.1)' }
+    }
   }
 }
 
