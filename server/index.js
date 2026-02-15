@@ -7145,6 +7145,9 @@ REGLAS:
   // List invitations
   app.get('/api/invitations', isAuthenticated, async (req, res) => {
     try {
+      if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:view')) {
+        return res.status(403).json({ error: 'No tiene permiso para ver invitaciones' });
+      }
       const { status, organization_id } = req.query;
       const where = {};
       if (status) where.status = status;
@@ -7167,6 +7170,9 @@ REGLAS:
   // Create and send invitation
   app.post('/api/invitations', isAuthenticated, async (req, res) => {
     try {
+      if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:send')) {
+        return res.status(403).json({ error: 'No tiene permiso para enviar invitaciones' });
+      }
       const { email, phone, channel, organization_id, role, message } = req.body;
 
       if (!channel || !['email', 'whatsapp'].includes(channel)) {
@@ -7249,6 +7255,9 @@ REGLAS:
   // Resend invitation
   app.post('/api/invitations/:id/resend', isAuthenticated, async (req, res) => {
     try {
+      if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:manage')) {
+        return res.status(403).json({ error: 'No tiene permiso para gestionar invitaciones' });
+      }
       const invitation = await prisma.invitations.findUnique({
         where: { id: req.params.id },
         include: {
@@ -7303,6 +7312,9 @@ REGLAS:
   // Cancel invitation
   app.delete('/api/invitations/:id', isAuthenticated, async (req, res) => {
     try {
+      if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:manage')) {
+        return res.status(403).json({ error: 'No tiene permiso para gestionar invitaciones' });
+      }
       const invitation = await prisma.invitations.findUnique({ where: { id: req.params.id } });
       if (!invitation) return res.status(404).json({ error: 'Invitación no encontrada' });
 
@@ -7387,8 +7399,8 @@ REGLAS:
       const password_hash = await bcryptInv.hash(password, 10);
       const userId = `inv_${crypto.randomUUID().split('-')[0]}_${Date.now()}`;
 
-      // Create user + mark invitation accepted + create onboarding progress
-      const [user] = await prisma.$transaction([
+      // Create user + mark invitation accepted + create onboarding progress + referral reward
+      const transactionOps = [
         prisma.users.create({
           data: {
             id: userId,
@@ -7397,6 +7409,7 @@ REGLAS:
             password_hash,
             role: invitation.role || 'user',
             profile_id: profile?.id || null,
+            referred_by: invitation.invited_by,
           }
         }),
         prisma.invitations.update({
@@ -7406,7 +7419,18 @@ REGLAS:
         prisma.onboarding_progress.create({
           data: { user_id: userId, current_step: 2, data: {} }
         }),
-      ]);
+        prisma.referral_rewards.create({
+          data: {
+            referrer_id: invitation.invited_by,
+            referred_id: userId,
+            invitation_id: invitation.id,
+            reward_type: 'signup',
+            status: 'pending',
+            description: `Registro de ${display_name} (${email}) por invitación`,
+          }
+        }),
+      ];
+      const [user] = await prisma.$transaction(transactionOps);
 
       // Assign to organization if specified
       if (invitation.organization_id) {
