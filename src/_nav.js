@@ -155,6 +155,12 @@ export default [
   },
   {
     component: 'CNavItem',
+    name: 'Invitaciones',
+    to: '/invitations',
+    icon: 'cil-envelope-open',
+  },
+  {
+    component: 'CNavItem',
     name: 'Perfiles',
     to: '/admin/profiles',
     icon: 'cil-shield-alt',

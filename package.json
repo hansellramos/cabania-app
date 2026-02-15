@@ -38,6 +38,7 @@
     "highcharts-vue": "^2.0.1",
     "mapbox-gl": "^3.18.1",
     "multer": "^2.0.2",
+    "nodemailer": "^8.0.1",
     "passport": "^0.7.0",
     "passport-fido2-webauthn": "^0.1.0",
     "passport-local": "^1.0.0",
