@@ -38,7 +38,7 @@
               <CCol :md="6">
                 <div class="mb-3">
                   <CFormLabel>Cabaña</CFormLabel>
-                  <CFormSelect v-model="form.venue_id" @change="loadPlans" :disabled="!isNew">
+                  <CFormSelect v-model="form.venue_id" :disabled="!isNew">
                     <option value="">Seleccionar cabaña</option>
                     <option v-for="venue in venues" :key="venue.id" :value="venue.id">
                       {{ venue.name }}
@@ -244,7 +244,7 @@ const loadPlans = async () => {
     return
   }
   try {
-    const response = await fetch(`/api/venues/${form.value.venue_id}/plans`, { credentials: 'include' })
+    const response = await fetch(`/api/venue-plans?venue_id=${form.value.venue_id}`, { credentials: 'include' })
     if (response.ok) {
       plans.value = await response.json()
     }
@@ -339,6 +339,11 @@ const getStatusLabel = (status) => {
     default: return status
   }
 }
+
+watch(() => form.value.venue_id, () => {
+  form.value.plan_id = ''
+  loadPlans()
+})
 
 watch(() => [form.value.plan_id, form.value.adults, form.value.children], () => {
   if (form.value.plan_id && plans.value.length > 0) {
