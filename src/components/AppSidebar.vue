@@ -20,12 +20,12 @@ const sidebar = useSidebarStore()
         <CSidebarBrand v-bind="$attrs" as="a" :href="href" @click="navigate">
           <!-- Full logo (expanded sidebar) -->
           <div class="cabania-sidebar-logo sidebar-brand-full">
-            <img src="/logo.svg" alt="CabanIA" class="cabania-sidebar-logo__icon" />
+            <img src="/logo-inverted.svg" alt="CabanIA" class="cabania-sidebar-logo__icon" />
             <img src="/logo-wordmark.svg" alt="CabanIA" class="cabania-sidebar-logo__wordmark" />
           </div>
           <!-- Narrow logo (collapsed sidebar) -->
           <div class="cabania-sidebar-logo sidebar-brand-narrow">
-            <img src="/logo.svg" alt="CabanIA" class="cabania-sidebar-logo__icon" />
+            <img src="/logo-inverted.svg" alt="CabanIA" class="cabania-sidebar-logo__icon" />
           </div>
         </CSidebarBrand>
       </RouterLink>

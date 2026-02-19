@@ -27,13 +27,8 @@
     <div class="cabania-login__card">
       <!-- Logo -->
       <div class="cabania-login__logo">
-        <span class="cabania-login__logo-icon">
-          <svg viewBox="0 0 24 24" fill="none" width="20" height="20">
-            <path d="M4 20V10.5L12 4l8 6.5V20" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-            <path d="M9 20v-6h6v6" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
-          </svg>
-        </span>
-        <span class="cabania-login__logo-text">CabanIA</span>
+        <img src="/logo-inverted.svg" alt="CabanIA" class="cabania-login__logo-icon" />
+        <img src="/logo-wordmark.svg" alt="CabanIA" class="cabania-login__logo-wordmark" />
       </div>
 
       <p class="cabania-login__subtitle">
@@ -342,22 +337,16 @@ const handleLogin = async () => {
 }
 
 .cabania-login__logo-icon {
-  display: grid;
-  place-items: center;
   width: 2.5rem;
   height: 2.5rem;
   border-radius: 0.75rem;
-  border: 1px solid var(--cl-logo-border);
-  background: linear-gradient(135deg, #10b981, #0ea5e9);
-  box-shadow: var(--cl-logo-shadow);
-  color: white;
+  object-fit: contain;
 }
 
-.cabania-login__logo-text {
-  font-size: 1.5rem;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-  color: var(--cl-text);
+.cabania-login__logo-wordmark {
+  height: 1.4rem;
+  width: auto;
+  object-fit: contain;
 }
 
 .cabania-login__subtitle {
