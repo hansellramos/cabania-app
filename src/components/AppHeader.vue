@@ -51,16 +51,13 @@ onMounted(() => {
       </CHeaderNav>
       <CHeaderNav class="ms-auto">
         <CNavItem>
-          <CButton 
-              color="success" 
-              :variant="colorMode === 'dark' ? 'outline' : undefined"
-              size="sm" 
-              :class="['d-flex', 'align-items-center', 'gap-1', colorMode !== 'dark' ? 'text-white' : '']" 
+          <button
+              class="cabania-btn-gradient d-flex align-items-center gap-1"
               @click="createNewAccommodation"
             >
               <CIcon icon="cil-plus" />
               Crear Hospedaje
-            </CButton>
+            </button>
         </CNavItem>
       </CHeaderNav>
       <CHeaderNav v-if="settings.developmentMode">

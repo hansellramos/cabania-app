@@ -56,64 +56,70 @@
       </CCol>
     </CRow>
 
+    <div v-if="loading" class="text-center py-5">
+      <CSpinner color="primary" />
+      <div class="text-body-secondary mt-2">Cargando datos...</div>
+    </div>
+    <template v-else>
+
     <CRow class="mb-4">
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-secondary h-100">
+        <CCard class="cabania-glass cabania-glass--danger h-100">
           <CCardBody class="pb-3">
             <div class="fs-4 fw-semibold">
               {{ totalAccommodationsLast12 }}
             </div>
-            <div class="text-white-50 small">Últimos 12M</div>
+            <div class="cabania-glass__label small">Últimos 12M</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-dark h-100">
+        <CCard class="cabania-glass cabania-glass--warning h-100">
           <CCardBody class="pb-3">
             <div class="fs-4 fw-semibold">
               {{ totalAccommodationsLast3 }}
             </div>
-            <div class="text-white-50 small">Últimos 3M</div>
+            <div class="cabania-glass__label small">Últimos 3M</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-info h-100">
+        <CCard class="cabania-glass cabania-glass--info h-100">
           <CCardBody class="pb-3">
             <div class="fs-4 fw-semibold">
               {{ totalAccommodationsPreviousMonth }}
             </div>
-            <div class="text-white-50 small">Mes Anterior</div>
+            <div class="cabania-glass__label small">Mes Anterior</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-primary h-100">
+        <CCard class="cabania-glass cabania-glass--primary h-100">
           <CCardBody class="pb-3">
             <div class="fs-4 fw-semibold">
               {{ totalAccommodationsThisMonth }}
             </div>
-            <div class="text-white-50 small">Este Mes</div>
+            <div class="cabania-glass__label small">Este Mes</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-warning h-100">
+        <CCard class="cabania-glass cabania-glass--warning h-100">
           <CCardBody class="pb-3">
             <div class="fs-4 fw-semibold">
               {{ totalAccommodationsNext3 }}
             </div>
-            <div class="text-white-50 small">Próximos 3M</div>
+            <div class="cabania-glass__label small">Próximos 3M</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-success h-100">
+        <CCard class="cabania-glass cabania-glass--success h-100">
           <CCardBody class="pb-3">
             <div class="fs-4 fw-semibold">
               {{ totalAccommodationsNext12 }}
             </div>
-            <div class="text-white-50 small">Próximos 12M</div>
+            <div class="cabania-glass__label small">Próximos 12M</div>
           </CCardBody>
         </CCard>
       </CCol>
@@ -125,7 +131,7 @@
           <CCardHeader>Hospedajes - Últimos 12 Meses</CCardHeader>
           <CCardBody>
             <div v-if="accommodationsHistory.venues?.length > 0" style="height: 300px;">
-              <Bar :data="historyChartData" :options="barChartOptions" />
+              <highcharts :options="historyChartOptions" />
             </div>
             <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes históricos
@@ -138,7 +144,7 @@
           <CCardHeader>Hospedajes - Próximos 12 Meses</CCardHeader>
           <CCardBody>
             <div v-if="accommodationsForecast.venues?.length > 0" style="height: 300px;">
-              <Bar :data="forecastChartData" :options="barChartOptions" />
+              <highcharts :options="forecastChartOptions" />
             </div>
             <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes futuros
@@ -168,36 +174,36 @@
 
     <CRow class="mb-4 g-3">
       <CCol :sm="6" :lg="3">
-        <CCard class="text-white bg-primary h-100">
+        <CCard class="cabania-glass cabania-glass--primary h-100">
           <CCardBody class="pb-3">
             <div class="fs-4 fw-semibold">
               {{ formatCurrency(incomeSummary.currentMonth.total) }}
-              <span v-if="incomeSummary.percentChange !== 0" class="fs-6 fw-normal ms-2" :class="incomeSummary.percentChange >= 0 ? 'text-white' : 'text-danger'">
+              <span v-if="incomeSummary.percentChange !== 0" class="fs-6 fw-normal ms-2" :class="incomeSummary.percentChange >= 0 ? 'text-current' : 'text-danger'">
                 {{ incomeSummary.percentChange >= 0 ? '+' : '' }}{{ incomeSummary.percentChange }}%
               </span>
             </div>
-            <div class="text-white-50">Ingresos Este Mes</div>
+            <div class="cabania-glass__label">Ingresos Este Mes</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <CCard class="text-white bg-info h-100">
+        <CCard class="cabania-glass cabania-glass--info h-100">
           <CCardBody class="pb-3">
             <div class="fs-4 fw-semibold">
               {{ formatCurrency(incomeSummary.previousMonth.total) }}
             </div>
-            <div class="text-white-50">Ingresos Mes Anterior</div>
+            <div class="cabania-glass__label">Ingresos Mes Anterior</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <CCard class="text-white bg-success h-100">
+        <CCard class="cabania-glass cabania-glass--success h-100">
           <CCardBody class="pb-3">
             <div class="fs-4 fw-semibold">
               {{ totalIncomeByVenue }}
             </div>
-            <div class="text-white-50">Ingresos Totales</div>
-            <small class="text-white-50">{{ incomeByVenue.length }} cabañas con ingresos</small>
+            <div class="cabania-glass__label">Ingresos Totales</div>
+            <small class="cabania-glass__label">{{ incomeByVenue.length }} cabañas con ingresos</small>
           </CCardBody>
         </CCard>
       </CCol>
@@ -209,7 +215,7 @@
           <CCardHeader>Hospedajes por Cabaña</CCardHeader>
           <CCardBody>
             <div v-if="accommodationsByVenue.length > 0" style="height: 300px;">
-              <Pie :data="accommodationsPieChartData" :options="pieChartOptions" />
+              <highcharts :options="accommodationsPieOptions" />
             </div>
             <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes disponibles
@@ -242,30 +248,19 @@
         </CCard>
       </CCol>
     </CRow>
+    </template>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { Pie, Bar } from 'vue-chartjs'
-import {
-  Chart as ChartJS,
-  ArcElement,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend
-} from 'chart.js'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
-
-ChartJS.register(ArcElement, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
 
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
 
+const loading = ref(false)
 const organizations = ref([])
 const selectedOrganizations = ref([])
 const orgSearch = ref('')
@@ -284,14 +279,14 @@ const accommodationsForecast = ref({ months: [], venues: [] })
 const periodOptions = [
   { value: 'next_12_months', label: 'Próximos 12 meses' },
   { value: 'next_3_months', label: 'Próximos 3 meses' },
-  { value: 'next_month', label: 'Próximo mes' },
-  { value: 'last_month', label: 'Último mes' },
+  { value: 'this_month', label: 'Este mes' },
   { value: 'last_3_months', label: 'Últimos 3 meses' },
+  { value: 'last_6_months', label: 'Últimos 6 meses' },
   { value: 'last_12_months', label: 'Últimos 12 meses' }
 ]
 
 // Period filter for income and accommodations by venue sections
-const selectedIncomePeriod = ref('last_12_months')
+const selectedIncomePeriod = ref('last_6_months')
 const accommodationsByVenue = ref([])
 
 const filteredOrganizations = computed(() => {
@@ -347,71 +342,97 @@ const totalAccommodationsPreviousMonth = computed(() => {
 })
 
 const chartColors = [
-  '#36A2EB', '#FF6384', '#FFCE56', '#4BC0C0', '#9966FF',
-  '#FF9F40', '#C9CBCF', '#7BC225', '#E83E8C', '#17A2B8'
+  '#10b981', '#0ea5e9', '#6366f1', '#f43f5e', '#f59e0b',
+  '#14b8a6', '#8b5cf6', '#f97316', '#06b6d4', '#ec4899'
 ]
 
-const pieChartData = computed(() => ({
-  labels: incomeByVenue.value.map(item => item.venue_name),
-  datasets: [{
-    data: incomeByVenue.value.map(item => item.total),
-    backgroundColor: chartColors.slice(0, incomeByVenue.value.length),
-    borderWidth: 1
-  }]
-}))
+const labelColor = '#94a3b8'
+const gridColor = 'rgba(148, 163, 184, 0.15)'
 
-const accommodationsPieChartData = computed(() => ({
-  labels: accommodationsByVenue.value.map(item => item.venue_name),
-  datasets: [{
-    data: accommodationsByVenue.value.map(item => item.count),
-    backgroundColor: chartColors.slice(0, accommodationsByVenue.value.length),
-    borderWidth: 1
-  }]
-}))
-
-const pieChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { position: 'right' }
-  }
-}
-
-const historyChartData = computed(() => ({
-  labels: accommodationsHistory.value.months || [],
-  datasets: (accommodationsHistory.value.venues || []).map((venue, index) => ({
-    label: venue.venue_name,
+const historyChartOptions = computed(() => ({
+  chart: {
+    type: 'column',
+    options3d: { enabled: true, alpha: 15, beta: 15, depth: 50 },
+    backgroundColor: 'transparent',
+    height: 300
+  },
+  title: { text: undefined },
+  xAxis: {
+    categories: accommodationsHistory.value.months || [],
+    labels: { style: { color: labelColor } }
+  },
+  yAxis: {
+    title: { text: undefined },
+    labels: { style: { color: labelColor } },
+    gridLineColor: gridColor,
+    allowDecimals: false
+  },
+  plotOptions: {
+    column: { stacking: 'normal', depth: 25, borderWidth: 0 }
+  },
+  series: (accommodationsHistory.value.venues || []).map((venue, i) => ({
+    name: venue.venue_name,
     data: venue.counts,
-    backgroundColor: chartColors[index % chartColors.length],
-    borderWidth: 1
-  }))
+    color: chartColors[i % chartColors.length]
+  })),
+  credits: { enabled: false },
+  legend: { enabled: true, itemStyle: { color: labelColor } }
 }))
 
-const forecastChartData = computed(() => ({
-  labels: accommodationsForecast.value.months || [],
-  datasets: (accommodationsForecast.value.venues || []).map((venue, index) => ({
-    label: venue.venue_name,
+const forecastChartOptions = computed(() => ({
+  chart: {
+    type: 'column',
+    options3d: { enabled: true, alpha: 15, beta: 15, depth: 50 },
+    backgroundColor: 'transparent',
+    height: 300
+  },
+  title: { text: undefined },
+  xAxis: {
+    categories: accommodationsForecast.value.months || [],
+    labels: { style: { color: labelColor } }
+  },
+  yAxis: {
+    title: { text: undefined },
+    labels: { style: { color: labelColor } },
+    gridLineColor: gridColor,
+    allowDecimals: false
+  },
+  plotOptions: {
+    column: { stacking: 'normal', depth: 25, borderWidth: 0 }
+  },
+  series: (accommodationsForecast.value.venues || []).map((venue, i) => ({
+    name: venue.venue_name,
     data: venue.counts,
-    backgroundColor: chartColors[index % chartColors.length],
-    borderWidth: 1
-  }))
+    color: chartColors[i % chartColors.length]
+  })),
+  credits: { enabled: false },
+  legend: { enabled: true, itemStyle: { color: labelColor } }
 }))
 
-const barChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  scales: {
-    x: { stacked: true },
-    y: {
-      stacked: true,
-      beginAtZero: true,
-      ticks: { precision: 0 }
+const accommodationsPieOptions = computed(() => ({
+  chart: {
+    type: 'pie',
+    options3d: { enabled: true, alpha: 45, beta: 0 },
+    backgroundColor: 'transparent',
+    height: 300
+  },
+  title: { text: undefined },
+  plotOptions: {
+    pie: {
+      depth: 35,
+      borderWidth: 0,
+      dataLabels: { enabled: true, format: '{point.name}: {point.y}', style: { color: labelColor, textOutline: 'none' } }
     }
   },
-  plugins: {
-    legend: { position: 'top' }
-  }
-}
+  series: [{
+    data: accommodationsByVenue.value.map((item, i) => ({
+      name: item.venue_name,
+      y: item.count,
+      color: chartColors[i % chartColors.length]
+    }))
+  }],
+  credits: { enabled: false }
+}))
 
 function formatCurrency(amount) {
   return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(amount || 0)
@@ -524,20 +545,30 @@ async function loadAccommodationsByVenue() {
 }
 
 async function loadPeriodData() {
-  await Promise.all([
-    loadIncomeByVenue(),
-    loadAccommodationsByVenue()
-  ])
+  loading.value = true
+  try {
+    await Promise.all([
+      loadIncomeByVenue(),
+      loadAccommodationsByVenue()
+    ])
+  } finally {
+    loading.value = false
+  }
 }
 
 async function loadAllAnalytics() {
-  await Promise.all([
-    loadIncomeSummary(),
-    loadIncomeByVenue(),
-    loadAccommodationsHistory(),
-    loadAccommodationsForecast(),
-    loadAccommodationsByVenue()
-  ])
+  loading.value = true
+  try {
+    await Promise.all([
+      loadIncomeSummary(),
+      loadIncomeByVenue(),
+      loadAccommodationsHistory(),
+      loadAccommodationsForecast(),
+      loadAccommodationsByVenue()
+    ])
+  } finally {
+    loading.value = false
+  }
 }
 
 watch(() => settingsStore.godModeViewAll, () => {
