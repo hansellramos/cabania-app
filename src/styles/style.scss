@@ -702,6 +702,221 @@ body {
   }
 }
 
+// --- FullCalendar Glassmorphism ---
+.wrapper .fc {
+  // Toolbar buttons (prev/next/today/month/week/day)
+  .fc-button {
+    background: rgba(100, 116, 139, 0.15) !important;
+    border: 1.5px solid rgba(148, 163, 184, 0.35) !important;
+    color: var(--cabania-text-secondary) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: var(--cabania-radius-sm) !important;
+    font-weight: 600;
+    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+    box-shadow: 0 0 4px rgba(100, 116, 139, 0.1);
+
+    &:hover {
+      background: rgba(100, 116, 139, 0.3) !important;
+      border-color: rgba(148, 163, 184, 0.6) !important;
+      color: var(--cabania-text) !important;
+      transform: translateY(-1px);
+      box-shadow: 0 0 10px rgba(100, 116, 139, 0.2);
+    }
+
+    &:focus {
+      box-shadow: 0 0 0 0.2rem rgba(14, 165, 233, 0.2) !important;
+    }
+
+    &:disabled {
+      opacity: 0.4;
+    }
+  }
+
+  // Active view button (e.g. "month" when selected)
+  .fc-button-active {
+    background: rgba(16, 185, 129, 0.2) !important;
+    border-color: rgba(52, 211, 153, 0.6) !important;
+    color: #a7f3d0 !important;
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.15) !important;
+  }
+
+  // Button groups — remove double borders
+  .fc-button-group {
+    .fc-button {
+      border-radius: 0 !important;
+
+      &:first-child { border-radius: var(--cabania-radius-sm) 0 0 var(--cabania-radius-sm) !important; }
+      &:last-child { border-radius: 0 var(--cabania-radius-sm) var(--cabania-radius-sm) 0 !important; }
+    }
+  }
+
+  // Toolbar title
+  .fc-toolbar-title {
+    color: var(--cabania-text);
+    font-weight: 600;
+  }
+
+  // Remove all table borders and backgrounds from structural elements
+  table, th, td, .fc-scrollgrid, .fc-scrollgrid-section > td, .fc-scrollgrid-section > th {
+    border: none !important;
+  }
+
+  .fc-scrollgrid-section > td,
+  .fc-scrollgrid-section > th {
+    background: transparent !important;
+  }
+
+  // Separate cells in day grid + header tables
+  .fc-scrollgrid-sync-table,
+  .fc-col-header {
+    border-collapse: separate !important;
+    border-spacing: 3px !important;
+  }
+
+  // Day header (Lun, Mar, Mié...) — glass plates like day cells
+  .fc-col-header-cell {
+    background: var(--cabania-card-bg) !important;
+    background-clip: padding-box !important;
+    border: 1px solid var(--cabania-border-subtle) !important;
+    border-radius: var(--cabania-radius-sm) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 8px 0 !important;
+
+    a, .fc-col-header-cell-cushion {
+      color: var(--cabania-text-dim);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      text-decoration: none;
+    }
+  }
+
+  // Day cells — glass plates directly on td
+  .fc-daygrid-day {
+    background: var(--cabania-card-bg) !important;
+    background-clip: padding-box !important;
+    border: 1px solid var(--cabania-border-subtle) !important;
+    border-radius: var(--cabania-radius-sm) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+
+    &:hover {
+      background: var(--cabania-hover-bg) !important;
+      box-shadow: 0 0 8px rgba(255, 255, 255, 0.04);
+      transform: translateY(-1px);
+    }
+
+    &.fc-day-today {
+      background: rgba(16, 185, 129, 0.1) !important;
+      border-color: rgba(52, 211, 153, 0.4) !important;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.1);
+    }
+
+    &.fc-day-other {
+      background: rgba(0, 0, 0, 0.15) !important;
+      opacity: 0.5;
+    }
+  }
+
+  // Day numbers
+  .fc-daygrid-day-number {
+    color: var(--cabania-text-secondary);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.8rem;
+    padding: 6px 8px;
+  }
+
+  .fc-day-today .fc-daygrid-day-number {
+    color: #6ee7b7;
+    font-weight: 700;
+  }
+
+  // Events — glass pill style
+  .fc-event {
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 6px !important;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    padding: 2px 6px;
+    margin: 1px 2px !important;
+    font-size: 0.7rem;
+    font-weight: 500;
+    transition: box-shadow 0.2s, transform 0.15s;
+
+    &:hover {
+      box-shadow: 0 0 8px rgba(255, 255, 255, 0.08);
+      transform: translateY(-1px);
+    }
+  }
+
+  // Make event backgrounds translucent
+  .fc-daygrid-event,
+  .fc-timegrid-event {
+    opacity: 0.85;
+
+    &:hover {
+      opacity: 1;
+    }
+  }
+
+  // Event dot indicator
+  .fc-daygrid-event-dot {
+    display: none;
+  }
+
+  // "more" link
+  .fc-daygrid-more-link {
+    color: var(--cabania-sky);
+    font-weight: 600;
+    font-size: 0.7rem;
+
+    &:hover {
+      color: #7dd3fc;
+    }
+  }
+
+  // Popover (more events popup)
+  .fc-popover {
+    background: var(--cabania-surface-bg) !important;
+    border: 1px solid var(--cabania-border) !important;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: var(--cabania-radius) !important;
+    box-shadow: var(--cabania-shadow);
+
+    .fc-popover-header {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--cabania-text-secondary);
+      border-bottom: 1px solid var(--cabania-border-subtle);
+      border-radius: var(--cabania-radius) var(--cabania-radius) 0 0;
+    }
+  }
+
+  // Time grid
+  .fc-timegrid-slot {
+    border-color: var(--cabania-border-subtle) !important;
+  }
+
+  .fc-timegrid-slot-label-cushion {
+    color: var(--cabania-text-dim);
+  }
+
+  .fc-timegrid-axis-cushion {
+    color: var(--cabania-text-dim);
+  }
+
+  // Scrollbar area
+  .fc-scroller {
+    scrollbar-width: thin;
+    scrollbar-color: var(--cabania-border) transparent;
+  }
+}
+
 // --- Gradient button (navbar, CTA) ---
 .cabania-btn-gradient {
   background: var(--cabania-gradient);
