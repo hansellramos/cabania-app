@@ -1,15 +1,15 @@
 <template>
   <CCard class="mb-4">
     <CCardHeader class="d-flex justify-content-between align-items-center">
-      <strong>Venues</strong>
+      <strong>Cabañas</strong>
       <RouterLink to="/business/venues/create">
-        <CButton color="success" size="sm">+ New Venue</CButton>
+        <CButton color="success" size="sm">+ Nueva Cabaña</CButton>
       </RouterLink>
     </CCardHeader>
     <CCardBody>
       <div class="mb-3 position-relative">
-        <label class="form-label">Filter by Name:</label>
-        <input type="text" v-model="nameInput" @input="onNameInput" class="form-control" placeholder="Search venue name" />
+        <label class="form-label">Filtrar por Nombre:</label>
+        <input type="text" v-model="nameInput" @input="onNameInput" class="form-control" placeholder="Buscar cabaña" />
         <ul v-if="filteredNames.length" class="list-group position-absolute z-3 w-100">
           <li v-for="name in filteredNames" :key="name" class="list-group-item list-group-item-action" @click="selectName(name)">{{ name }}</li>
         </ul>
@@ -24,8 +24,8 @@
         <CTableHead>
           <CTableRow>
             <CTableHeaderCell scope="col" class="d-none">ID</CTableHeaderCell>
-            <CTableHeaderCell scope="col">Name</CTableHeaderCell>
-            <CTableHeaderCell scope="col">Actions</CTableHeaderCell>
+            <CTableHeaderCell scope="col">Nombre</CTableHeaderCell>
+            <CTableHeaderCell scope="col">Acciones</CTableHeaderCell>
           </CTableRow>
         </CTableHead>
         <CTableBody>
@@ -154,7 +154,7 @@ function viewChat(venue) {
 }
 
 async function onDelete(venue) {
-  if (confirm(`Are you sure you want to delete the venue "${venue.name}"?`)) {
+  if (confirm(`¿Estás seguro de eliminar la cabaña "${venue.name}"?`)) {
     await deleteVenue(venue.id)
     await loadVenues()
   }
