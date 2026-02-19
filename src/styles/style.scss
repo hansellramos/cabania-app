@@ -321,325 +321,280 @@ body {
   }
 }
 
-// Filled buttons — glass with neon glow (like the gradient CTA button)
+// Filled buttons — light mode defaults (dark text on glass bg)
 .wrapper .btn-primary,
 .modal .btn-primary {
-  --cui-btn-bg: rgba(99, 102, 241, 0.2);
-  --cui-btn-border-color: rgba(129, 140, 248, 0.6);
-  --cui-btn-color: #c7d2fe;
-  --cui-btn-hover-bg: rgba(99, 102, 241, 0.35);
-  --cui-btn-hover-border-color: rgba(129, 140, 248, 0.9);
-  --cui-btn-hover-color: #e0e7ff;
-  --cui-btn-active-bg: rgba(99, 102, 241, 0.45);
-  --cui-btn-active-border-color: rgba(129, 140, 248, 1);
-  --cui-btn-active-color: #e0e7ff;
-  --cui-btn-disabled-bg: rgba(99, 102, 241, 0.1);
-  --cui-btn-disabled-border-color: rgba(99, 102, 241, 0.2);
-  --cui-btn-disabled-color: rgba(129, 140, 248, 0.4);
-  box-shadow: 0 0 6px rgba(99, 102, 241, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --cui-btn-bg: rgba(99, 102, 241, 0.12);
+  --cui-btn-border-color: rgba(99, 102, 241, 0.4);
+  --cui-btn-color: #4338ca;
+  --cui-btn-hover-bg: rgba(99, 102, 241, 0.2);
+  --cui-btn-hover-border-color: rgba(99, 102, 241, 0.6);
+  --cui-btn-hover-color: #3730a3;
+  --cui-btn-active-bg: rgba(99, 102, 241, 0.3);
+  --cui-btn-active-border-color: rgba(99, 102, 241, 0.8);
+  --cui-btn-active-color: #312e81;
+  --cui-btn-disabled-bg: rgba(99, 102, 241, 0.06);
+  --cui-btn-disabled-border-color: rgba(99, 102, 241, 0.15);
+  --cui-btn-disabled-color: rgba(99, 102, 241, 0.4);
+  box-shadow: 0 0 6px rgba(99, 102, 241, 0.1);
 
-  &:hover { box-shadow: 0 0 12px rgba(99, 102, 241, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  &:hover { box-shadow: 0 0 12px rgba(99, 102, 241, 0.2); }
 }
 
 .wrapper .btn-success,
 .modal .btn-success {
-  --cui-btn-bg: rgba(16, 185, 129, 0.2);
-  --cui-btn-border-color: rgba(52, 211, 153, 0.6);
-  --cui-btn-color: #a7f3d0;
-  --cui-btn-hover-bg: rgba(16, 185, 129, 0.35);
-  --cui-btn-hover-border-color: rgba(52, 211, 153, 0.9);
-  --cui-btn-hover-color: #d1fae5;
-  --cui-btn-active-bg: rgba(16, 185, 129, 0.45);
-  --cui-btn-active-border-color: rgba(52, 211, 153, 1);
-  --cui-btn-active-color: #d1fae5;
-  --cui-btn-disabled-bg: rgba(16, 185, 129, 0.1);
-  --cui-btn-disabled-border-color: rgba(16, 185, 129, 0.2);
-  --cui-btn-disabled-color: rgba(52, 211, 153, 0.4);
-  box-shadow: 0 0 6px rgba(16, 185, 129, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --cui-btn-bg: rgba(16, 185, 129, 0.12);
+  --cui-btn-border-color: rgba(16, 185, 129, 0.4);
+  --cui-btn-color: #047857;
+  --cui-btn-hover-bg: rgba(16, 185, 129, 0.2);
+  --cui-btn-hover-border-color: rgba(16, 185, 129, 0.6);
+  --cui-btn-hover-color: #065f46;
+  --cui-btn-active-bg: rgba(16, 185, 129, 0.3);
+  --cui-btn-active-border-color: rgba(16, 185, 129, 0.8);
+  --cui-btn-active-color: #064e3b;
+  --cui-btn-disabled-bg: rgba(16, 185, 129, 0.06);
+  --cui-btn-disabled-border-color: rgba(16, 185, 129, 0.15);
+  --cui-btn-disabled-color: rgba(16, 185, 129, 0.4);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.1);
 
-  &:hover { box-shadow: 0 0 12px rgba(16, 185, 129, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  &:hover { box-shadow: 0 0 12px rgba(16, 185, 129, 0.2); }
 }
 
 .wrapper .btn-danger,
 .modal .btn-danger {
-  --cui-btn-bg: rgba(239, 68, 68, 0.2);
-  --cui-btn-border-color: rgba(252, 165, 165, 0.6);
-  --cui-btn-color: #fecaca;
-  --cui-btn-hover-bg: rgba(239, 68, 68, 0.35);
-  --cui-btn-hover-border-color: rgba(252, 165, 165, 0.9);
-  --cui-btn-hover-color: #fee2e2;
-  --cui-btn-active-bg: rgba(239, 68, 68, 0.45);
-  --cui-btn-active-border-color: rgba(252, 165, 165, 1);
-  --cui-btn-active-color: #fee2e2;
-  --cui-btn-disabled-bg: rgba(239, 68, 68, 0.1);
-  --cui-btn-disabled-border-color: rgba(239, 68, 68, 0.2);
-  --cui-btn-disabled-color: rgba(252, 165, 165, 0.4);
-  box-shadow: 0 0 6px rgba(239, 68, 68, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --cui-btn-bg: rgba(239, 68, 68, 0.12);
+  --cui-btn-border-color: rgba(239, 68, 68, 0.4);
+  --cui-btn-color: #b91c1c;
+  --cui-btn-hover-bg: rgba(239, 68, 68, 0.2);
+  --cui-btn-hover-border-color: rgba(239, 68, 68, 0.6);
+  --cui-btn-hover-color: #991b1b;
+  --cui-btn-active-bg: rgba(239, 68, 68, 0.3);
+  --cui-btn-active-border-color: rgba(239, 68, 68, 0.8);
+  --cui-btn-active-color: #7f1d1d;
+  --cui-btn-disabled-bg: rgba(239, 68, 68, 0.06);
+  --cui-btn-disabled-border-color: rgba(239, 68, 68, 0.15);
+  --cui-btn-disabled-color: rgba(239, 68, 68, 0.4);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.1);
 
-  &:hover { box-shadow: 0 0 12px rgba(239, 68, 68, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  &:hover { box-shadow: 0 0 12px rgba(239, 68, 68, 0.2); }
 }
 
 .wrapper .btn-warning,
 .modal .btn-warning {
-  --cui-btn-bg: rgba(245, 158, 11, 0.2);
-  --cui-btn-border-color: rgba(253, 224, 71, 0.6);
-  --cui-btn-color: #fef08a;
-  --cui-btn-hover-bg: rgba(245, 158, 11, 0.35);
-  --cui-btn-hover-border-color: rgba(253, 224, 71, 0.9);
-  --cui-btn-hover-color: #fef9c3;
-  --cui-btn-active-bg: rgba(245, 158, 11, 0.45);
-  --cui-btn-active-border-color: rgba(253, 224, 71, 1);
-  --cui-btn-active-color: #fef9c3;
-  --cui-btn-disabled-bg: rgba(245, 158, 11, 0.1);
-  --cui-btn-disabled-border-color: rgba(245, 158, 11, 0.2);
-  --cui-btn-disabled-color: rgba(253, 224, 71, 0.4);
-  box-shadow: 0 0 6px rgba(245, 158, 11, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --cui-btn-bg: rgba(245, 158, 11, 0.12);
+  --cui-btn-border-color: rgba(245, 158, 11, 0.4);
+  --cui-btn-color: #92400e;
+  --cui-btn-hover-bg: rgba(245, 158, 11, 0.2);
+  --cui-btn-hover-border-color: rgba(245, 158, 11, 0.6);
+  --cui-btn-hover-color: #78350f;
+  --cui-btn-active-bg: rgba(245, 158, 11, 0.3);
+  --cui-btn-active-border-color: rgba(245, 158, 11, 0.8);
+  --cui-btn-active-color: #713f12;
+  --cui-btn-disabled-bg: rgba(245, 158, 11, 0.06);
+  --cui-btn-disabled-border-color: rgba(245, 158, 11, 0.15);
+  --cui-btn-disabled-color: rgba(245, 158, 11, 0.4);
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.1);
 
-  &:hover { box-shadow: 0 0 12px rgba(245, 158, 11, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  &:hover { box-shadow: 0 0 12px rgba(245, 158, 11, 0.2); }
 }
 
 .wrapper .btn-info,
 .modal .btn-info {
-  --cui-btn-bg: rgba(14, 165, 233, 0.2);
-  --cui-btn-border-color: rgba(125, 211, 252, 0.6);
-  --cui-btn-color: #bae6fd;
-  --cui-btn-hover-bg: rgba(14, 165, 233, 0.35);
-  --cui-btn-hover-border-color: rgba(125, 211, 252, 0.9);
-  --cui-btn-hover-color: #e0f2fe;
-  --cui-btn-active-bg: rgba(14, 165, 233, 0.45);
-  --cui-btn-active-border-color: rgba(125, 211, 252, 1);
-  --cui-btn-active-color: #e0f2fe;
-  --cui-btn-disabled-bg: rgba(14, 165, 233, 0.1);
-  --cui-btn-disabled-border-color: rgba(14, 165, 233, 0.2);
-  --cui-btn-disabled-color: rgba(125, 211, 252, 0.4);
-  box-shadow: 0 0 6px rgba(14, 165, 233, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  --cui-btn-bg: rgba(14, 165, 233, 0.12);
+  --cui-btn-border-color: rgba(14, 165, 233, 0.4);
+  --cui-btn-color: #0369a1;
+  --cui-btn-hover-bg: rgba(14, 165, 233, 0.2);
+  --cui-btn-hover-border-color: rgba(14, 165, 233, 0.6);
+  --cui-btn-hover-color: #075985;
+  --cui-btn-active-bg: rgba(14, 165, 233, 0.3);
+  --cui-btn-active-border-color: rgba(14, 165, 233, 0.8);
+  --cui-btn-active-color: #0c4a6e;
+  --cui-btn-disabled-bg: rgba(14, 165, 233, 0.06);
+  --cui-btn-disabled-border-color: rgba(14, 165, 233, 0.15);
+  --cui-btn-disabled-color: rgba(14, 165, 233, 0.4);
+  box-shadow: 0 0 6px rgba(14, 165, 233, 0.1);
 
-  &:hover { box-shadow: 0 0 12px rgba(14, 165, 233, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  &:hover { box-shadow: 0 0 12px rgba(14, 165, 233, 0.2); }
 }
 
 .wrapper .btn-secondary,
 .modal .btn-secondary {
-  --cui-btn-bg: rgba(100, 116, 139, 0.15);
-  --cui-btn-border-color: rgba(148, 163, 184, 0.4);
-  --cui-btn-color: #cbd5e1;
-  --cui-btn-hover-bg: rgba(100, 116, 139, 0.3);
-  --cui-btn-hover-border-color: rgba(148, 163, 184, 0.7);
-  --cui-btn-hover-color: #e2e8f0;
-  --cui-btn-active-bg: rgba(100, 116, 139, 0.4);
-  --cui-btn-active-border-color: rgba(148, 163, 184, 0.8);
-  --cui-btn-active-color: #e2e8f0;
-  --cui-btn-disabled-bg: rgba(100, 116, 139, 0.08);
-  --cui-btn-disabled-border-color: rgba(100, 116, 139, 0.15);
-  --cui-btn-disabled-color: rgba(148, 163, 184, 0.4);
-  box-shadow: 0 0 4px rgba(100, 116, 139, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --cui-btn-bg: rgba(100, 116, 139, 0.1);
+  --cui-btn-border-color: rgba(100, 116, 139, 0.3);
+  --cui-btn-color: #475569;
+  --cui-btn-hover-bg: rgba(100, 116, 139, 0.18);
+  --cui-btn-hover-border-color: rgba(100, 116, 139, 0.5);
+  --cui-btn-hover-color: #334155;
+  --cui-btn-active-bg: rgba(100, 116, 139, 0.25);
+  --cui-btn-active-border-color: rgba(100, 116, 139, 0.6);
+  --cui-btn-active-color: #1e293b;
+  --cui-btn-disabled-bg: rgba(100, 116, 139, 0.05);
+  --cui-btn-disabled-border-color: rgba(100, 116, 139, 0.12);
+  --cui-btn-disabled-color: rgba(100, 116, 139, 0.4);
+  box-shadow: 0 0 4px rgba(100, 116, 139, 0.08);
 
-  &:hover { box-shadow: 0 0 10px rgba(100, 116, 139, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+  &:hover { box-shadow: 0 0 10px rgba(100, 116, 139, 0.15); }
 }
 
 .wrapper .btn-dark,
 .modal .btn-dark {
-  --cui-btn-bg: rgba(15, 23, 42, 0.6);
-  --cui-btn-border-color: rgba(71, 85, 105, 0.5);
-  --cui-btn-color: #e2e8f0;
-  --cui-btn-hover-bg: rgba(15, 23, 42, 0.8);
-  --cui-btn-hover-border-color: rgba(71, 85, 105, 0.8);
-  --cui-btn-hover-color: #f1f5f9;
-  --cui-btn-active-bg: rgba(15, 23, 42, 0.9);
-  --cui-btn-active-border-color: rgba(71, 85, 105, 0.9);
-  --cui-btn-active-color: #f1f5f9;
-  box-shadow: 0 0 4px rgba(15, 23, 42, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  --cui-btn-bg: rgba(15, 23, 42, 0.08);
+  --cui-btn-border-color: rgba(15, 23, 42, 0.3);
+  --cui-btn-color: #1e293b;
+  --cui-btn-hover-bg: rgba(15, 23, 42, 0.15);
+  --cui-btn-hover-border-color: rgba(15, 23, 42, 0.5);
+  --cui-btn-hover-color: #0f172a;
+  --cui-btn-active-bg: rgba(15, 23, 42, 0.25);
+  --cui-btn-active-border-color: rgba(15, 23, 42, 0.6);
+  --cui-btn-active-color: #020617;
+  box-shadow: 0 0 4px rgba(15, 23, 42, 0.08);
 
-  &:hover { box-shadow: 0 0 10px rgba(15, 23, 42, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+  &:hover { box-shadow: 0 0 10px rgba(15, 23, 42, 0.15); }
 }
 
-// Outline buttons — glass border with glow, transparent fill
-.wrapper .btn-outline-primary,
-.modal .btn-outline-primary {
-  --cui-btn-color: #a5b4fc;
-  --cui-btn-border-color: rgba(99, 102, 241, 0.5);
-  --cui-btn-hover-bg: rgba(99, 102, 241, 0.15);
-  --cui-btn-hover-border-color: rgba(129, 140, 248, 0.8);
-  --cui-btn-hover-color: #c7d2fe;
-  --cui-btn-active-bg: rgba(99, 102, 241, 0.25);
-  --cui-btn-active-color: #e0e7ff;
-  box-shadow: 0 0 4px rgba(99, 102, 241, 0.1);
+// Outline buttons — light mode defaults
+.wrapper .btn-outline-primary, .modal .btn-outline-primary { --cui-btn-color: #4f46e5; --cui-btn-border-color: rgba(99, 102, 241, 0.4); --cui-btn-hover-bg: rgba(99, 102, 241, 0.1); --cui-btn-hover-color: #4338ca; --cui-btn-active-bg: rgba(99, 102, 241, 0.2); --cui-btn-active-color: #312e81; }
+.wrapper .btn-outline-success, .modal .btn-outline-success { --cui-btn-color: #059669; --cui-btn-border-color: rgba(16, 185, 129, 0.4); --cui-btn-hover-bg: rgba(16, 185, 129, 0.1); --cui-btn-hover-color: #047857; --cui-btn-active-bg: rgba(16, 185, 129, 0.2); --cui-btn-active-color: #064e3b; }
+.wrapper .btn-outline-danger, .modal .btn-outline-danger { --cui-btn-color: #dc2626; --cui-btn-border-color: rgba(239, 68, 68, 0.4); --cui-btn-hover-bg: rgba(239, 68, 68, 0.1); --cui-btn-hover-color: #b91c1c; --cui-btn-active-bg: rgba(239, 68, 68, 0.2); --cui-btn-active-color: #7f1d1d; }
+.wrapper .btn-outline-warning, .modal .btn-outline-warning { --cui-btn-color: #d97706; --cui-btn-border-color: rgba(245, 158, 11, 0.4); --cui-btn-hover-bg: rgba(245, 158, 11, 0.1); --cui-btn-hover-color: #b45309; --cui-btn-active-bg: rgba(245, 158, 11, 0.2); --cui-btn-active-color: #713f12; }
+.wrapper .btn-outline-info, .modal .btn-outline-info { --cui-btn-color: #0284c7; --cui-btn-border-color: rgba(14, 165, 233, 0.4); --cui-btn-hover-bg: rgba(14, 165, 233, 0.1); --cui-btn-hover-color: #0369a1; --cui-btn-active-bg: rgba(14, 165, 233, 0.2); --cui-btn-active-color: #0c4a6e; }
+.wrapper .btn-outline-secondary, .modal .btn-outline-secondary { --cui-btn-color: #64748b; --cui-btn-border-color: rgba(100, 116, 139, 0.3); --cui-btn-hover-bg: rgba(100, 116, 139, 0.08); --cui-btn-hover-color: #475569; --cui-btn-active-bg: rgba(100, 116, 139, 0.15); --cui-btn-active-color: #1e293b; }
 
-  &:hover { box-shadow: 0 0 10px rgba(99, 102, 241, 0.2); }
-}
+// Ghost buttons — light mode defaults
+.wrapper .btn-ghost-primary { --cui-btn-color: #4f46e5; --cui-btn-hover-bg: rgba(99, 102, 241, 0.1); --cui-btn-hover-color: #4338ca; --cui-btn-active-bg: rgba(99, 102, 241, 0.18); }
+.wrapper .btn-ghost-success { --cui-btn-color: #059669; --cui-btn-hover-bg: rgba(16, 185, 129, 0.1); --cui-btn-hover-color: #047857; --cui-btn-active-bg: rgba(16, 185, 129, 0.18); }
+.wrapper .btn-ghost-danger { --cui-btn-color: #dc2626; --cui-btn-hover-bg: rgba(239, 68, 68, 0.1); --cui-btn-hover-color: #b91c1c; --cui-btn-active-bg: rgba(239, 68, 68, 0.18); }
+.wrapper .btn-ghost-warning { --cui-btn-color: #d97706; --cui-btn-hover-bg: rgba(245, 158, 11, 0.1); --cui-btn-hover-color: #b45309; --cui-btn-active-bg: rgba(245, 158, 11, 0.18); }
+.wrapper .btn-ghost-info { --cui-btn-color: #0284c7; --cui-btn-hover-bg: rgba(14, 165, 233, 0.1); --cui-btn-hover-color: #0369a1; --cui-btn-active-bg: rgba(14, 165, 233, 0.18); }
+.wrapper .btn-ghost-secondary { --cui-btn-color: #64748b; --cui-btn-hover-bg: rgba(100, 116, 139, 0.08); --cui-btn-hover-color: #475569; --cui-btn-active-bg: rgba(100, 116, 139, 0.12); }
 
-.wrapper .btn-outline-success,
-.modal .btn-outline-success {
-  --cui-btn-color: #6ee7b7;
-  --cui-btn-border-color: rgba(16, 185, 129, 0.5);
-  --cui-btn-hover-bg: rgba(16, 185, 129, 0.15);
-  --cui-btn-hover-border-color: rgba(52, 211, 153, 0.8);
-  --cui-btn-hover-color: #a7f3d0;
-  --cui-btn-active-bg: rgba(16, 185, 129, 0.25);
-  --cui-btn-active-color: #d1fae5;
-  box-shadow: 0 0 4px rgba(16, 185, 129, 0.1);
-
-  &:hover { box-shadow: 0 0 10px rgba(16, 185, 129, 0.2); }
-}
-
-.wrapper .btn-outline-danger,
-.modal .btn-outline-danger {
-  --cui-btn-color: #fca5a5;
-  --cui-btn-border-color: rgba(239, 68, 68, 0.5);
-  --cui-btn-hover-bg: rgba(239, 68, 68, 0.15);
-  --cui-btn-hover-border-color: rgba(252, 165, 165, 0.8);
-  --cui-btn-hover-color: #fecaca;
-  --cui-btn-active-bg: rgba(239, 68, 68, 0.25);
-  --cui-btn-active-color: #fee2e2;
-  box-shadow: 0 0 4px rgba(239, 68, 68, 0.1);
-
-  &:hover { box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); }
-}
-
-.wrapper .btn-outline-warning,
-.modal .btn-outline-warning {
-  --cui-btn-color: #fde047;
-  --cui-btn-border-color: rgba(245, 158, 11, 0.5);
-  --cui-btn-hover-bg: rgba(245, 158, 11, 0.15);
-  --cui-btn-hover-border-color: rgba(253, 224, 71, 0.8);
-  --cui-btn-hover-color: #fef08a;
-  --cui-btn-active-bg: rgba(245, 158, 11, 0.25);
-  --cui-btn-active-color: #fef9c3;
-  box-shadow: 0 0 4px rgba(245, 158, 11, 0.1);
-
-  &:hover { box-shadow: 0 0 10px rgba(245, 158, 11, 0.2); }
-}
-
-.wrapper .btn-outline-info,
-.modal .btn-outline-info {
-  --cui-btn-color: #7dd3fc;
-  --cui-btn-border-color: rgba(14, 165, 233, 0.5);
-  --cui-btn-hover-bg: rgba(14, 165, 233, 0.15);
-  --cui-btn-hover-border-color: rgba(125, 211, 252, 0.8);
-  --cui-btn-hover-color: #bae6fd;
-  --cui-btn-active-bg: rgba(14, 165, 233, 0.25);
-  --cui-btn-active-color: #e0f2fe;
-  box-shadow: 0 0 4px rgba(14, 165, 233, 0.1);
-
-  &:hover { box-shadow: 0 0 10px rgba(14, 165, 233, 0.2); }
-}
-
-.wrapper .btn-outline-secondary,
-.modal .btn-outline-secondary {
-  --cui-btn-color: #94a3b8;
-  --cui-btn-border-color: rgba(100, 116, 139, 0.4);
-  --cui-btn-hover-bg: rgba(100, 116, 139, 0.1);
-  --cui-btn-hover-border-color: rgba(148, 163, 184, 0.6);
-  --cui-btn-hover-color: #cbd5e1;
-  --cui-btn-active-bg: rgba(100, 116, 139, 0.2);
-  --cui-btn-active-color: #e2e8f0;
-}
-
-// Ghost buttons — no border, subtle glow hover
-.wrapper .btn-ghost-primary { --cui-btn-color: #a5b4fc; --cui-btn-hover-bg: rgba(99, 102, 241, 0.15); --cui-btn-hover-color: #c7d2fe; --cui-btn-active-bg: rgba(99, 102, 241, 0.25); }
-.wrapper .btn-ghost-success { --cui-btn-color: #6ee7b7; --cui-btn-hover-bg: rgba(16, 185, 129, 0.15); --cui-btn-hover-color: #a7f3d0; --cui-btn-active-bg: rgba(16, 185, 129, 0.25); }
-.wrapper .btn-ghost-danger { --cui-btn-color: #fca5a5; --cui-btn-hover-bg: rgba(239, 68, 68, 0.15); --cui-btn-hover-color: #fecaca; --cui-btn-active-bg: rgba(239, 68, 68, 0.25); }
-.wrapper .btn-ghost-warning { --cui-btn-color: #fde047; --cui-btn-hover-bg: rgba(245, 158, 11, 0.15); --cui-btn-hover-color: #fef08a; --cui-btn-active-bg: rgba(245, 158, 11, 0.25); }
-.wrapper .btn-ghost-info { --cui-btn-color: #7dd3fc; --cui-btn-hover-bg: rgba(14, 165, 233, 0.15); --cui-btn-hover-color: #bae6fd; --cui-btn-active-bg: rgba(14, 165, 233, 0.25); }
-.wrapper .btn-ghost-secondary { --cui-btn-color: #94a3b8; --cui-btn-hover-bg: rgba(100, 116, 139, 0.1); --cui-btn-hover-color: #cbd5e1; --cui-btn-active-bg: rgba(100, 116, 139, 0.15); }
-
-// --- Buttons: Light mode overrides ---
-@include color-mode(light) {
+// --- Buttons: Dark mode overrides (neon glow on dark bg) ---
+@include color-mode(dark) {
   .wrapper .btn-primary, .modal .btn-primary {
-    --cui-btn-bg: rgba(99, 102, 241, 0.12);
-    --cui-btn-border-color: rgba(99, 102, 241, 0.4);
-    --cui-btn-color: #4338ca;
-    --cui-btn-hover-bg: rgba(99, 102, 241, 0.2);
-    --cui-btn-hover-border-color: rgba(99, 102, 241, 0.6);
-    --cui-btn-hover-color: #3730a3;
-    --cui-btn-active-bg: rgba(99, 102, 241, 0.3);
-    --cui-btn-active-color: #312e81;
-    box-shadow: 0 0 6px rgba(99, 102, 241, 0.1);
-    &:hover { box-shadow: 0 0 12px rgba(99, 102, 241, 0.2); }
+    --cui-btn-bg: rgba(99, 102, 241, 0.2);
+    --cui-btn-border-color: rgba(129, 140, 248, 0.6);
+    --cui-btn-color: #c7d2fe;
+    --cui-btn-hover-bg: rgba(99, 102, 241, 0.35);
+    --cui-btn-hover-border-color: rgba(129, 140, 248, 0.9);
+    --cui-btn-hover-color: #e0e7ff;
+    --cui-btn-active-bg: rgba(99, 102, 241, 0.45);
+    --cui-btn-active-border-color: rgba(129, 140, 248, 1);
+    --cui-btn-active-color: #e0e7ff;
+    --cui-btn-disabled-bg: rgba(99, 102, 241, 0.1);
+    --cui-btn-disabled-border-color: rgba(99, 102, 241, 0.2);
+    --cui-btn-disabled-color: rgba(129, 140, 248, 0.4);
+    box-shadow: 0 0 6px rgba(99, 102, 241, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    &:hover { box-shadow: 0 0 12px rgba(99, 102, 241, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
   }
   .wrapper .btn-success, .modal .btn-success {
-    --cui-btn-bg: rgba(16, 185, 129, 0.12);
-    --cui-btn-border-color: rgba(16, 185, 129, 0.4);
-    --cui-btn-color: #047857;
-    --cui-btn-hover-bg: rgba(16, 185, 129, 0.2);
-    --cui-btn-hover-border-color: rgba(16, 185, 129, 0.6);
-    --cui-btn-hover-color: #065f46;
-    --cui-btn-active-bg: rgba(16, 185, 129, 0.3);
-    --cui-btn-active-color: #064e3b;
-    box-shadow: 0 0 6px rgba(16, 185, 129, 0.1);
-    &:hover { box-shadow: 0 0 12px rgba(16, 185, 129, 0.2); }
+    --cui-btn-bg: rgba(16, 185, 129, 0.2);
+    --cui-btn-border-color: rgba(52, 211, 153, 0.6);
+    --cui-btn-color: #a7f3d0;
+    --cui-btn-hover-bg: rgba(16, 185, 129, 0.35);
+    --cui-btn-hover-border-color: rgba(52, 211, 153, 0.9);
+    --cui-btn-hover-color: #d1fae5;
+    --cui-btn-active-bg: rgba(16, 185, 129, 0.45);
+    --cui-btn-active-border-color: rgba(52, 211, 153, 1);
+    --cui-btn-active-color: #d1fae5;
+    --cui-btn-disabled-bg: rgba(16, 185, 129, 0.1);
+    --cui-btn-disabled-border-color: rgba(16, 185, 129, 0.2);
+    --cui-btn-disabled-color: rgba(52, 211, 153, 0.4);
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    &:hover { box-shadow: 0 0 12px rgba(16, 185, 129, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
   }
   .wrapper .btn-danger, .modal .btn-danger {
-    --cui-btn-bg: rgba(239, 68, 68, 0.12);
-    --cui-btn-border-color: rgba(239, 68, 68, 0.4);
-    --cui-btn-color: #b91c1c;
-    --cui-btn-hover-bg: rgba(239, 68, 68, 0.2);
-    --cui-btn-hover-border-color: rgba(239, 68, 68, 0.6);
-    --cui-btn-hover-color: #991b1b;
-    --cui-btn-active-bg: rgba(239, 68, 68, 0.3);
-    --cui-btn-active-color: #7f1d1d;
-    box-shadow: 0 0 6px rgba(239, 68, 68, 0.1);
-    &:hover { box-shadow: 0 0 12px rgba(239, 68, 68, 0.2); }
+    --cui-btn-bg: rgba(239, 68, 68, 0.2);
+    --cui-btn-border-color: rgba(252, 165, 165, 0.6);
+    --cui-btn-color: #fecaca;
+    --cui-btn-hover-bg: rgba(239, 68, 68, 0.35);
+    --cui-btn-hover-border-color: rgba(252, 165, 165, 0.9);
+    --cui-btn-hover-color: #fee2e2;
+    --cui-btn-active-bg: rgba(239, 68, 68, 0.45);
+    --cui-btn-active-border-color: rgba(252, 165, 165, 1);
+    --cui-btn-active-color: #fee2e2;
+    --cui-btn-disabled-bg: rgba(239, 68, 68, 0.1);
+    --cui-btn-disabled-border-color: rgba(239, 68, 68, 0.2);
+    --cui-btn-disabled-color: rgba(252, 165, 165, 0.4);
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    &:hover { box-shadow: 0 0 12px rgba(239, 68, 68, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
   }
   .wrapper .btn-warning, .modal .btn-warning {
-    --cui-btn-bg: rgba(245, 158, 11, 0.12);
-    --cui-btn-border-color: rgba(245, 158, 11, 0.4);
-    --cui-btn-color: #92400e;
-    --cui-btn-hover-bg: rgba(245, 158, 11, 0.2);
-    --cui-btn-hover-border-color: rgba(245, 158, 11, 0.6);
-    --cui-btn-hover-color: #78350f;
-    --cui-btn-active-bg: rgba(245, 158, 11, 0.3);
-    --cui-btn-active-color: #713f12;
-    box-shadow: 0 0 6px rgba(245, 158, 11, 0.1);
-    &:hover { box-shadow: 0 0 12px rgba(245, 158, 11, 0.2); }
+    --cui-btn-bg: rgba(245, 158, 11, 0.2);
+    --cui-btn-border-color: rgba(253, 224, 71, 0.6);
+    --cui-btn-color: #fef08a;
+    --cui-btn-hover-bg: rgba(245, 158, 11, 0.35);
+    --cui-btn-hover-border-color: rgba(253, 224, 71, 0.9);
+    --cui-btn-hover-color: #fef9c3;
+    --cui-btn-active-bg: rgba(245, 158, 11, 0.45);
+    --cui-btn-active-border-color: rgba(253, 224, 71, 1);
+    --cui-btn-active-color: #fef9c3;
+    --cui-btn-disabled-bg: rgba(245, 158, 11, 0.1);
+    --cui-btn-disabled-border-color: rgba(245, 158, 11, 0.2);
+    --cui-btn-disabled-color: rgba(253, 224, 71, 0.4);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    &:hover { box-shadow: 0 0 12px rgba(245, 158, 11, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
   }
   .wrapper .btn-info, .modal .btn-info {
-    --cui-btn-bg: rgba(14, 165, 233, 0.12);
-    --cui-btn-border-color: rgba(14, 165, 233, 0.4);
-    --cui-btn-color: #0369a1;
-    --cui-btn-hover-bg: rgba(14, 165, 233, 0.2);
-    --cui-btn-hover-border-color: rgba(14, 165, 233, 0.6);
-    --cui-btn-hover-color: #075985;
-    --cui-btn-active-bg: rgba(14, 165, 233, 0.3);
-    --cui-btn-active-color: #0c4a6e;
-    box-shadow: 0 0 6px rgba(14, 165, 233, 0.1);
-    &:hover { box-shadow: 0 0 12px rgba(14, 165, 233, 0.2); }
+    --cui-btn-bg: rgba(14, 165, 233, 0.2);
+    --cui-btn-border-color: rgba(125, 211, 252, 0.6);
+    --cui-btn-color: #bae6fd;
+    --cui-btn-hover-bg: rgba(14, 165, 233, 0.35);
+    --cui-btn-hover-border-color: rgba(125, 211, 252, 0.9);
+    --cui-btn-hover-color: #e0f2fe;
+    --cui-btn-active-bg: rgba(14, 165, 233, 0.45);
+    --cui-btn-active-border-color: rgba(125, 211, 252, 1);
+    --cui-btn-active-color: #e0f2fe;
+    --cui-btn-disabled-bg: rgba(14, 165, 233, 0.1);
+    --cui-btn-disabled-border-color: rgba(14, 165, 233, 0.2);
+    --cui-btn-disabled-color: rgba(125, 211, 252, 0.4);
+    box-shadow: 0 0 6px rgba(14, 165, 233, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    &:hover { box-shadow: 0 0 12px rgba(14, 165, 233, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
   }
   .wrapper .btn-secondary, .modal .btn-secondary {
-    --cui-btn-bg: rgba(100, 116, 139, 0.1);
-    --cui-btn-border-color: rgba(100, 116, 139, 0.3);
-    --cui-btn-color: #475569;
-    --cui-btn-hover-bg: rgba(100, 116, 139, 0.18);
-    --cui-btn-hover-border-color: rgba(100, 116, 139, 0.5);
-    --cui-btn-hover-color: #334155;
-    --cui-btn-active-bg: rgba(100, 116, 139, 0.25);
-    --cui-btn-active-color: #1e293b;
+    --cui-btn-bg: rgba(100, 116, 139, 0.15);
+    --cui-btn-border-color: rgba(148, 163, 184, 0.4);
+    --cui-btn-color: #cbd5e1;
+    --cui-btn-hover-bg: rgba(100, 116, 139, 0.3);
+    --cui-btn-hover-border-color: rgba(148, 163, 184, 0.7);
+    --cui-btn-hover-color: #e2e8f0;
+    --cui-btn-active-bg: rgba(100, 116, 139, 0.4);
+    --cui-btn-active-border-color: rgba(148, 163, 184, 0.8);
+    --cui-btn-active-color: #e2e8f0;
+    --cui-btn-disabled-bg: rgba(100, 116, 139, 0.08);
+    --cui-btn-disabled-border-color: rgba(100, 116, 139, 0.15);
+    --cui-btn-disabled-color: rgba(148, 163, 184, 0.4);
+    box-shadow: 0 0 4px rgba(100, 116, 139, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    &:hover { box-shadow: 0 0 10px rgba(100, 116, 139, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
   }
   .wrapper .btn-dark, .modal .btn-dark {
-    --cui-btn-bg: rgba(15, 23, 42, 0.08);
-    --cui-btn-border-color: rgba(15, 23, 42, 0.3);
-    --cui-btn-color: #1e293b;
-    --cui-btn-hover-bg: rgba(15, 23, 42, 0.15);
-    --cui-btn-hover-border-color: rgba(15, 23, 42, 0.5);
-    --cui-btn-hover-color: #0f172a;
-    --cui-btn-active-bg: rgba(15, 23, 42, 0.25);
-    --cui-btn-active-color: #020617;
+    --cui-btn-bg: rgba(15, 23, 42, 0.6);
+    --cui-btn-border-color: rgba(71, 85, 105, 0.5);
+    --cui-btn-color: #e2e8f0;
+    --cui-btn-hover-bg: rgba(15, 23, 42, 0.8);
+    --cui-btn-hover-border-color: rgba(71, 85, 105, 0.8);
+    --cui-btn-hover-color: #f1f5f9;
+    --cui-btn-active-bg: rgba(15, 23, 42, 0.9);
+    --cui-btn-active-border-color: rgba(71, 85, 105, 0.9);
+    --cui-btn-active-color: #f1f5f9;
+    box-shadow: 0 0 4px rgba(15, 23, 42, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    &:hover { box-shadow: 0 0 10px rgba(15, 23, 42, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
   }
 
-  // Outline buttons — light mode
-  .wrapper .btn-outline-primary, .modal .btn-outline-primary { --cui-btn-color: #4f46e5; --cui-btn-border-color: rgba(99, 102, 241, 0.4); --cui-btn-hover-bg: rgba(99, 102, 241, 0.1); --cui-btn-hover-color: #4338ca; }
-  .wrapper .btn-outline-success, .modal .btn-outline-success { --cui-btn-color: #059669; --cui-btn-border-color: rgba(16, 185, 129, 0.4); --cui-btn-hover-bg: rgba(16, 185, 129, 0.1); --cui-btn-hover-color: #047857; }
-  .wrapper .btn-outline-danger, .modal .btn-outline-danger { --cui-btn-color: #dc2626; --cui-btn-border-color: rgba(239, 68, 68, 0.4); --cui-btn-hover-bg: rgba(239, 68, 68, 0.1); --cui-btn-hover-color: #b91c1c; }
-  .wrapper .btn-outline-warning, .modal .btn-outline-warning { --cui-btn-color: #d97706; --cui-btn-border-color: rgba(245, 158, 11, 0.4); --cui-btn-hover-bg: rgba(245, 158, 11, 0.1); --cui-btn-hover-color: #b45309; }
-  .wrapper .btn-outline-info, .modal .btn-outline-info { --cui-btn-color: #0284c7; --cui-btn-border-color: rgba(14, 165, 233, 0.4); --cui-btn-hover-bg: rgba(14, 165, 233, 0.1); --cui-btn-hover-color: #0369a1; }
-  .wrapper .btn-outline-secondary, .modal .btn-outline-secondary { --cui-btn-color: #64748b; --cui-btn-border-color: rgba(100, 116, 139, 0.3); --cui-btn-hover-bg: rgba(100, 116, 139, 0.08); --cui-btn-hover-color: #475569; }
+  // Outline buttons — dark mode
+  .wrapper .btn-outline-primary, .modal .btn-outline-primary { --cui-btn-color: #a5b4fc; --cui-btn-border-color: rgba(99, 102, 241, 0.5); --cui-btn-hover-bg: rgba(99, 102, 241, 0.15); --cui-btn-hover-border-color: rgba(129, 140, 248, 0.8); --cui-btn-hover-color: #c7d2fe; --cui-btn-active-bg: rgba(99, 102, 241, 0.25); --cui-btn-active-color: #e0e7ff; box-shadow: 0 0 4px rgba(99, 102, 241, 0.1); &:hover { box-shadow: 0 0 10px rgba(99, 102, 241, 0.2); } }
+  .wrapper .btn-outline-success, .modal .btn-outline-success { --cui-btn-color: #6ee7b7; --cui-btn-border-color: rgba(16, 185, 129, 0.5); --cui-btn-hover-bg: rgba(16, 185, 129, 0.15); --cui-btn-hover-border-color: rgba(52, 211, 153, 0.8); --cui-btn-hover-color: #a7f3d0; --cui-btn-active-bg: rgba(16, 185, 129, 0.25); --cui-btn-active-color: #d1fae5; box-shadow: 0 0 4px rgba(16, 185, 129, 0.1); &:hover { box-shadow: 0 0 10px rgba(16, 185, 129, 0.2); } }
+  .wrapper .btn-outline-danger, .modal .btn-outline-danger { --cui-btn-color: #fca5a5; --cui-btn-border-color: rgba(239, 68, 68, 0.5); --cui-btn-hover-bg: rgba(239, 68, 68, 0.15); --cui-btn-hover-border-color: rgba(252, 165, 165, 0.8); --cui-btn-hover-color: #fecaca; --cui-btn-active-bg: rgba(239, 68, 68, 0.25); --cui-btn-active-color: #fee2e2; box-shadow: 0 0 4px rgba(239, 68, 68, 0.1); &:hover { box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); } }
+  .wrapper .btn-outline-warning, .modal .btn-outline-warning { --cui-btn-color: #fde047; --cui-btn-border-color: rgba(245, 158, 11, 0.5); --cui-btn-hover-bg: rgba(245, 158, 11, 0.15); --cui-btn-hover-border-color: rgba(253, 224, 71, 0.8); --cui-btn-hover-color: #fef08a; --cui-btn-active-bg: rgba(245, 158, 11, 0.25); --cui-btn-active-color: #fef9c3; box-shadow: 0 0 4px rgba(245, 158, 11, 0.1); &:hover { box-shadow: 0 0 10px rgba(245, 158, 11, 0.2); } }
+  .wrapper .btn-outline-info, .modal .btn-outline-info { --cui-btn-color: #7dd3fc; --cui-btn-border-color: rgba(14, 165, 233, 0.5); --cui-btn-hover-bg: rgba(14, 165, 233, 0.15); --cui-btn-hover-border-color: rgba(125, 211, 252, 0.8); --cui-btn-hover-color: #bae6fd; --cui-btn-active-bg: rgba(14, 165, 233, 0.25); --cui-btn-active-color: #e0f2fe; box-shadow: 0 0 4px rgba(14, 165, 233, 0.1); &:hover { box-shadow: 0 0 10px rgba(14, 165, 233, 0.2); } }
+  .wrapper .btn-outline-secondary, .modal .btn-outline-secondary { --cui-btn-color: #94a3b8; --cui-btn-border-color: rgba(100, 116, 139, 0.4); --cui-btn-hover-bg: rgba(100, 116, 139, 0.1); --cui-btn-hover-border-color: rgba(148, 163, 184, 0.6); --cui-btn-hover-color: #cbd5e1; --cui-btn-active-bg: rgba(100, 116, 139, 0.2); --cui-btn-active-color: #e2e8f0; }
 
-  // Ghost buttons — light mode
-  .wrapper .btn-ghost-primary { --cui-btn-color: #4f46e5; --cui-btn-hover-bg: rgba(99, 102, 241, 0.1); --cui-btn-hover-color: #4338ca; }
-  .wrapper .btn-ghost-success { --cui-btn-color: #059669; --cui-btn-hover-bg: rgba(16, 185, 129, 0.1); --cui-btn-hover-color: #047857; }
-  .wrapper .btn-ghost-danger { --cui-btn-color: #dc2626; --cui-btn-hover-bg: rgba(239, 68, 68, 0.1); --cui-btn-hover-color: #b91c1c; }
-  .wrapper .btn-ghost-warning { --cui-btn-color: #d97706; --cui-btn-hover-bg: rgba(245, 158, 11, 0.1); --cui-btn-hover-color: #b45309; }
-  .wrapper .btn-ghost-info { --cui-btn-color: #0284c7; --cui-btn-hover-bg: rgba(14, 165, 233, 0.1); --cui-btn-hover-color: #0369a1; }
-  .wrapper .btn-ghost-secondary { --cui-btn-color: #64748b; --cui-btn-hover-bg: rgba(100, 116, 139, 0.08); --cui-btn-hover-color: #475569; }
+  // Ghost buttons — dark mode
+  .wrapper .btn-ghost-primary { --cui-btn-color: #a5b4fc; --cui-btn-hover-bg: rgba(99, 102, 241, 0.15); --cui-btn-hover-color: #c7d2fe; --cui-btn-active-bg: rgba(99, 102, 241, 0.25); }
+  .wrapper .btn-ghost-success { --cui-btn-color: #6ee7b7; --cui-btn-hover-bg: rgba(16, 185, 129, 0.15); --cui-btn-hover-color: #a7f3d0; --cui-btn-active-bg: rgba(16, 185, 129, 0.25); }
+  .wrapper .btn-ghost-danger { --cui-btn-color: #fca5a5; --cui-btn-hover-bg: rgba(239, 68, 68, 0.15); --cui-btn-hover-color: #fecaca; --cui-btn-active-bg: rgba(239, 68, 68, 0.25); }
+  .wrapper .btn-ghost-warning { --cui-btn-color: #fde047; --cui-btn-hover-bg: rgba(245, 158, 11, 0.15); --cui-btn-hover-color: #fef08a; --cui-btn-active-bg: rgba(245, 158, 11, 0.25); }
+  .wrapper .btn-ghost-info { --cui-btn-color: #7dd3fc; --cui-btn-hover-bg: rgba(14, 165, 233, 0.15); --cui-btn-hover-color: #bae6fd; --cui-btn-active-bg: rgba(14, 165, 233, 0.25); }
+  .wrapper .btn-ghost-secondary { --cui-btn-color: #94a3b8; --cui-btn-hover-bg: rgba(100, 116, 139, 0.1); --cui-btn-hover-color: #cbd5e1; --cui-btn-active-bg: rgba(100, 116, 139, 0.15); }
 }
 
 // --- Dropdowns ---
