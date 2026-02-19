@@ -301,6 +301,302 @@ body {
   border-bottom-color: var(--cabania-border);
 }
 
+// --- Buttons (Glassmorphism) ---
+// Base: all buttons get glass blur + smooth radius + transitions
+.wrapper .btn,
+.modal .btn {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: var(--cabania-radius-sm);
+  font-weight: 600;
+  border-width: 1.5px;
+  transition: background-color 0.2s, border-color 0.2s, box-shadow 0.3s, transform 0.15s;
+
+  &:hover {
+    transform: translateY(-1px);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+}
+
+// Filled buttons — light mode defaults (dark text on glass bg)
+.wrapper .btn-primary,
+.modal .btn-primary {
+  --cui-btn-bg: rgba(99, 102, 241, 0.12);
+  --cui-btn-border-color: rgba(99, 102, 241, 0.4);
+  --cui-btn-color: #4338ca;
+  --cui-btn-hover-bg: rgba(99, 102, 241, 0.2);
+  --cui-btn-hover-border-color: rgba(99, 102, 241, 0.6);
+  --cui-btn-hover-color: #3730a3;
+  --cui-btn-active-bg: rgba(99, 102, 241, 0.3);
+  --cui-btn-active-border-color: rgba(99, 102, 241, 0.8);
+  --cui-btn-active-color: #312e81;
+  --cui-btn-disabled-bg: rgba(99, 102, 241, 0.06);
+  --cui-btn-disabled-border-color: rgba(99, 102, 241, 0.15);
+  --cui-btn-disabled-color: rgba(99, 102, 241, 0.4);
+  box-shadow: 0 0 6px rgba(99, 102, 241, 0.1);
+
+  &:hover { box-shadow: 0 0 12px rgba(99, 102, 241, 0.2); }
+}
+
+.wrapper .btn-success,
+.modal .btn-success {
+  --cui-btn-bg: rgba(16, 185, 129, 0.12);
+  --cui-btn-border-color: rgba(16, 185, 129, 0.4);
+  --cui-btn-color: #047857;
+  --cui-btn-hover-bg: rgba(16, 185, 129, 0.2);
+  --cui-btn-hover-border-color: rgba(16, 185, 129, 0.6);
+  --cui-btn-hover-color: #065f46;
+  --cui-btn-active-bg: rgba(16, 185, 129, 0.3);
+  --cui-btn-active-border-color: rgba(16, 185, 129, 0.8);
+  --cui-btn-active-color: #064e3b;
+  --cui-btn-disabled-bg: rgba(16, 185, 129, 0.06);
+  --cui-btn-disabled-border-color: rgba(16, 185, 129, 0.15);
+  --cui-btn-disabled-color: rgba(16, 185, 129, 0.4);
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.1);
+
+  &:hover { box-shadow: 0 0 12px rgba(16, 185, 129, 0.2); }
+}
+
+.wrapper .btn-danger,
+.modal .btn-danger {
+  --cui-btn-bg: rgba(239, 68, 68, 0.12);
+  --cui-btn-border-color: rgba(239, 68, 68, 0.4);
+  --cui-btn-color: #b91c1c;
+  --cui-btn-hover-bg: rgba(239, 68, 68, 0.2);
+  --cui-btn-hover-border-color: rgba(239, 68, 68, 0.6);
+  --cui-btn-hover-color: #991b1b;
+  --cui-btn-active-bg: rgba(239, 68, 68, 0.3);
+  --cui-btn-active-border-color: rgba(239, 68, 68, 0.8);
+  --cui-btn-active-color: #7f1d1d;
+  --cui-btn-disabled-bg: rgba(239, 68, 68, 0.06);
+  --cui-btn-disabled-border-color: rgba(239, 68, 68, 0.15);
+  --cui-btn-disabled-color: rgba(239, 68, 68, 0.4);
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.1);
+
+  &:hover { box-shadow: 0 0 12px rgba(239, 68, 68, 0.2); }
+}
+
+.wrapper .btn-warning,
+.modal .btn-warning {
+  --cui-btn-bg: rgba(245, 158, 11, 0.12);
+  --cui-btn-border-color: rgba(245, 158, 11, 0.4);
+  --cui-btn-color: #92400e;
+  --cui-btn-hover-bg: rgba(245, 158, 11, 0.2);
+  --cui-btn-hover-border-color: rgba(245, 158, 11, 0.6);
+  --cui-btn-hover-color: #78350f;
+  --cui-btn-active-bg: rgba(245, 158, 11, 0.3);
+  --cui-btn-active-border-color: rgba(245, 158, 11, 0.8);
+  --cui-btn-active-color: #713f12;
+  --cui-btn-disabled-bg: rgba(245, 158, 11, 0.06);
+  --cui-btn-disabled-border-color: rgba(245, 158, 11, 0.15);
+  --cui-btn-disabled-color: rgba(245, 158, 11, 0.4);
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.1);
+
+  &:hover { box-shadow: 0 0 12px rgba(245, 158, 11, 0.2); }
+}
+
+.wrapper .btn-info,
+.modal .btn-info {
+  --cui-btn-bg: rgba(14, 165, 233, 0.12);
+  --cui-btn-border-color: rgba(14, 165, 233, 0.4);
+  --cui-btn-color: #0369a1;
+  --cui-btn-hover-bg: rgba(14, 165, 233, 0.2);
+  --cui-btn-hover-border-color: rgba(14, 165, 233, 0.6);
+  --cui-btn-hover-color: #075985;
+  --cui-btn-active-bg: rgba(14, 165, 233, 0.3);
+  --cui-btn-active-border-color: rgba(14, 165, 233, 0.8);
+  --cui-btn-active-color: #0c4a6e;
+  --cui-btn-disabled-bg: rgba(14, 165, 233, 0.06);
+  --cui-btn-disabled-border-color: rgba(14, 165, 233, 0.15);
+  --cui-btn-disabled-color: rgba(14, 165, 233, 0.4);
+  box-shadow: 0 0 6px rgba(14, 165, 233, 0.1);
+
+  &:hover { box-shadow: 0 0 12px rgba(14, 165, 233, 0.2); }
+}
+
+.wrapper .btn-secondary,
+.modal .btn-secondary {
+  --cui-btn-bg: rgba(100, 116, 139, 0.1);
+  --cui-btn-border-color: rgba(100, 116, 139, 0.3);
+  --cui-btn-color: #475569;
+  --cui-btn-hover-bg: rgba(100, 116, 139, 0.18);
+  --cui-btn-hover-border-color: rgba(100, 116, 139, 0.5);
+  --cui-btn-hover-color: #334155;
+  --cui-btn-active-bg: rgba(100, 116, 139, 0.25);
+  --cui-btn-active-border-color: rgba(100, 116, 139, 0.6);
+  --cui-btn-active-color: #1e293b;
+  --cui-btn-disabled-bg: rgba(100, 116, 139, 0.05);
+  --cui-btn-disabled-border-color: rgba(100, 116, 139, 0.12);
+  --cui-btn-disabled-color: rgba(100, 116, 139, 0.4);
+  box-shadow: 0 0 4px rgba(100, 116, 139, 0.08);
+
+  &:hover { box-shadow: 0 0 10px rgba(100, 116, 139, 0.15); }
+}
+
+.wrapper .btn-dark,
+.modal .btn-dark {
+  --cui-btn-bg: rgba(15, 23, 42, 0.08);
+  --cui-btn-border-color: rgba(15, 23, 42, 0.3);
+  --cui-btn-color: #1e293b;
+  --cui-btn-hover-bg: rgba(15, 23, 42, 0.15);
+  --cui-btn-hover-border-color: rgba(15, 23, 42, 0.5);
+  --cui-btn-hover-color: #0f172a;
+  --cui-btn-active-bg: rgba(15, 23, 42, 0.25);
+  --cui-btn-active-border-color: rgba(15, 23, 42, 0.6);
+  --cui-btn-active-color: #020617;
+  box-shadow: 0 0 4px rgba(15, 23, 42, 0.08);
+
+  &:hover { box-shadow: 0 0 10px rgba(15, 23, 42, 0.15); }
+}
+
+// Outline buttons — light mode defaults
+.wrapper .btn-outline-primary, .modal .btn-outline-primary { --cui-btn-color: #4f46e5; --cui-btn-border-color: rgba(99, 102, 241, 0.4); --cui-btn-hover-bg: rgba(99, 102, 241, 0.1); --cui-btn-hover-color: #4338ca; --cui-btn-active-bg: rgba(99, 102, 241, 0.2); --cui-btn-active-color: #312e81; }
+.wrapper .btn-outline-success, .modal .btn-outline-success { --cui-btn-color: #059669; --cui-btn-border-color: rgba(16, 185, 129, 0.4); --cui-btn-hover-bg: rgba(16, 185, 129, 0.1); --cui-btn-hover-color: #047857; --cui-btn-active-bg: rgba(16, 185, 129, 0.2); --cui-btn-active-color: #064e3b; }
+.wrapper .btn-outline-danger, .modal .btn-outline-danger { --cui-btn-color: #dc2626; --cui-btn-border-color: rgba(239, 68, 68, 0.4); --cui-btn-hover-bg: rgba(239, 68, 68, 0.1); --cui-btn-hover-color: #b91c1c; --cui-btn-active-bg: rgba(239, 68, 68, 0.2); --cui-btn-active-color: #7f1d1d; }
+.wrapper .btn-outline-warning, .modal .btn-outline-warning { --cui-btn-color: #d97706; --cui-btn-border-color: rgba(245, 158, 11, 0.4); --cui-btn-hover-bg: rgba(245, 158, 11, 0.1); --cui-btn-hover-color: #b45309; --cui-btn-active-bg: rgba(245, 158, 11, 0.2); --cui-btn-active-color: #713f12; }
+.wrapper .btn-outline-info, .modal .btn-outline-info { --cui-btn-color: #0284c7; --cui-btn-border-color: rgba(14, 165, 233, 0.4); --cui-btn-hover-bg: rgba(14, 165, 233, 0.1); --cui-btn-hover-color: #0369a1; --cui-btn-active-bg: rgba(14, 165, 233, 0.2); --cui-btn-active-color: #0c4a6e; }
+.wrapper .btn-outline-secondary, .modal .btn-outline-secondary { --cui-btn-color: #64748b; --cui-btn-border-color: rgba(100, 116, 139, 0.3); --cui-btn-hover-bg: rgba(100, 116, 139, 0.08); --cui-btn-hover-color: #475569; --cui-btn-active-bg: rgba(100, 116, 139, 0.15); --cui-btn-active-color: #1e293b; }
+
+// Ghost buttons — light mode defaults
+.wrapper .btn-ghost-primary { --cui-btn-color: #4f46e5; --cui-btn-hover-bg: rgba(99, 102, 241, 0.1); --cui-btn-hover-color: #4338ca; --cui-btn-active-bg: rgba(99, 102, 241, 0.18); }
+.wrapper .btn-ghost-success { --cui-btn-color: #059669; --cui-btn-hover-bg: rgba(16, 185, 129, 0.1); --cui-btn-hover-color: #047857; --cui-btn-active-bg: rgba(16, 185, 129, 0.18); }
+.wrapper .btn-ghost-danger { --cui-btn-color: #dc2626; --cui-btn-hover-bg: rgba(239, 68, 68, 0.1); --cui-btn-hover-color: #b91c1c; --cui-btn-active-bg: rgba(239, 68, 68, 0.18); }
+.wrapper .btn-ghost-warning { --cui-btn-color: #d97706; --cui-btn-hover-bg: rgba(245, 158, 11, 0.1); --cui-btn-hover-color: #b45309; --cui-btn-active-bg: rgba(245, 158, 11, 0.18); }
+.wrapper .btn-ghost-info { --cui-btn-color: #0284c7; --cui-btn-hover-bg: rgba(14, 165, 233, 0.1); --cui-btn-hover-color: #0369a1; --cui-btn-active-bg: rgba(14, 165, 233, 0.18); }
+.wrapper .btn-ghost-secondary { --cui-btn-color: #64748b; --cui-btn-hover-bg: rgba(100, 116, 139, 0.08); --cui-btn-hover-color: #475569; --cui-btn-active-bg: rgba(100, 116, 139, 0.12); }
+
+// --- Buttons: Dark mode overrides (neon glow on dark bg) ---
+@include color-mode(dark) {
+  .wrapper .btn-primary, .modal .btn-primary {
+    --cui-btn-bg: rgba(99, 102, 241, 0.2);
+    --cui-btn-border-color: rgba(129, 140, 248, 0.6);
+    --cui-btn-color: #c7d2fe;
+    --cui-btn-hover-bg: rgba(99, 102, 241, 0.35);
+    --cui-btn-hover-border-color: rgba(129, 140, 248, 0.9);
+    --cui-btn-hover-color: #e0e7ff;
+    --cui-btn-active-bg: rgba(99, 102, 241, 0.45);
+    --cui-btn-active-border-color: rgba(129, 140, 248, 1);
+    --cui-btn-active-color: #e0e7ff;
+    --cui-btn-disabled-bg: rgba(99, 102, 241, 0.1);
+    --cui-btn-disabled-border-color: rgba(99, 102, 241, 0.2);
+    --cui-btn-disabled-color: rgba(129, 140, 248, 0.4);
+    box-shadow: 0 0 6px rgba(99, 102, 241, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    &:hover { box-shadow: 0 0 12px rgba(99, 102, 241, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  }
+  .wrapper .btn-success, .modal .btn-success {
+    --cui-btn-bg: rgba(16, 185, 129, 0.2);
+    --cui-btn-border-color: rgba(52, 211, 153, 0.6);
+    --cui-btn-color: #a7f3d0;
+    --cui-btn-hover-bg: rgba(16, 185, 129, 0.35);
+    --cui-btn-hover-border-color: rgba(52, 211, 153, 0.9);
+    --cui-btn-hover-color: #d1fae5;
+    --cui-btn-active-bg: rgba(16, 185, 129, 0.45);
+    --cui-btn-active-border-color: rgba(52, 211, 153, 1);
+    --cui-btn-active-color: #d1fae5;
+    --cui-btn-disabled-bg: rgba(16, 185, 129, 0.1);
+    --cui-btn-disabled-border-color: rgba(16, 185, 129, 0.2);
+    --cui-btn-disabled-color: rgba(52, 211, 153, 0.4);
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    &:hover { box-shadow: 0 0 12px rgba(16, 185, 129, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  }
+  .wrapper .btn-danger, .modal .btn-danger {
+    --cui-btn-bg: rgba(239, 68, 68, 0.2);
+    --cui-btn-border-color: rgba(252, 165, 165, 0.6);
+    --cui-btn-color: #fecaca;
+    --cui-btn-hover-bg: rgba(239, 68, 68, 0.35);
+    --cui-btn-hover-border-color: rgba(252, 165, 165, 0.9);
+    --cui-btn-hover-color: #fee2e2;
+    --cui-btn-active-bg: rgba(239, 68, 68, 0.45);
+    --cui-btn-active-border-color: rgba(252, 165, 165, 1);
+    --cui-btn-active-color: #fee2e2;
+    --cui-btn-disabled-bg: rgba(239, 68, 68, 0.1);
+    --cui-btn-disabled-border-color: rgba(239, 68, 68, 0.2);
+    --cui-btn-disabled-color: rgba(252, 165, 165, 0.4);
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    &:hover { box-shadow: 0 0 12px rgba(239, 68, 68, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  }
+  .wrapper .btn-warning, .modal .btn-warning {
+    --cui-btn-bg: rgba(245, 158, 11, 0.2);
+    --cui-btn-border-color: rgba(253, 224, 71, 0.6);
+    --cui-btn-color: #fef08a;
+    --cui-btn-hover-bg: rgba(245, 158, 11, 0.35);
+    --cui-btn-hover-border-color: rgba(253, 224, 71, 0.9);
+    --cui-btn-hover-color: #fef9c3;
+    --cui-btn-active-bg: rgba(245, 158, 11, 0.45);
+    --cui-btn-active-border-color: rgba(253, 224, 71, 1);
+    --cui-btn-active-color: #fef9c3;
+    --cui-btn-disabled-bg: rgba(245, 158, 11, 0.1);
+    --cui-btn-disabled-border-color: rgba(245, 158, 11, 0.2);
+    --cui-btn-disabled-color: rgba(253, 224, 71, 0.4);
+    box-shadow: 0 0 6px rgba(245, 158, 11, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    &:hover { box-shadow: 0 0 12px rgba(245, 158, 11, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  }
+  .wrapper .btn-info, .modal .btn-info {
+    --cui-btn-bg: rgba(14, 165, 233, 0.2);
+    --cui-btn-border-color: rgba(125, 211, 252, 0.6);
+    --cui-btn-color: #bae6fd;
+    --cui-btn-hover-bg: rgba(14, 165, 233, 0.35);
+    --cui-btn-hover-border-color: rgba(125, 211, 252, 0.9);
+    --cui-btn-hover-color: #e0f2fe;
+    --cui-btn-active-bg: rgba(14, 165, 233, 0.45);
+    --cui-btn-active-border-color: rgba(125, 211, 252, 1);
+    --cui-btn-active-color: #e0f2fe;
+    --cui-btn-disabled-bg: rgba(14, 165, 233, 0.1);
+    --cui-btn-disabled-border-color: rgba(14, 165, 233, 0.2);
+    --cui-btn-disabled-color: rgba(125, 211, 252, 0.4);
+    box-shadow: 0 0 6px rgba(14, 165, 233, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    &:hover { box-shadow: 0 0 12px rgba(14, 165, 233, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.1); }
+  }
+  .wrapper .btn-secondary, .modal .btn-secondary {
+    --cui-btn-bg: rgba(100, 116, 139, 0.15);
+    --cui-btn-border-color: rgba(148, 163, 184, 0.4);
+    --cui-btn-color: #cbd5e1;
+    --cui-btn-hover-bg: rgba(100, 116, 139, 0.3);
+    --cui-btn-hover-border-color: rgba(148, 163, 184, 0.7);
+    --cui-btn-hover-color: #e2e8f0;
+    --cui-btn-active-bg: rgba(100, 116, 139, 0.4);
+    --cui-btn-active-border-color: rgba(148, 163, 184, 0.8);
+    --cui-btn-active-color: #e2e8f0;
+    --cui-btn-disabled-bg: rgba(100, 116, 139, 0.08);
+    --cui-btn-disabled-border-color: rgba(100, 116, 139, 0.15);
+    --cui-btn-disabled-color: rgba(148, 163, 184, 0.4);
+    box-shadow: 0 0 4px rgba(100, 116, 139, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    &:hover { box-shadow: 0 0 10px rgba(100, 116, 139, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+  }
+  .wrapper .btn-dark, .modal .btn-dark {
+    --cui-btn-bg: rgba(15, 23, 42, 0.6);
+    --cui-btn-border-color: rgba(71, 85, 105, 0.5);
+    --cui-btn-color: #e2e8f0;
+    --cui-btn-hover-bg: rgba(15, 23, 42, 0.8);
+    --cui-btn-hover-border-color: rgba(71, 85, 105, 0.8);
+    --cui-btn-hover-color: #f1f5f9;
+    --cui-btn-active-bg: rgba(15, 23, 42, 0.9);
+    --cui-btn-active-border-color: rgba(71, 85, 105, 0.9);
+    --cui-btn-active-color: #f1f5f9;
+    box-shadow: 0 0 4px rgba(15, 23, 42, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    &:hover { box-shadow: 0 0 10px rgba(15, 23, 42, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08); }
+  }
+
+  // Outline buttons — dark mode
+  .wrapper .btn-outline-primary, .modal .btn-outline-primary { --cui-btn-color: #a5b4fc; --cui-btn-border-color: rgba(99, 102, 241, 0.5); --cui-btn-hover-bg: rgba(99, 102, 241, 0.15); --cui-btn-hover-border-color: rgba(129, 140, 248, 0.8); --cui-btn-hover-color: #c7d2fe; --cui-btn-active-bg: rgba(99, 102, 241, 0.25); --cui-btn-active-color: #e0e7ff; box-shadow: 0 0 4px rgba(99, 102, 241, 0.1); &:hover { box-shadow: 0 0 10px rgba(99, 102, 241, 0.2); } }
+  .wrapper .btn-outline-success, .modal .btn-outline-success { --cui-btn-color: #6ee7b7; --cui-btn-border-color: rgba(16, 185, 129, 0.5); --cui-btn-hover-bg: rgba(16, 185, 129, 0.15); --cui-btn-hover-border-color: rgba(52, 211, 153, 0.8); --cui-btn-hover-color: #a7f3d0; --cui-btn-active-bg: rgba(16, 185, 129, 0.25); --cui-btn-active-color: #d1fae5; box-shadow: 0 0 4px rgba(16, 185, 129, 0.1); &:hover { box-shadow: 0 0 10px rgba(16, 185, 129, 0.2); } }
+  .wrapper .btn-outline-danger, .modal .btn-outline-danger { --cui-btn-color: #fca5a5; --cui-btn-border-color: rgba(239, 68, 68, 0.5); --cui-btn-hover-bg: rgba(239, 68, 68, 0.15); --cui-btn-hover-border-color: rgba(252, 165, 165, 0.8); --cui-btn-hover-color: #fecaca; --cui-btn-active-bg: rgba(239, 68, 68, 0.25); --cui-btn-active-color: #fee2e2; box-shadow: 0 0 4px rgba(239, 68, 68, 0.1); &:hover { box-shadow: 0 0 10px rgba(239, 68, 68, 0.2); } }
+  .wrapper .btn-outline-warning, .modal .btn-outline-warning { --cui-btn-color: #fde047; --cui-btn-border-color: rgba(245, 158, 11, 0.5); --cui-btn-hover-bg: rgba(245, 158, 11, 0.15); --cui-btn-hover-border-color: rgba(253, 224, 71, 0.8); --cui-btn-hover-color: #fef08a; --cui-btn-active-bg: rgba(245, 158, 11, 0.25); --cui-btn-active-color: #fef9c3; box-shadow: 0 0 4px rgba(245, 158, 11, 0.1); &:hover { box-shadow: 0 0 10px rgba(245, 158, 11, 0.2); } }
+  .wrapper .btn-outline-info, .modal .btn-outline-info { --cui-btn-color: #7dd3fc; --cui-btn-border-color: rgba(14, 165, 233, 0.5); --cui-btn-hover-bg: rgba(14, 165, 233, 0.15); --cui-btn-hover-border-color: rgba(125, 211, 252, 0.8); --cui-btn-hover-color: #bae6fd; --cui-btn-active-bg: rgba(14, 165, 233, 0.25); --cui-btn-active-color: #e0f2fe; box-shadow: 0 0 4px rgba(14, 165, 233, 0.1); &:hover { box-shadow: 0 0 10px rgba(14, 165, 233, 0.2); } }
+  .wrapper .btn-outline-secondary, .modal .btn-outline-secondary { --cui-btn-color: #94a3b8; --cui-btn-border-color: rgba(100, 116, 139, 0.4); --cui-btn-hover-bg: rgba(100, 116, 139, 0.1); --cui-btn-hover-border-color: rgba(148, 163, 184, 0.6); --cui-btn-hover-color: #cbd5e1; --cui-btn-active-bg: rgba(100, 116, 139, 0.2); --cui-btn-active-color: #e2e8f0; }
+
+  // Ghost buttons — dark mode
+  .wrapper .btn-ghost-primary { --cui-btn-color: #a5b4fc; --cui-btn-hover-bg: rgba(99, 102, 241, 0.15); --cui-btn-hover-color: #c7d2fe; --cui-btn-active-bg: rgba(99, 102, 241, 0.25); }
+  .wrapper .btn-ghost-success { --cui-btn-color: #6ee7b7; --cui-btn-hover-bg: rgba(16, 185, 129, 0.15); --cui-btn-hover-color: #a7f3d0; --cui-btn-active-bg: rgba(16, 185, 129, 0.25); }
+  .wrapper .btn-ghost-danger { --cui-btn-color: #fca5a5; --cui-btn-hover-bg: rgba(239, 68, 68, 0.15); --cui-btn-hover-color: #fecaca; --cui-btn-active-bg: rgba(239, 68, 68, 0.25); }
+  .wrapper .btn-ghost-warning { --cui-btn-color: #fde047; --cui-btn-hover-bg: rgba(245, 158, 11, 0.15); --cui-btn-hover-color: #fef08a; --cui-btn-active-bg: rgba(245, 158, 11, 0.25); }
+  .wrapper .btn-ghost-info { --cui-btn-color: #7dd3fc; --cui-btn-hover-bg: rgba(14, 165, 233, 0.15); --cui-btn-hover-color: #bae6fd; --cui-btn-active-bg: rgba(14, 165, 233, 0.25); }
+  .wrapper .btn-ghost-secondary { --cui-btn-color: #94a3b8; --cui-btn-hover-bg: rgba(100, 116, 139, 0.1); --cui-btn-hover-color: #cbd5e1; --cui-btn-active-bg: rgba(100, 116, 139, 0.15); }
+}
+
 // --- Dropdowns ---
 .wrapper .dropdown-menu {
   --cui-dropdown-bg: var(--cabania-surface-bg);
@@ -458,6 +754,267 @@ body {
     height: 1.1rem;
     width: auto;
     object-fit: contain;
+  }
+}
+
+// --- FullCalendar Glassmorphism ---
+.wrapper .fc {
+  // Toolbar buttons (prev/next/today/month/week/day)
+  .fc-button {
+    background: rgba(100, 116, 139, 0.15) !important;
+    border: 1.5px solid rgba(148, 163, 184, 0.35) !important;
+    color: var(--cabania-text-secondary) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: var(--cabania-radius-sm) !important;
+    font-weight: 600;
+    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+    box-shadow: 0 0 4px rgba(100, 116, 139, 0.1);
+
+    &:hover {
+      background: rgba(100, 116, 139, 0.3) !important;
+      border-color: rgba(148, 163, 184, 0.6) !important;
+      color: var(--cabania-text) !important;
+      transform: translateY(-1px);
+      box-shadow: 0 0 10px rgba(100, 116, 139, 0.2);
+    }
+
+    &:focus {
+      box-shadow: 0 0 0 0.2rem rgba(14, 165, 233, 0.2) !important;
+    }
+
+    &:disabled {
+      opacity: 0.4;
+    }
+  }
+
+  // Active view button (e.g. "month" when selected)
+  .fc-button-active {
+    background: rgba(16, 185, 129, 0.2) !important;
+    border-color: rgba(52, 211, 153, 0.6) !important;
+    color: #a7f3d0 !important;
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.15) !important;
+  }
+
+  // Button groups — remove double borders
+  .fc-button-group {
+    .fc-button {
+      border-radius: 0 !important;
+
+      &:first-child { border-radius: var(--cabania-radius-sm) 0 0 var(--cabania-radius-sm) !important; }
+      &:last-child { border-radius: 0 var(--cabania-radius-sm) var(--cabania-radius-sm) 0 !important; }
+    }
+  }
+
+  // Toolbar title
+  .fc-toolbar-title {
+    color: var(--cabania-text);
+    font-weight: 600;
+  }
+
+  // Remove all table borders and backgrounds from structural elements
+  table, th, td, .fc-scrollgrid, .fc-scrollgrid-section > td, .fc-scrollgrid-section > th {
+    border: none !important;
+  }
+
+  .fc-scrollgrid-section > td,
+  .fc-scrollgrid-section > th {
+    background: transparent !important;
+  }
+
+  // Separate cells in day grid + header tables
+  .fc-scrollgrid-sync-table,
+  .fc-col-header {
+    border-collapse: separate !important;
+    border-spacing: 3px !important;
+  }
+
+  // Day header (Lun, Mar, Mié...) — glass plates like day cells
+  .fc-col-header-cell {
+    background: var(--cabania-card-bg) !important;
+    background-clip: padding-box !important;
+    border: 1px solid var(--cabania-border-subtle) !important;
+    border-radius: var(--cabania-radius-sm) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 8px 0 !important;
+
+    a, .fc-col-header-cell-cushion {
+      color: var(--cabania-text-dim);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      text-decoration: none;
+    }
+  }
+
+  // Day cells — glass plates directly on td
+  .fc-daygrid-day {
+    background: var(--cabania-card-bg) !important;
+    background-clip: padding-box !important;
+    border: 1px solid var(--cabania-border-subtle) !important;
+    border-radius: var(--cabania-radius-sm) !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    transition: background 0.2s, box-shadow 0.2s, transform 0.15s;
+
+    &:hover {
+      background: var(--cabania-hover-bg) !important;
+      box-shadow: 0 0 8px rgba(255, 255, 255, 0.04);
+      transform: translateY(-1px);
+    }
+
+    &.fc-day-today {
+      background: rgba(16, 185, 129, 0.1) !important;
+      border-color: rgba(52, 211, 153, 0.4) !important;
+      box-shadow: 0 0 8px rgba(16, 185, 129, 0.1);
+    }
+
+    &.fc-day-other {
+      background: rgba(0, 0, 0, 0.15) !important;
+      opacity: 0.5;
+    }
+  }
+
+  // Day numbers
+  .fc-daygrid-day-number {
+    color: var(--cabania-text-secondary);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: 0.8rem;
+    padding: 6px 8px;
+  }
+
+  .fc-day-today .fc-daygrid-day-number {
+    color: #6ee7b7;
+    font-weight: 700;
+  }
+
+  // Events — gradient glass cards (like dashboard banner cards)
+  .fc-event {
+    border-radius: 6px !important;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    padding: 3px 8px;
+    margin: 2px 3px !important;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #fff !important;
+    transition: box-shadow 0.2s, transform 0.15s;
+
+    &:hover {
+      transform: translateY(-1px);
+      filter: brightness(1.1);
+    }
+  }
+
+  // Venue color variants — gradient backgrounds like banner cards
+  .fc-event--venue-0 { // blue
+    background: linear-gradient(135deg, #0369a1, #0ea5e9, #0891b2) !important;
+    border: 1px solid rgba(14, 165, 233, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3);
+    &:hover { box-shadow: 0 4px 12px rgba(14, 165, 233, 0.4); }
+  }
+  .fc-event--venue-1 { // green
+    background: linear-gradient(135deg, #059669, #10b981, #0d9488) !important;
+    border: 1px solid rgba(16, 185, 129, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
+    &:hover { box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4); }
+  }
+  .fc-event--venue-2 { // red
+    background: linear-gradient(135deg, #b91c1c, #ef4444, #e11d48) !important;
+    border: 1px solid rgba(239, 68, 68, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+    &:hover { box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4); }
+  }
+  .fc-event--venue-3 { // amber
+    background: linear-gradient(135deg, #b45309, #f59e0b, #d97706) !important;
+    border: 1px solid rgba(245, 158, 11, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+    &:hover { box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4); }
+  }
+  .fc-event--venue-4 { // teal
+    background: linear-gradient(135deg, #0f766e, #14b8a6, #0d9488) !important;
+    border: 1px solid rgba(20, 184, 166, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(20, 184, 166, 0.3);
+    &:hover { box-shadow: 0 4px 12px rgba(20, 184, 166, 0.4); }
+  }
+  .fc-event--venue-5 { // purple
+    background: linear-gradient(135deg, #4338ca, #6366f1, #7c3aed) !important;
+    border: 1px solid rgba(99, 102, 241, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+    &:hover { box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4); }
+  }
+  .fc-event--venue-6 { // orange
+    background: linear-gradient(135deg, #c2410c, #f97316, #ea580c) !important;
+    border: 1px solid rgba(249, 115, 22, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(249, 115, 22, 0.3);
+    &:hover { box-shadow: 0 4px 12px rgba(249, 115, 22, 0.4); }
+  }
+  .fc-event--venue-7 { // pink
+    background: linear-gradient(135deg, #be185d, #ec4899, #db2777) !important;
+    border: 1px solid rgba(236, 72, 153, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(236, 72, 153, 0.3);
+    &:hover { box-shadow: 0 4px 12px rgba(236, 72, 153, 0.4); }
+  }
+  .fc-event--venue-muted { // sin venue
+    background: linear-gradient(135deg, #374151, #6b7280, #4b5563) !important;
+    border: 1px solid rgba(107, 114, 128, 0.5) !important;
+    box-shadow: 0 2px 8px rgba(107, 114, 128, 0.3);
+    &:hover { box-shadow: 0 4px 12px rgba(107, 114, 128, 0.4); }
+  }
+
+  // Event dot indicator
+  .fc-daygrid-event-dot {
+    display: none;
+  }
+
+  // "more" link
+  .fc-daygrid-more-link {
+    color: var(--cabania-sky);
+    font-weight: 600;
+    font-size: 0.7rem;
+
+    &:hover {
+      color: #7dd3fc;
+    }
+  }
+
+  // Popover (more events popup)
+  .fc-popover {
+    background: var(--cabania-surface-bg) !important;
+    border: 1px solid var(--cabania-border) !important;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-radius: var(--cabania-radius) !important;
+    box-shadow: var(--cabania-shadow);
+
+    .fc-popover-header {
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--cabania-text-secondary);
+      border-bottom: 1px solid var(--cabania-border-subtle);
+      border-radius: var(--cabania-radius) var(--cabania-radius) 0 0;
+    }
+  }
+
+  // Time grid
+  .fc-timegrid-slot {
+    border-color: var(--cabania-border-subtle) !important;
+  }
+
+  .fc-timegrid-slot-label-cushion {
+    color: var(--cabania-text-dim);
+  }
+
+  .fc-timegrid-axis-cushion {
+    color: var(--cabania-text-dim);
+  }
+
+  // Scrollbar area
+  .fc-scroller {
+    scrollbar-width: thin;
+    scrollbar-color: var(--cabania-border) transparent;
   }
 }
 

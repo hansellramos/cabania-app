@@ -1,6 +1,6 @@
 <template>
   <div>
-    <h2>Venues</h2>
+    <h2>Cabañas</h2>
     <VenueTable />
   </div>
 </template>
