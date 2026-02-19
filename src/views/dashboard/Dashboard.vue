@@ -323,7 +323,7 @@ const totalAccommodationsLast3 = computed(() => {
 const totalAccommodationsPreviousMonth = computed(() => {
   if (!accommodationsHistory.value.venues) return 0
   return accommodationsHistory.value.venues.reduce((sum, venue) =>
-    sum + (venue.counts[venue.counts.length - 1] || 0), 0)
+    sum + (venue.counts[venue.counts.length - 2] || 0), 0)
 })
 
 // Animated display values
