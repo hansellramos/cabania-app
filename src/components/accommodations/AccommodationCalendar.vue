@@ -119,24 +119,23 @@ const events = computed(() => {
       title: `${attendees ? attendees + ' ' : ''}${customerName} - ${venueName}${orgName ? ' (' + orgName + ')' : ''}`,
       start: start.toISOString(),
       end: end.toISOString(),
-      backgroundColor: getColorByVenue(acc.venue),
-      borderColor: getColorByVenue(acc.venue),
+      classNames: [getVenueClass(acc.venue)],
       extendedProps: { accommodation: acc }
     }
   }).filter(Boolean)
 })
 
-const venueColors = {}
-const colorPalette = ['#3788d8', '#28a745', '#dc3545', '#ffc107', '#17a2b8', '#6f42c1', '#fd7e14', '#20c997']
-let colorIndex = 0
+const venueClassMap = {}
+let venueClassIndex = 0
+const VENUE_CLASS_COUNT = 8
 
-function getColorByVenue(venueId) {
-  if (!venueId) return '#6c757d'
-  if (!venueColors[venueId]) {
-    venueColors[venueId] = colorPalette[colorIndex % colorPalette.length]
-    colorIndex++
+function getVenueClass(venueId) {
+  if (!venueId) return 'fc-event--venue-muted'
+  if (!(venueId in venueClassMap)) {
+    venueClassMap[venueId] = venueClassIndex % VENUE_CLASS_COUNT
+    venueClassIndex++
   }
-  return venueColors[venueId]
+  return `fc-event--venue-${venueClassMap[venueId]}`
 }
 
 function handleEventClick(info) {
