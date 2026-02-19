@@ -65,7 +65,7 @@
     <CRow class="mb-4 g-3">
       <CCol :xs="4" :lg="2">
         <CCard class="cabania-glass-banner cabania-glass-banner--danger h-100">
-          <CCardBody class="pb-3">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">{{ animLast12 }}</div>
             <div class="cabania-glass__label small">Últimos 6M</div>
           </CCardBody>
@@ -73,7 +73,7 @@
       </CCol>
       <CCol :xs="4" :lg="2">
         <CCard class="cabania-glass-banner cabania-glass-banner--warning h-100">
-          <CCardBody class="pb-3">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">{{ animLast3 }}</div>
             <div class="cabania-glass__label small">Últimos 3M</div>
           </CCardBody>
@@ -81,7 +81,7 @@
       </CCol>
       <CCol :xs="4" :lg="2">
         <CCard class="cabania-glass-banner cabania-glass-banner--info h-100">
-          <CCardBody class="pb-3">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">{{ animPrevMonth }}</div>
             <div class="cabania-glass__label small">Mes Anterior</div>
           </CCardBody>
@@ -89,7 +89,7 @@
       </CCol>
       <CCol :xs="4" :lg="2">
         <CCard class="cabania-glass-banner cabania-glass-banner--primary h-100">
-          <CCardBody class="pb-3">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">{{ animThisMonth }}</div>
             <div class="cabania-glass__label small">Este Mes</div>
           </CCardBody>
@@ -97,7 +97,7 @@
       </CCol>
       <CCol :xs="4" :lg="2">
         <CCard class="cabania-glass-banner cabania-glass-banner--warning h-100">
-          <CCardBody class="pb-3">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">{{ animNext3 }}</div>
             <div class="cabania-glass__label small">Próximos 3M</div>
           </CCardBody>
@@ -105,7 +105,7 @@
       </CCol>
       <CCol :xs="4" :lg="2">
         <CCard class="cabania-glass-banner cabania-glass-banner--success h-100">
-          <CCardBody class="pb-3">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">{{ animNext12 }}</div>
             <div class="cabania-glass__label small">Próximos 6M</div>
           </CCardBody>
@@ -163,7 +163,7 @@
     <CRow class="mb-4 g-3">
       <CCol :sm="6" :lg="3">
         <CCard class="cabania-glass-banner cabania-glass-banner--primary h-100">
-          <CCardBody class="pb-3">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
               {{ animIncomeThisMonth }}
               <span v-if="incomeSummary.percentChange !== 0" class="fs-6 fw-normal ms-2">
@@ -176,7 +176,7 @@
       </CCol>
       <CCol :sm="6" :lg="3">
         <CCard class="cabania-glass-banner cabania-glass-banner--info h-100">
-          <CCardBody class="pb-3">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">{{ animIncomePrevMonth }}</div>
             <div class="cabania-glass__label">Ingresos Mes Anterior</div>
           </CCardBody>
@@ -184,7 +184,7 @@
       </CCol>
       <CCol :sm="6" :lg="3">
         <CCard class="cabania-glass-banner cabania-glass-banner--success h-100">
-          <CCardBody class="pb-3">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">{{ animIncomeTotal }}</div>
             <div class="cabania-glass__label">Ingresos Totales</div>
             <small class="cabania-glass__label">{{ incomeByVenue.length }} cabañas con ingresos</small>
