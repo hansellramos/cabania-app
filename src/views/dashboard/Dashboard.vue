@@ -193,9 +193,9 @@
       </CCol>
     </CRow>
 
-    <CRow>
+    <CRow class="mb-4">
       <CCol :md="6">
-        <CCard class="mb-4">
+        <CCard class="h-100">
           <CCardHeader>Hospedajes por Cabaña</CCardHeader>
           <CCardBody>
             <div v-if="accommodationsByVenue.length > 0" style="height: 300px;">
@@ -207,6 +207,22 @@
           </CCardBody>
         </CCard>
       </CCol>
+      <CCol :md="6">
+        <CCard class="h-100">
+          <CCardHeader>Ingresos por Cabaña</CCardHeader>
+          <CCardBody>
+            <div v-if="incomeByVenue.length > 0" style="height: 300px;">
+              <highcharts :options="incomePieOptions" />
+            </div>
+            <div v-else class="text-center text-body-secondary py-5">
+              No hay datos de ingresos disponibles
+            </div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+    </CRow>
+
+    <CRow>
       <CCol :md="6">
         <CCard class="mb-4 h-100">
           <CCardHeader>Hospedajes por Cabaña (Lista)</CCardHeader>
@@ -227,6 +243,30 @@
             </div>
             <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes disponibles
+            </div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+      <CCol :md="6">
+        <CCard class="mb-4 h-100">
+          <CCardHeader>Ingresos por Cabaña (Lista)</CCardHeader>
+          <CCardBody class="p-2">
+            <div v-if="incomeByVenue.length > 0" class="cabania-category-list">
+              <div
+                v-for="(item, i) in incomeByVenue"
+                :key="item.venue_id"
+                class="cabania-category-row"
+              >
+                <div class="cabania-category-row__accent" :style="{ backgroundColor: chartColors[i % chartColors.length] }"></div>
+                <div class="cabania-category-row__name">{{ item.venue_name }}</div>
+                <div class="cabania-category-row__values">
+                  <span class="cabania-category-row__total">{{ formatCurrency(item.total) }}</span>
+                  <span class="cabania-category-row__count">{{ item.count }} pagos</span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="text-center text-body-secondary py-5">
+              No hay datos de ingresos disponibles
             </div>
           </CCardBody>
         </CCard>
@@ -429,6 +469,31 @@ const accommodationsPieOptions = computed(() => ({
     data: accommodationsByVenue.value.map((item, i) => ({
       name: item.venue_name,
       y: item.count,
+      color: chartColors[i % chartColors.length]
+    }))
+  }],
+  credits: { enabled: false }
+}))
+
+const incomePieOptions = computed(() => ({
+  chart: {
+    type: 'pie',
+    options3d: { enabled: true, alpha: 45, beta: 0 },
+    backgroundColor: 'transparent',
+    height: 300
+  },
+  title: { text: undefined },
+  plotOptions: {
+    pie: {
+      depth: 35,
+      borderWidth: 0,
+      dataLabels: { enabled: true, format: '{point.name}: {point.percentage:.1f}%', style: { color: labelColor, textOutline: 'none' } }
+    }
+  },
+  series: [{
+    data: incomeByVenue.value.map((item, i) => ({
+      name: item.venue_name,
+      y: Number(item.total) || 0,
       color: chartColors[i % chartColors.length]
     }))
   }],
