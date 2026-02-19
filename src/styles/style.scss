@@ -11,44 +11,45 @@
 // ============================================
 
 :root {
-  // Backgrounds
-  --cabania-bg: #020617;
-  --cabania-card-bg: rgba(255, 255, 255, 0.05);
-  --cabania-input-bg: rgba(2, 6, 23, 0.4);
-  --cabania-hover-bg: rgba(255, 255, 255, 0.05);
-  --cabania-active-bg: rgba(16, 185, 129, 0.15);
+  // Backgrounds (light defaults)
+  --cabania-bg: #f1f5f9;
+  --cabania-card-bg: rgba(255, 255, 255, 0.65);
+  --cabania-input-bg: rgba(255, 255, 255, 0.6);
+  --cabania-hover-bg: rgba(0, 0, 0, 0.03);
+  --cabania-active-bg: rgba(16, 185, 129, 0.08);
+  --cabania-surface-bg: rgba(255, 255, 255, 0.85);
 
   // Borders
-  --cabania-border: rgba(255, 255, 255, 0.15);
-  --cabania-border-subtle: rgba(255, 255, 255, 0.1);
-  --cabania-active-border: rgba(16, 185, 129, 0.25);
-  --cabania-focus-border: rgba(14, 165, 233, 0.5);
+  --cabania-border: rgba(0, 0, 0, 0.08);
+  --cabania-border-subtle: rgba(0, 0, 0, 0.05);
+  --cabania-active-border: rgba(16, 185, 129, 0.15);
+  --cabania-focus-border: rgba(14, 165, 233, 0.4);
 
   // Text
-  --cabania-text: #f1f5f9;
-  --cabania-text-secondary: #cbd5e1;
-  --cabania-text-muted: #94a3b8;
-  --cabania-text-dim: #64748b;
+  --cabania-text: #0f172a;
+  --cabania-text-secondary: #475569;
+  --cabania-text-muted: #64748b;
+  --cabania-text-dim: #94a3b8;
 
   // Accent colors
-  --cabania-emerald: #10b981;
-  --cabania-sky: #0ea5e9;
+  --cabania-emerald: #059669;
+  --cabania-sky: #0284c7;
   --cabania-gradient: linear-gradient(135deg, #10b981, #0ea5e9);
 
   // Accent with opacity (for backgrounds)
-  --cabania-emerald-glow: rgba(16, 185, 129, 0.2);
-  --cabania-emerald-glow-subtle: rgba(16, 185, 129, 0.1);
-  --cabania-sky-glow: rgba(14, 165, 233, 0.2);
+  --cabania-emerald-glow: rgba(16, 185, 129, 0.1);
+  --cabania-emerald-glow-subtle: rgba(16, 185, 129, 0.05);
+  --cabania-sky-glow: rgba(14, 165, 233, 0.1);
 
   // Danger / error
-  --cabania-danger-border: rgba(239, 68, 68, 0.3);
-  --cabania-danger-bg: rgba(239, 68, 68, 0.1);
-  --cabania-danger-text: #fca5a5;
+  --cabania-danger-border: rgba(239, 68, 68, 0.2);
+  --cabania-danger-bg: rgba(239, 68, 68, 0.06);
+  --cabania-danger-text: #dc2626;
 
   // Shadows
-  --cabania-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
-  --cabania-shadow-sm: 0 2px 8px rgba(16, 185, 129, 0.15);
-  --cabania-shadow-md: 0 4px 12px rgba(16, 185, 129, 0.15);
+  --cabania-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.08);
+  --cabania-shadow-sm: 0 2px 8px rgba(16, 185, 129, 0.1);
+  --cabania-shadow-md: 0 4px 12px rgba(16, 185, 129, 0.1);
 
   // Radii
   --cabania-radius-sm: 0.5rem;
@@ -57,9 +58,59 @@
   --cabania-radius-xl: 1.5rem;
 }
 
+// Dark mode token overrides (no :root nesting — mixin already targets html)
+@include color-mode(dark) {
+  --cabania-bg: #020617;
+  --cabania-card-bg: rgba(255, 255, 255, 0.05);
+  --cabania-input-bg: rgba(2, 6, 23, 0.4);
+  --cabania-hover-bg: rgba(255, 255, 255, 0.05);
+  --cabania-active-bg: rgba(16, 185, 129, 0.15);
+  --cabania-surface-bg: #0f172a;
+
+  --cabania-border: rgba(255, 255, 255, 0.15);
+  --cabania-border-subtle: rgba(255, 255, 255, 0.1);
+  --cabania-active-border: rgba(16, 185, 129, 0.25);
+  --cabania-focus-border: rgba(14, 165, 233, 0.5);
+
+  --cabania-text: #f1f5f9;
+  --cabania-text-secondary: #cbd5e1;
+  --cabania-text-muted: #94a3b8;
+  --cabania-text-dim: #64748b;
+
+  --cabania-emerald: #10b981;
+  --cabania-sky: #0ea5e9;
+
+  --cabania-emerald-glow: rgba(16, 185, 129, 0.2);
+  --cabania-emerald-glow-subtle: rgba(16, 185, 129, 0.1);
+  --cabania-sky-glow: rgba(14, 165, 233, 0.2);
+
+  --cabania-danger-border: rgba(239, 68, 68, 0.3);
+  --cabania-danger-bg: rgba(239, 68, 68, 0.1);
+  --cabania-danger-text: #fca5a5;
+
+  --cabania-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+  --cabania-shadow-sm: 0 2px 8px rgba(16, 185, 129, 0.15);
+  --cabania-shadow-md: 0 4px 12px rgba(16, 185, 129, 0.15);
+}
+
 body {
-  background-color: var(--cabania-bg);
+  background-color: var(--cabania-bg) !important;
+  background-image:
+    radial-gradient(circle at -5% -5%, rgba(16, 185, 129, 0.35) 0%, rgba(16, 185, 129, 0.08) 25%, transparent 55%),
+    radial-gradient(circle at 105% -5%, rgba(14, 165, 233, 0.35) 0%, rgba(14, 165, 233, 0.08) 25%, transparent 55%),
+    radial-gradient(circle at 25% 105%, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.05) 25%, transparent 50%) !important;
+  background-attachment: fixed !important;
   color: var(--cabania-text);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+@include color-mode(dark) {
+  body {
+    background-image:
+      radial-gradient(circle at -5% -5%, rgba(16, 185, 129, 0.3) 0%, rgba(16, 185, 129, 0.08) 25%, transparent 50%),
+      radial-gradient(circle at 105% -5%, rgba(14, 165, 233, 0.3) 0%, rgba(14, 165, 233, 0.08) 25%, transparent 50%),
+      radial-gradient(circle at 25% 105%, rgba(16, 185, 129, 0.15) 0%, rgba(16, 185, 129, 0.04) 25%, transparent 50%) !important;
+  }
 }
 
 .wrapper {
@@ -67,7 +118,7 @@ body {
   padding-inline: var(--cui-sidebar-occupy-start, 0) var(--cui-sidebar-occupy-end, 0);
   will-change: auto;
   @include transition(padding .15s);
-  background-color: var(--cabania-bg);
+  background-color: transparent;
   color: var(--cabania-text);
 }
 
@@ -112,15 +163,6 @@ body {
   min-height: calc(3rem + 1px); // stylelint-disable-line function-disallowed-list
 }
 
-@include color-mode(dark) {
-  body {
-    background-color: var(--cui-dark-bg-subtle);
-  }
-
-  .footer {
-    --cui-footer-bg: var(--cui-body-bg);
-  }
-}
 
 // ============================================
 // CABANIA GLASSMORPHISM GLOBAL THEME
@@ -147,7 +189,7 @@ body {
 
 // --- Header ---
 .wrapper > .header {
-  --cui-header-bg: var(--cabania-bg);
+  --cui-header-bg: var(--cabania-surface-bg);
   --cui-header-border-color: var(--cabania-border-subtle);
   --cui-header-color: var(--cabania-text);
   backdrop-filter: blur(16px);
@@ -192,7 +234,7 @@ body {
 
 // --- Footer ---
 .wrapper .footer {
-  --cui-footer-bg: var(--cabania-bg);
+  --cui-footer-bg: var(--cabania-surface-bg);
   --cui-footer-border-color: var(--cabania-border-subtle);
   color: var(--cabania-text-dim);
 }
@@ -261,7 +303,7 @@ body {
 
 // --- Dropdowns ---
 .wrapper .dropdown-menu {
-  --cui-dropdown-bg: #0f172a;
+  --cui-dropdown-bg: var(--cabania-surface-bg);
   --cui-dropdown-border-color: var(--cabania-border);
   --cui-dropdown-color: var(--cabania-text);
   --cui-dropdown-link-color: var(--cabania-text-secondary);
@@ -276,7 +318,7 @@ body {
 
 // --- Modals (teleported to body, outside .wrapper) ---
 .modal-content {
-  background-color: #0f172a;
+  background-color: var(--cabania-surface-bg);
   border-color: var(--cabania-border);
   color: var(--cabania-text);
 }
@@ -358,9 +400,11 @@ body {
 
 // --- Sidebar ---
 .sidebar {
-  --cui-sidebar-bg: var(--cabania-bg);
+  --cui-sidebar-bg: var(--cabania-surface-bg);
   --cui-sidebar-border-color: var(--cabania-border-subtle);
   --cui-sidebar-color: var(--cabania-text-muted);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 
   // Nav links
   --cui-sidebar-nav-link-color: var(--cabania-text-muted);
@@ -399,25 +443,41 @@ body {
 .cabania-sidebar-logo {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.5rem;
   text-decoration: none;
 
   &__icon {
-    display: grid;
-    place-items: center;
     width: 2rem;
     height: 2rem;
     border-radius: 0.5rem;
-    background: var(--cabania-gradient);
-    color: white;
     flex-shrink: 0;
+    object-fit: contain;
   }
 
-  &__text {
-    font-size: 1.25rem;
-    font-weight: 800;
-    letter-spacing: -0.02em;
-    color: var(--cabania-text);
+  &__wordmark {
+    height: 1.1rem;
+    width: auto;
+    object-fit: contain;
+  }
+}
+
+// --- Gradient button (navbar, CTA) ---
+.cabania-btn-gradient {
+  background: var(--cabania-gradient);
+  color: white;
+  border: none;
+  border-radius: var(--cabania-radius-sm);
+  padding: 0.35rem 0.85rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: box-shadow 0.2s, opacity 0.2s;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
+
+  &:hover {
+    box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
+    opacity: 0.9;
   }
 }
 
@@ -516,5 +576,226 @@ body {
   @media (max-width: 575.98px) {
     height: 200px !important;
     min-height: 200px !important;
+  }
+}
+
+// ============================================
+// GLASS STAT CARDS
+// ============================================
+
+.wrapper .cabania-glass {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid;
+  transition: background-color 0.3s, border-color 0.3s, color 0.3s;
+
+  .cabania-glass__label {
+    opacity: 0.6;
+  }
+
+  // Color variants (light mode defaults)
+  &--success {
+    background-color: rgba(16, 185, 129, 0.08) !important;
+    border-color: rgba(16, 185, 129, 0.2);
+    color: #059669;
+  }
+  &--danger {
+    background-color: rgba(239, 68, 68, 0.08) !important;
+    border-color: rgba(239, 68, 68, 0.2);
+    color: #dc2626;
+  }
+  &--warning {
+    background-color: rgba(245, 158, 11, 0.08) !important;
+    border-color: rgba(245, 158, 11, 0.2);
+    color: #d97706;
+  }
+  &--primary {
+    background-color: rgba(99, 102, 241, 0.08) !important;
+    border-color: rgba(99, 102, 241, 0.2);
+    color: #4f46e5;
+  }
+  &--info {
+    background-color: rgba(14, 165, 233, 0.08) !important;
+    border-color: rgba(14, 165, 233, 0.2);
+    color: #0284c7;
+  }
+  &--secondary {
+    background-color: rgba(100, 116, 139, 0.08) !important;
+    border-color: rgba(100, 116, 139, 0.2);
+    color: #475569;
+  }
+  &--dark {
+    background-color: rgba(30, 41, 59, 0.08) !important;
+    border-color: rgba(30, 41, 59, 0.2);
+    color: #1e293b;
+  }
+}
+
+// Glass stat cards — dark mode overrides
+@include color-mode(dark) {
+  .wrapper .cabania-glass {
+    &--success  { background-color: rgba(16, 185, 129, 0.15) !important; border-color: rgba(16, 185, 129, 0.25); color: #10b981; }
+    &--danger   { background-color: rgba(239, 68, 68, 0.15) !important; border-color: rgba(239, 68, 68, 0.25); color: #f87171; }
+    &--warning  { background-color: rgba(245, 158, 11, 0.15) !important; border-color: rgba(245, 158, 11, 0.25); color: #fbbf24; }
+    &--primary  { background-color: rgba(99, 102, 241, 0.15) !important; border-color: rgba(99, 102, 241, 0.25); color: #818cf8; }
+    &--info     { background-color: rgba(14, 165, 233, 0.15) !important; border-color: rgba(14, 165, 233, 0.25); color: #38bdf8; }
+    &--secondary { background-color: rgba(100, 116, 139, 0.15) !important; border-color: rgba(100, 116, 139, 0.25); color: #94a3b8; }
+    &--dark     { background-color: rgba(30, 41, 59, 0.15) !important; border-color: rgba(30, 41, 59, 0.25); color: #cbd5e1; }
+  }
+}
+
+// ============================================
+// GLASS BANNER CARDS (rich gradient style)
+// ============================================
+
+.wrapper .cabania-glass-banner {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--cabania-radius);
+  color: #fff !important;
+  overflow: hidden;
+  position: relative;
+
+  .cabania-glass__label {
+    opacity: 0.75;
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  .fs-4 {
+    color: #fff;
+  }
+
+  &--success {
+    background: linear-gradient(135deg, #059669 0%, #10b981 50%, #0d9488 100%) !important;
+    border-color: rgba(16, 185, 129, 0.4);
+    box-shadow: 0 4px 24px rgba(16, 185, 129, 0.25);
+  }
+
+  &--danger {
+    background: linear-gradient(135deg, #b91c1c 0%, #ef4444 50%, #e11d48 100%) !important;
+    border-color: rgba(239, 68, 68, 0.4);
+    box-shadow: 0 4px 24px rgba(239, 68, 68, 0.25);
+  }
+
+  &--warning {
+    background: linear-gradient(135deg, #b45309 0%, #f59e0b 50%, #d97706 100%) !important;
+    border-color: rgba(245, 158, 11, 0.4);
+    box-shadow: 0 4px 24px rgba(245, 158, 11, 0.25);
+  }
+
+  &--primary {
+    background: linear-gradient(135deg, #4338ca 0%, #6366f1 50%, #7c3aed 100%) !important;
+    border-color: rgba(99, 102, 241, 0.4);
+    box-shadow: 0 4px 24px rgba(99, 102, 241, 0.25);
+  }
+
+  &--info {
+    background: linear-gradient(135deg, #0369a1 0%, #0ea5e9 50%, #0891b2 100%) !important;
+    border-color: rgba(14, 165, 233, 0.4);
+    box-shadow: 0 4px 24px rgba(14, 165, 233, 0.25);
+  }
+}
+
+// Dark mode — slightly deeper tones
+@include color-mode(dark) {
+  .wrapper .cabania-glass-banner {
+    border-color: rgba(255, 255, 255, 0.1);
+
+    &--success {
+      background: linear-gradient(135deg, #064e3b 0%, #059669 50%, #0f766e 100%) !important;
+      box-shadow: 0 4px 24px rgba(16, 185, 129, 0.3);
+    }
+
+    &--danger {
+      background: linear-gradient(135deg, #7f1d1d 0%, #dc2626 50%, #9f1239 100%) !important;
+      box-shadow: 0 4px 24px rgba(239, 68, 68, 0.3);
+    }
+
+    &--warning {
+      background: linear-gradient(135deg, #78350f 0%, #d97706 50%, #92400e 100%) !important;
+      box-shadow: 0 4px 24px rgba(245, 158, 11, 0.3);
+    }
+
+    &--primary {
+      background: linear-gradient(135deg, #312e81 0%, #4f46e5 50%, #5b21b6 100%) !important;
+      box-shadow: 0 4px 24px rgba(99, 102, 241, 0.3);
+    }
+
+    &--info {
+      background: linear-gradient(135deg, #0c4a6e 0%, #0284c7 50%, #155e75 100%) !important;
+      box-shadow: 0 4px 24px rgba(14, 165, 233, 0.3);
+    }
+  }
+}
+
+// ============================================
+// Category List — Glass Card Rows
+// ============================================
+
+.cabania-category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cabania-category-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--cabania-card-bg);
+  border: 1px solid var(--cabania-border-subtle);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transition: background 0.2s, box-shadow 0.2s;
+
+  &:hover {
+    background: var(--cabania-hover-bg);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  }
+
+  &__accent {
+    width: 4px;
+    min-height: 28px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }
+
+  &__name {
+    flex: 1;
+    font-weight: 500;
+    font-size: 0.875rem;
+    color: var(--cabania-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__values {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    flex-shrink: 0;
+  }
+
+  &__total {
+    font-weight: 600;
+    font-size: 0.875rem;
+    color: var(--cabania-text);
+  }
+
+  &__count {
+    font-size: 0.75rem;
+    color: var(--cabania-text-muted);
+  }
+}
+
+@include color-mode(dark) {
+  .cabania-category-row {
+    &:hover {
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+    }
   }
 }

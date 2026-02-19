@@ -33,44 +33,50 @@
       </CCardBody>
     </CCard>
 
+    <div v-if="loading" class="text-center py-5">
+      <CSpinner color="primary" />
+      <div class="text-body-secondary mt-2">Cargando datos...</div>
+    </div>
+    <template v-else>
+
     <CRow class="mb-4 g-3">
       <CCol :sm="6" :lg="3">
-        <CCard class="text-white bg-success h-100">
-          <CCardBody class="pb-3">
+        <CCard class="cabania-glass-banner cabania-glass-banner--success h-100">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
-              {{ formatCurrency(summary.income) }}
+              {{ animIncome }}
             </div>
-            <div class="text-white-50">Ingresos</div>
+            <div class="cabania-glass__label">Ingresos</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <CCard class="text-white bg-danger h-100">
-          <CCardBody class="pb-3">
+        <CCard class="cabania-glass-banner cabania-glass-banner--danger h-100">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
-              {{ formatCurrency(summary.expenses) }}
+              {{ animExpenses }}
             </div>
-            <div class="text-white-50">Egresos</div>
+            <div class="cabania-glass__label">Egresos</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <CCard class="text-white bg-warning h-100">
-          <CCardBody class="pb-3">
+        <CCard class="cabania-glass-banner cabania-glass-banner--warning h-100">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
-              {{ formatCurrency(summary.depositsHeld) }}
+              {{ animDeposits }}
             </div>
-            <div class="text-white-50">Depósitos Retenidos</div>
+            <div class="cabania-glass__label">Depósitos Retenidos</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <CCard class="text-white bg-primary h-100">
-          <CCardBody class="pb-3">
+        <CCard class="cabania-glass-banner cabania-glass-banner--primary h-100">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
-              {{ formatCurrency(summary.profit) }}
+              {{ animProfit }}
             </div>
-            <div class="text-white-50">Utilidad</div>
+            <div class="cabania-glass__label">Utilidad</div>
           </CCardBody>
         </CCard>
       </CCol>
@@ -82,7 +88,7 @@
           <CCardHeader>Tendencia Mensual de Ingresos vs Egresos</CCardHeader>
           <CCardBody>
             <div v-if="monthlyTrend.length > 0" style="height: 300px;">
-              <CChartBar :data="barChartData" :options="barChartOptions" />
+              <highcharts :options="trendChartOptions" />
             </div>
             <div v-else class="text-center text-body-secondary py-5">
               <CSpinner v-if="loadingTrend" />
@@ -96,7 +102,7 @@
           <CCardHeader>Egresos por Categoría</CCardHeader>
           <CCardBody>
             <div v-if="expensesByCategory.length > 0" style="height: 300px;">
-              <CChartDoughnut :data="doughnutChartData" :options="doughnutChartOptions" />
+              <highcharts :options="doughnutChartOptions" />
             </div>
             <div v-else class="text-center text-body-secondary py-5">
               <CSpinner v-if="loadingCategories" />
@@ -113,7 +119,7 @@
           <CCardHeader>Egresos por Categoría</CCardHeader>
           <CCardBody>
             <div style="height: 300px;">
-              <CChartBar :data="expensesByCategoryBarData" :options="expensesByCategoryBarOptions" />
+              <highcharts :options="expensesCategoryBarOptions" />
             </div>
           </CCardBody>
         </CCard>
@@ -121,38 +127,37 @@
       <CCol :md="6">
         <CCard class="mb-4 h-100">
           <CCardHeader>Detalle de Egresos por Categoría</CCardHeader>
-          <CCardBody>
-            <CTable hover responsive small>
-              <CTableHead>
-                <CTableRow>
-                  <CTableHeaderCell>Categoría</CTableHeaderCell>
-                  <CTableHeaderCell class="text-end">Total</CTableHeaderCell>
-                  <CTableHeaderCell class="text-end">Cantidad</CTableHeaderCell>
-                </CTableRow>
-              </CTableHead>
-              <CTableBody>
-                <CTableRow v-for="category in expensesByCategory" :key="category.id">
-                  <CTableDataCell>
-                    <CIcon v-if="category.icon" :icon="category.icon" class="me-2" />
-                    {{ category.name }}
-                  </CTableDataCell>
-                  <CTableDataCell class="text-end">{{ formatCurrency(category.total) }}</CTableDataCell>
-                  <CTableDataCell class="text-end">{{ category.count }}</CTableDataCell>
-                </CTableRow>
-              </CTableBody>
-            </CTable>
+          <CCardBody class="p-2">
+            <div class="cabania-category-list">
+              <div
+                v-for="(category, i) in expensesByCategory"
+                :key="category.id"
+                class="cabania-category-row"
+              >
+                <div class="cabania-category-row__accent" :style="{ backgroundColor: getChartColor(category.color, i) }"></div>
+                <div class="cabania-category-row__name">
+                  <CIcon v-if="category.icon" :icon="category.icon" class="me-2" />
+                  {{ category.name }}
+                </div>
+                <div class="cabania-category-row__values">
+                  <span class="cabania-category-row__total">{{ formatCurrency(category.total) }}</span>
+                  <span class="cabania-category-row__count">{{ category.count }} mov.</span>
+                </div>
+              </div>
+            </div>
           </CCardBody>
         </CCard>
       </CCol>
     </CRow>
+    </template>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { CChartBar, CChartDoughnut } from '@coreui/vue-chartjs'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
+import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
@@ -161,13 +166,12 @@ const periodOptions = [
   { value: 'last_12_months', label: 'Últimos 12 meses' },
   { value: 'last_6_months', label: 'Últimos 6 meses' },
   { value: 'last_3_months', label: 'Últimos 3 meses' },
-  { value: 'last_month', label: 'Último mes' },
   { value: 'this_month', label: 'Este mes' },
   { value: 'this_quarter', label: 'Este trimestre' },
   { value: 'this_year', label: 'Este año' }
 ]
 
-const selectedPeriod = ref('last_12_months')
+const selectedPeriod = ref('last_6_months')
 const selectedVenueId = ref('')
 const selectedOrganizationId = ref('')
 
@@ -184,28 +188,34 @@ const summary = ref({
 const monthlyTrend = ref([])
 const expensesByCategory = ref([])
 
+const loading = ref(false)
 const loadingTrend = ref(false)
 const loadingCategories = ref(false)
 
+const animIncome = useAnimatedNumber(computed(() => summary.value.income), { formatter: formatCurrency })
+const animExpenses = useAnimatedNumber(computed(() => summary.value.expenses), { formatter: formatCurrency })
+const animDeposits = useAnimatedNumber(computed(() => summary.value.depositsHeld), { formatter: formatCurrency })
+const animProfit = useAnimatedNumber(computed(() => summary.value.profit), { formatter: formatCurrency })
+
 const chartColors = [
-  '#36A2EB', '#FF6384', '#FFCE56', '#4BC0C0', '#9966FF',
-  '#FF9F40', '#C9CBCF', '#7BC225', '#E83E8C', '#17A2B8',
-  '#6610F2', '#FD7E14', '#20C997', '#6F42C1', '#007BFF'
+  '#10b981', '#0ea5e9', '#6366f1', '#f43f5e', '#f59e0b',
+  '#14b8a6', '#8b5cf6', '#f97316', '#06b6d4', '#ec4899',
+  '#059669', '#0284c7', '#4f46e5', '#e11d48', '#d97706'
 ]
 
 // Mapeo de colores Bootstrap/CoreUI a hexadecimales
 const bootstrapColors = {
-  primary: '#321fdb',
-  secondary: '#9da5b1',
-  success: '#2eb85c',
-  danger: '#e55353',
-  warning: '#f9b115',
-  info: '#3399ff',
-  light: '#ebedef',
-  dark: '#4f5d73',
-  indigo: '#6610f2',
-  pink: '#e83e8c',
-  teal: '#20c997'
+  primary: '#6366f1',
+  secondary: '#8b5cf6',
+  success: '#10b981',
+  danger: '#f43f5e',
+  warning: '#f59e0b',
+  info: '#0ea5e9',
+  light: '#e2e8f0',
+  dark: '#475569',
+  indigo: '#6366f1',
+  pink: '#ec4899',
+  teal: '#14b8a6'
 }
 
 const getChartColor = (color, index) => {
@@ -214,75 +224,91 @@ const getChartColor = (color, index) => {
   return bootstrapColors[color] || chartColors[index % chartColors.length]
 }
 
-const barChartData = computed(() => ({
-  labels: monthlyTrend.value.map(item => item.monthName),
-  datasets: [
-    {
-      label: 'Ingresos',
-      backgroundColor: '#28a745',
-      data: monthlyTrend.value.map(item => item.income)
-    },
-    {
-      label: 'Egresos',
-      backgroundColor: '#dc3545',
-      data: monthlyTrend.value.map(item => item.expenses)
+const labelColor = '#94a3b8'
+const gridColor = 'rgba(148, 163, 184, 0.15)'
+
+const trendChartOptions = computed(() => ({
+  chart: {
+    type: 'column',
+    options3d: { enabled: true, alpha: 15, beta: 15, depth: 50 },
+    backgroundColor: 'transparent',
+    height: 300
+  },
+  title: { text: undefined },
+  xAxis: {
+    categories: monthlyTrend.value.map(item => item.monthName),
+    labels: { style: { color: labelColor } }
+  },
+  yAxis: {
+    title: { text: undefined },
+    min: 0,
+    labels: { style: { color: labelColor } },
+    gridLineColor: gridColor
+  },
+  plotOptions: { column: { depth: 25, borderWidth: 0, grouping: true } },
+  series: [
+    { name: 'Ingresos', data: monthlyTrend.value.map(item => item.income), color: '#10b981' },
+    { name: 'Egresos', data: monthlyTrend.value.map(item => item.expenses), color: '#f43f5e' }
+  ],
+  credits: { enabled: false },
+  legend: { enabled: true, itemStyle: { color: labelColor } }
+}))
+
+const doughnutChartOptions = computed(() => ({
+  chart: {
+    type: 'pie',
+    options3d: { enabled: true, alpha: 45, beta: 0 },
+    backgroundColor: 'transparent',
+    height: 300
+  },
+  title: { text: undefined },
+  plotOptions: {
+    pie: {
+      innerSize: '50%',
+      depth: 35,
+      borderWidth: 0,
+      dataLabels: { enabled: true, format: '{point.name}: {point.percentage:.1f}%', style: { color: labelColor, textOutline: 'none' } }
     }
-  ]
-}))
-
-const barChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { position: 'top' }
   },
-  scales: {
-    y: { beginAtZero: true }
-  }
-}
-
-const doughnutChartData = computed(() => ({
-  labels: expensesByCategory.value.map(item => item.name),
-  datasets: [{
-    data: expensesByCategory.value.map(item => item.total),
-    backgroundColor: expensesByCategory.value.map((item, index) =>
-      getChartColor(item.color, index)
-    ),
-    borderWidth: 1
-  }]
+  series: [{
+    data: expensesByCategory.value.map((item, i) => ({
+      name: item.name,
+      y: item.total,
+      color: getChartColor(item.color, i)
+    }))
+  }],
+  credits: { enabled: false }
 }))
 
-const doughnutChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { position: 'right' }
-  }
-}
-
-const expensesByCategoryBarData = computed(() => ({
-  labels: expensesByCategory.value.map(item => item.name),
-  datasets: [{
-    label: 'Total',
-    data: expensesByCategory.value.map(item => item.total),
-    backgroundColor: expensesByCategory.value.map((item, index) =>
-      getChartColor(item.color, index)
-    ),
-    borderWidth: 1
-  }]
-}))
-
-const expensesByCategoryBarOptions = {
-  indexAxis: 'y',
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { display: false }
+const expensesCategoryBarOptions = computed(() => ({
+  chart: {
+    type: 'bar',
+    options3d: { enabled: true, alpha: 15, beta: 15, depth: 50 },
+    backgroundColor: 'transparent',
+    height: 300
   },
-  scales: {
-    x: { beginAtZero: true }
-  }
-}
+  title: { text: undefined },
+  xAxis: {
+    categories: expensesByCategory.value.map(item => item.name),
+    labels: { style: { color: labelColor } }
+  },
+  yAxis: {
+    title: { text: undefined },
+    min: 0,
+    labels: { style: { color: labelColor } },
+    gridLineColor: gridColor
+  },
+  plotOptions: { bar: { depth: 25, borderWidth: 0 } },
+  legend: { enabled: false },
+  series: [{
+    name: 'Total',
+    data: expensesByCategory.value.map((item, i) => ({
+      y: item.total,
+      color: getChartColor(item.color, i)
+    }))
+  }],
+  credits: { enabled: false }
+}))
 
 function formatCurrency(amount) {
   return new Intl.NumberFormat('es-CO', {
@@ -372,11 +398,16 @@ async function loadExpensesByCategory() {
 }
 
 async function loadAllData() {
-  await Promise.all([
-    loadSummary(),
-    loadMonthlyTrend(),
-    loadExpensesByCategory()
-  ])
+  loading.value = true
+  try {
+    await Promise.all([
+      loadSummary(),
+      loadMonthlyTrend(),
+      loadExpensesByCategory()
+    ])
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(async () => {

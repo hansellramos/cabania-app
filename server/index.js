@@ -1303,30 +1303,31 @@ async function startServer() {
         }
       }
       
-      // Calculate date range for last 12 months
+      // Calculate date range for last N months (default 12)
+      const numMonths = Math.min(Math.max(parseInt(req.query.months) || 12, 1), 24);
       const now = new Date();
-      const startDate = new Date(now.getFullYear(), now.getMonth() - 11, 1);
-      
+      const startDate = new Date(now.getFullYear(), now.getMonth() - (numMonths - 1), 1);
+
       const whereClause = {
         date: { gte: startDate, lt: new Date(now.getFullYear(), now.getMonth() + 1, 1) }
       };
       if (venueIds !== null) {
         whereClause.venue = { in: venueIds };
       }
-      
+
       const accommodations = await prisma.accommodations.findMany({
         where: whereClause
       });
-      
+
       // Get all venues for the chart
       const allVenueIds = [...new Set(accommodations.filter(a => a.venue).map(a => a.venue))];
       const venues = allVenueIds.length > 0 ? await prisma.venues.findMany({
         where: { id: { in: allVenueIds } }
       }) : [];
-      
+
       // Generate months array
       const months = [];
-      for (let i = 11; i >= 0; i--) {
+      for (let i = numMonths - 1; i >= 0; i--) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
         months.push({
           key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
@@ -1375,31 +1376,32 @@ async function startServer() {
         }
       }
       
-      // Calculate date range for next 12 months
+      // Calculate date range for next N months (default 12)
+      const numMonths = Math.min(Math.max(parseInt(req.query.months) || 12, 1), 24);
       const now = new Date();
       const startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-      const endDate = new Date(now.getFullYear(), now.getMonth() + 12, 0);
-      
+      const endDate = new Date(now.getFullYear(), now.getMonth() + numMonths, 0);
+
       const whereClause = {
         date: { gte: startDate, lte: endDate }
       };
       if (venueIds !== null) {
         whereClause.venue = { in: venueIds };
       }
-      
+
       const accommodations = await prisma.accommodations.findMany({
         where: whereClause
       });
-      
+
       // Get all venues for the chart
       const allVenueIds = [...new Set(accommodations.filter(a => a.venue).map(a => a.venue))];
       const venues = allVenueIds.length > 0 ? await prisma.venues.findMany({
         where: { id: { in: allVenueIds } }
       }) : [];
-      
+
       // Generate months array
       const months = [];
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < numMonths; i++) {
         const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
         months.push({
           key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,

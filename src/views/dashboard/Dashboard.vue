@@ -56,64 +56,58 @@
       </CCol>
     </CRow>
 
-    <CRow class="mb-4">
+    <div v-if="loading" class="text-center py-5">
+      <CSpinner color="primary" />
+      <div class="text-body-secondary mt-2">Cargando datos...</div>
+    </div>
+    <template v-else>
+
+    <CRow class="mb-4 g-3">
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-secondary h-100">
-          <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsLast12 }}
-            </div>
-            <div class="text-white-50 small">Últimos 12M</div>
+        <CCard class="cabania-glass-banner cabania-glass-banner--danger h-100">
+          <CCardBody class="pb-3 text-end">
+            <div class="fs-4 fw-semibold">{{ animLast12 }}</div>
+            <div class="cabania-glass__label small">Últimos 6M</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-dark h-100">
-          <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsLast3 }}
-            </div>
-            <div class="text-white-50 small">Últimos 3M</div>
+        <CCard class="cabania-glass-banner cabania-glass-banner--warning h-100">
+          <CCardBody class="pb-3 text-end">
+            <div class="fs-4 fw-semibold">{{ animLast3 }}</div>
+            <div class="cabania-glass__label small">Últimos 3M</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-info h-100">
-          <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsPreviousMonth }}
-            </div>
-            <div class="text-white-50 small">Mes Anterior</div>
+        <CCard class="cabania-glass-banner cabania-glass-banner--info h-100">
+          <CCardBody class="pb-3 text-end">
+            <div class="fs-4 fw-semibold">{{ animPrevMonth }}</div>
+            <div class="cabania-glass__label small">Mes Anterior</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-primary h-100">
-          <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsThisMonth }}
-            </div>
-            <div class="text-white-50 small">Este Mes</div>
+        <CCard class="cabania-glass-banner cabania-glass-banner--primary h-100">
+          <CCardBody class="pb-3 text-end">
+            <div class="fs-4 fw-semibold">{{ animThisMonth }}</div>
+            <div class="cabania-glass__label small">Este Mes</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-warning h-100">
-          <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsNext3 }}
-            </div>
-            <div class="text-white-50 small">Próximos 3M</div>
+        <CCard class="cabania-glass-banner cabania-glass-banner--warning h-100">
+          <CCardBody class="pb-3 text-end">
+            <div class="fs-4 fw-semibold">{{ animNext3 }}</div>
+            <div class="cabania-glass__label small">Próximos 3M</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="text-white bg-success h-100">
-          <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsNext12 }}
-            </div>
-            <div class="text-white-50 small">Próximos 12M</div>
+        <CCard class="cabania-glass-banner cabania-glass-banner--success h-100">
+          <CCardBody class="pb-3 text-end">
+            <div class="fs-4 fw-semibold">{{ animNext12 }}</div>
+            <div class="cabania-glass__label small">Próximos 6M</div>
           </CCardBody>
         </CCard>
       </CCol>
@@ -122,10 +116,10 @@
     <CRow class="mb-4">
       <CCol :md="6">
         <CCard class="h-100">
-          <CCardHeader>Hospedajes - Últimos 12 Meses</CCardHeader>
+          <CCardHeader>Hospedajes - Últimos 6 Meses</CCardHeader>
           <CCardBody>
             <div v-if="accommodationsHistory.venues?.length > 0" style="height: 300px;">
-              <Bar :data="historyChartData" :options="barChartOptions" />
+              <highcharts :options="historyChartOptions" />
             </div>
             <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes históricos
@@ -135,10 +129,10 @@
       </CCol>
       <CCol :md="6">
         <CCard class="h-100">
-          <CCardHeader>Hospedajes - Próximos 12 Meses</CCardHeader>
+          <CCardHeader>Hospedajes - Próximos 6 Meses</CCardHeader>
           <CCardBody>
             <div v-if="accommodationsForecast.venues?.length > 0" style="height: 300px;">
-              <Bar :data="forecastChartData" :options="barChartOptions" />
+              <highcharts :options="forecastChartOptions" />
             </div>
             <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes futuros
@@ -168,36 +162,61 @@
 
     <CRow class="mb-4 g-3">
       <CCol :sm="6" :lg="3">
-        <CCard class="text-white bg-primary h-100">
-          <CCardBody class="pb-3">
+        <CCard class="cabania-glass-banner cabania-glass-banner--primary h-100">
+          <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
-              {{ formatCurrency(incomeSummary.currentMonth.total) }}
-              <span v-if="incomeSummary.percentChange !== 0" class="fs-6 fw-normal ms-2" :class="incomeSummary.percentChange >= 0 ? 'text-white' : 'text-danger'">
+              {{ animIncomeThisMonth }}
+              <span v-if="incomeSummary.percentChange !== 0" class="fs-6 fw-normal ms-2">
                 {{ incomeSummary.percentChange >= 0 ? '+' : '' }}{{ incomeSummary.percentChange }}%
               </span>
             </div>
-            <div class="text-white-50">Ingresos Este Mes</div>
+            <div class="cabania-glass__label">Ingresos Este Mes</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <CCard class="text-white bg-info h-100">
-          <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ formatCurrency(incomeSummary.previousMonth.total) }}
-            </div>
-            <div class="text-white-50">Ingresos Mes Anterior</div>
+        <CCard class="cabania-glass-banner cabania-glass-banner--info h-100">
+          <CCardBody class="pb-3 text-end">
+            <div class="fs-4 fw-semibold">{{ animIncomePrevMonth }}</div>
+            <div class="cabania-glass__label">Ingresos Mes Anterior</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <CCard class="text-white bg-success h-100">
-          <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalIncomeByVenue }}
+        <CCard class="cabania-glass-banner cabania-glass-banner--success h-100">
+          <CCardBody class="pb-3 text-end">
+            <div class="fs-4 fw-semibold">{{ animIncomeTotal }}</div>
+            <div class="cabania-glass__label">Ingresos Totales</div>
+            <small class="cabania-glass__label">{{ incomeByVenue.length }} cabañas con ingresos</small>
+          </CCardBody>
+        </CCard>
+      </CCol>
+    </CRow>
+
+    <CRow class="mb-4">
+      <CCol :md="6">
+        <CCard class="h-100">
+          <CCardHeader>Hospedajes por Cabaña</CCardHeader>
+          <CCardBody>
+            <div v-if="accommodationsByVenue.length > 0" style="height: 300px;">
+              <highcharts :options="accommodationsPieOptions" />
             </div>
-            <div class="text-white-50">Ingresos Totales</div>
-            <small class="text-white-50">{{ incomeByVenue.length }} cabañas con ingresos</small>
+            <div v-else class="text-center text-body-secondary py-5">
+              No hay datos de hospedajes disponibles
+            </div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+      <CCol :md="6">
+        <CCard class="h-100">
+          <CCardHeader>Ingresos por Cabaña</CCardHeader>
+          <CCardBody>
+            <div v-if="incomeByVenue.length > 0" style="height: 300px;">
+              <highcharts :options="incomePieOptions" />
+            </div>
+            <div v-else class="text-center text-body-secondary py-5">
+              No hay datos de ingresos disponibles
+            </div>
           </CCardBody>
         </CCard>
       </CCol>
@@ -205,11 +224,22 @@
 
     <CRow>
       <CCol :md="6">
-        <CCard class="mb-4">
-          <CCardHeader>Hospedajes por Cabaña</CCardHeader>
-          <CCardBody>
-            <div v-if="accommodationsByVenue.length > 0" style="height: 300px;">
-              <Pie :data="accommodationsPieChartData" :options="pieChartOptions" />
+        <CCard class="mb-4 h-100">
+          <CCardHeader>Hospedajes por Cabaña (Lista)</CCardHeader>
+          <CCardBody class="p-2">
+            <div v-if="accommodationsByVenue.length > 0" class="cabania-category-list">
+              <div
+                v-for="(item, i) in accommodationsByVenue"
+                :key="item.venue_id"
+                class="cabania-category-row"
+              >
+                <div class="cabania-category-row__accent" :style="{ backgroundColor: chartColors[i % chartColors.length] }"></div>
+                <div class="cabania-category-row__name">{{ item.venue_name }}</div>
+                <div class="cabania-category-row__values">
+                  <span class="cabania-category-row__total">{{ item.count }}</span>
+                  <span class="cabania-category-row__count">hospedajes</span>
+                </div>
+              </div>
             </div>
             <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes disponibles
@@ -218,54 +248,44 @@
         </CCard>
       </CCol>
       <CCol :md="6">
-        <CCard class="mb-4">
-          <CCardHeader>Hospedajes por Cabaña (Lista)</CCardHeader>
-          <CCardBody>
-            <CTable v-if="accommodationsByVenue.length > 0" small hover>
-              <CTableHead>
-                <CTableRow>
-                  <CTableHeaderCell>Cabaña</CTableHeaderCell>
-                  <CTableHeaderCell class="text-end">Nº Hospedajes</CTableHeaderCell>
-                </CTableRow>
-              </CTableHead>
-              <CTableBody>
-                <CTableRow v-for="item in accommodationsByVenue" :key="item.venue_id">
-                  <CTableDataCell>{{ item.venue_name }}</CTableDataCell>
-                  <CTableDataCell class="text-end">{{ item.count }}</CTableDataCell>
-                </CTableRow>
-              </CTableBody>
-            </CTable>
+        <CCard class="mb-4 h-100">
+          <CCardHeader>Ingresos por Cabaña (Lista)</CCardHeader>
+          <CCardBody class="p-2">
+            <div v-if="incomeByVenue.length > 0" class="cabania-category-list">
+              <div
+                v-for="(item, i) in incomeByVenue"
+                :key="item.venue_id"
+                class="cabania-category-row"
+              >
+                <div class="cabania-category-row__accent" :style="{ backgroundColor: chartColors[i % chartColors.length] }"></div>
+                <div class="cabania-category-row__name">{{ item.venue_name }}</div>
+                <div class="cabania-category-row__values">
+                  <span class="cabania-category-row__total">{{ formatCurrency(item.total) }}</span>
+                  <span class="cabania-category-row__count">{{ item.count }} pagos</span>
+                </div>
+              </div>
+            </div>
             <div v-else class="text-center text-body-secondary py-5">
-              No hay datos de hospedajes disponibles
+              No hay datos de ingresos disponibles
             </div>
           </CCardBody>
         </CCard>
       </CCol>
     </CRow>
+    </template>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { Pie, Bar } from 'vue-chartjs'
-import {
-  Chart as ChartJS,
-  ArcElement,
-  CategoryScale,
-  LinearScale,
-  BarElement,
-  Title,
-  Tooltip,
-  Legend
-} from 'chart.js'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
-
-ChartJS.register(ArcElement, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend)
+import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
 
+const loading = ref(false)
 const organizations = ref([])
 const selectedOrganizations = ref([])
 const orgSearch = ref('')
@@ -284,14 +304,14 @@ const accommodationsForecast = ref({ months: [], venues: [] })
 const periodOptions = [
   { value: 'next_12_months', label: 'Próximos 12 meses' },
   { value: 'next_3_months', label: 'Próximos 3 meses' },
-  { value: 'next_month', label: 'Próximo mes' },
-  { value: 'last_month', label: 'Último mes' },
+  { value: 'this_month', label: 'Este mes' },
   { value: 'last_3_months', label: 'Últimos 3 meses' },
+  { value: 'last_6_months', label: 'Últimos 6 meses' },
   { value: 'last_12_months', label: 'Últimos 12 meses' }
 ]
 
 // Period filter for income and accommodations by venue sections
-const selectedIncomePeriod = ref('last_12_months')
+const selectedIncomePeriod = ref('last_6_months')
 const accommodationsByVenue = ref([])
 
 const filteredOrganizations = computed(() => {
@@ -343,75 +363,142 @@ const totalAccommodationsLast3 = computed(() => {
 const totalAccommodationsPreviousMonth = computed(() => {
   if (!accommodationsHistory.value.venues) return 0
   return accommodationsHistory.value.venues.reduce((sum, venue) =>
-    sum + (venue.counts[venue.counts.length - 1] || 0), 0)
+    sum + (venue.counts[venue.counts.length - 2] || 0), 0)
 })
 
+// Animated display values
+const animLast12 = useAnimatedNumber(totalAccommodationsLast12)
+const animLast3 = useAnimatedNumber(totalAccommodationsLast3)
+const animPrevMonth = useAnimatedNumber(totalAccommodationsPreviousMonth)
+const animThisMonth = useAnimatedNumber(totalAccommodationsThisMonth)
+const animNext3 = useAnimatedNumber(totalAccommodationsNext3)
+const animNext12 = useAnimatedNumber(totalAccommodationsNext12)
+
+const rawIncomeThisMonth = computed(() => incomeSummary.value.currentMonth.total || 0)
+const rawIncomePrevMonth = computed(() => incomeSummary.value.previousMonth.total || 0)
+const rawIncomeTotal = computed(() => incomeByVenue.value.reduce((sum, item) => sum + Number(item.total || 0), 0))
+
+const animIncomeThisMonth = useAnimatedNumber(rawIncomeThisMonth, { formatter: formatCurrency })
+const animIncomePrevMonth = useAnimatedNumber(rawIncomePrevMonth, { formatter: formatCurrency })
+const animIncomeTotal = useAnimatedNumber(rawIncomeTotal, { formatter: formatCurrency })
+
 const chartColors = [
-  '#36A2EB', '#FF6384', '#FFCE56', '#4BC0C0', '#9966FF',
-  '#FF9F40', '#C9CBCF', '#7BC225', '#E83E8C', '#17A2B8'
+  '#10b981', '#0ea5e9', '#6366f1', '#f43f5e', '#f59e0b',
+  '#14b8a6', '#8b5cf6', '#f97316', '#06b6d4', '#ec4899'
 ]
 
-const pieChartData = computed(() => ({
-  labels: incomeByVenue.value.map(item => item.venue_name),
-  datasets: [{
-    data: incomeByVenue.value.map(item => item.total),
-    backgroundColor: chartColors.slice(0, incomeByVenue.value.length),
-    borderWidth: 1
-  }]
-}))
+const labelColor = '#94a3b8'
+const gridColor = 'rgba(148, 163, 184, 0.15)'
 
-const accommodationsPieChartData = computed(() => ({
-  labels: accommodationsByVenue.value.map(item => item.venue_name),
-  datasets: [{
-    data: accommodationsByVenue.value.map(item => item.count),
-    backgroundColor: chartColors.slice(0, accommodationsByVenue.value.length),
-    borderWidth: 1
-  }]
-}))
-
-const pieChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { position: 'right' }
-  }
-}
-
-const historyChartData = computed(() => ({
-  labels: accommodationsHistory.value.months || [],
-  datasets: (accommodationsHistory.value.venues || []).map((venue, index) => ({
-    label: venue.venue_name,
+const historyChartOptions = computed(() => ({
+  chart: {
+    type: 'column',
+    options3d: { enabled: true, alpha: 15, beta: 15, depth: 50 },
+    backgroundColor: 'transparent',
+    height: 300
+  },
+  title: { text: undefined },
+  xAxis: {
+    categories: accommodationsHistory.value.months || [],
+    labels: { style: { color: labelColor } }
+  },
+  yAxis: {
+    title: { text: undefined },
+    labels: { style: { color: labelColor } },
+    gridLineColor: gridColor,
+    allowDecimals: false
+  },
+  plotOptions: {
+    column: { stacking: 'normal', depth: 25, borderWidth: 0 }
+  },
+  series: (accommodationsHistory.value.venues || []).map((venue, i) => ({
+    name: venue.venue_name,
     data: venue.counts,
-    backgroundColor: chartColors[index % chartColors.length],
-    borderWidth: 1
-  }))
+    color: chartColors[i % chartColors.length]
+  })),
+  credits: { enabled: false },
+  legend: { enabled: true, itemStyle: { color: labelColor } }
 }))
 
-const forecastChartData = computed(() => ({
-  labels: accommodationsForecast.value.months || [],
-  datasets: (accommodationsForecast.value.venues || []).map((venue, index) => ({
-    label: venue.venue_name,
+const forecastChartOptions = computed(() => ({
+  chart: {
+    type: 'column',
+    options3d: { enabled: true, alpha: 15, beta: 15, depth: 50 },
+    backgroundColor: 'transparent',
+    height: 300
+  },
+  title: { text: undefined },
+  xAxis: {
+    categories: accommodationsForecast.value.months || [],
+    labels: { style: { color: labelColor } }
+  },
+  yAxis: {
+    title: { text: undefined },
+    labels: { style: { color: labelColor } },
+    gridLineColor: gridColor,
+    allowDecimals: false
+  },
+  plotOptions: {
+    column: { stacking: 'normal', depth: 25, borderWidth: 0 }
+  },
+  series: (accommodationsForecast.value.venues || []).map((venue, i) => ({
+    name: venue.venue_name,
     data: venue.counts,
-    backgroundColor: chartColors[index % chartColors.length],
-    borderWidth: 1
-  }))
+    color: chartColors[i % chartColors.length]
+  })),
+  credits: { enabled: false },
+  legend: { enabled: true, itemStyle: { color: labelColor } }
 }))
 
-const barChartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  scales: {
-    x: { stacked: true },
-    y: {
-      stacked: true,
-      beginAtZero: true,
-      ticks: { precision: 0 }
+const accommodationsPieOptions = computed(() => ({
+  chart: {
+    type: 'pie',
+    options3d: { enabled: true, alpha: 45, beta: 0 },
+    backgroundColor: 'transparent',
+    height: 300
+  },
+  title: { text: undefined },
+  plotOptions: {
+    pie: {
+      depth: 35,
+      borderWidth: 0,
+      dataLabels: { enabled: true, format: '{point.name}: {point.y}', style: { color: labelColor, textOutline: 'none' } }
     }
   },
-  plugins: {
-    legend: { position: 'top' }
-  }
-}
+  series: [{
+    data: accommodationsByVenue.value.map((item, i) => ({
+      name: item.venue_name,
+      y: item.count,
+      color: chartColors[i % chartColors.length]
+    }))
+  }],
+  credits: { enabled: false }
+}))
+
+const incomePieOptions = computed(() => ({
+  chart: {
+    type: 'pie',
+    options3d: { enabled: true, alpha: 45, beta: 0 },
+    backgroundColor: 'transparent',
+    height: 300
+  },
+  title: { text: undefined },
+  plotOptions: {
+    pie: {
+      depth: 35,
+      borderWidth: 0,
+      dataLabels: { enabled: true, format: '{point.name}: {point.percentage:.1f}%', style: { color: labelColor, textOutline: 'none' } }
+    }
+  },
+  series: [{
+    data: incomeByVenue.value.map((item, i) => ({
+      name: item.venue_name,
+      y: Number(item.total) || 0,
+      color: chartColors[i % chartColors.length]
+    }))
+  }],
+  credits: { enabled: false }
+}))
 
 function formatCurrency(amount) {
   return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 0 }).format(amount || 0)
@@ -490,7 +577,7 @@ async function loadIncomeByVenue() {
 
 async function loadAccommodationsHistory() {
   try {
-    const response = await fetch(`/api/analytics/accommodations-history?${getAnalyticsParams()}`, { credentials: 'include' })
+    const response = await fetch(`/api/analytics/accommodations-history?months=6&${getAnalyticsParams()}`, { credentials: 'include' })
     if (response.ok) {
       accommodationsHistory.value = await response.json()
     }
@@ -501,7 +588,7 @@ async function loadAccommodationsHistory() {
 
 async function loadAccommodationsForecast() {
   try {
-    const response = await fetch(`/api/analytics/accommodations-forecast?${getAnalyticsParams()}`, { credentials: 'include' })
+    const response = await fetch(`/api/analytics/accommodations-forecast?months=6&${getAnalyticsParams()}`, { credentials: 'include' })
     if (response.ok) {
       accommodationsForecast.value = await response.json()
     }
@@ -524,20 +611,30 @@ async function loadAccommodationsByVenue() {
 }
 
 async function loadPeriodData() {
-  await Promise.all([
-    loadIncomeByVenue(),
-    loadAccommodationsByVenue()
-  ])
+  loading.value = true
+  try {
+    await Promise.all([
+      loadIncomeByVenue(),
+      loadAccommodationsByVenue()
+    ])
+  } finally {
+    loading.value = false
+  }
 }
 
 async function loadAllAnalytics() {
-  await Promise.all([
-    loadIncomeSummary(),
-    loadIncomeByVenue(),
-    loadAccommodationsHistory(),
-    loadAccommodationsForecast(),
-    loadAccommodationsByVenue()
-  ])
+  loading.value = true
+  try {
+    await Promise.all([
+      loadIncomeSummary(),
+      loadIncomeByVenue(),
+      loadAccommodationsHistory(),
+      loadAccommodationsForecast(),
+      loadAccommodationsByVenue()
+    ])
+  } finally {
+    loading.value = false
+  }
 }
 
 watch(() => settingsStore.godModeViewAll, () => {
