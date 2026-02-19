@@ -208,23 +208,23 @@
         </CCard>
       </CCol>
       <CCol :md="6">
-        <CCard class="mb-4">
+        <CCard class="mb-4 h-100">
           <CCardHeader>Hospedajes por Cabaña (Lista)</CCardHeader>
-          <CCardBody>
-            <CTable v-if="accommodationsByVenue.length > 0" small hover>
-              <CTableHead>
-                <CTableRow>
-                  <CTableHeaderCell>Cabaña</CTableHeaderCell>
-                  <CTableHeaderCell class="text-end">Nº Hospedajes</CTableHeaderCell>
-                </CTableRow>
-              </CTableHead>
-              <CTableBody>
-                <CTableRow v-for="item in accommodationsByVenue" :key="item.venue_id">
-                  <CTableDataCell>{{ item.venue_name }}</CTableDataCell>
-                  <CTableDataCell class="text-end">{{ item.count }}</CTableDataCell>
-                </CTableRow>
-              </CTableBody>
-            </CTable>
+          <CCardBody class="p-2">
+            <div v-if="accommodationsByVenue.length > 0" class="cabania-category-list">
+              <div
+                v-for="(item, i) in accommodationsByVenue"
+                :key="item.venue_id"
+                class="cabania-category-row"
+              >
+                <div class="cabania-category-row__accent" :style="{ backgroundColor: chartColors[i % chartColors.length] }"></div>
+                <div class="cabania-category-row__name">{{ item.venue_name }}</div>
+                <div class="cabania-category-row__values">
+                  <span class="cabania-category-row__total">{{ item.count }}</span>
+                  <span class="cabania-category-row__count">hospedajes</span>
+                </div>
+              </div>
+            </div>
             <div v-else class="text-center text-body-secondary py-5">
               No hay datos de hospedajes disponibles
             </div>
