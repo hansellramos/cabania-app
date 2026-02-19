@@ -40,7 +40,7 @@
               <CButton color="primary" size="sm" @click="onEdit(venue)">Editar</CButton>
               <CButton color="success" size="sm" class="ms-2" @click="viewPlans(venue)">Planes</CButton>
               <CButton color="warning" size="sm" class="ms-2" @click="viewExpenses(venue)">Egresos</CButton>
-              <CButton color="warning" size="sm" variant="outline" class="ms-2" @click="createExpense(venue)">+ Egreso</CButton>
+
               <CButton color="info" size="sm" class="ms-2" @click="viewUpcoming(venue)">Próximos</CButton>
               <CButton color="dark" size="sm" class="ms-2" @click="viewChat(venue)">Chat IA</CButton>
               <CButton color="danger" size="sm" class="ms-2" @click="onDelete(venue)">Eliminar</CButton>
