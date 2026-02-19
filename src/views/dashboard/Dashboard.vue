@@ -62,64 +62,52 @@
     </div>
     <template v-else>
 
-    <CRow class="mb-4">
+    <CRow class="mb-4 g-3">
       <CCol :xs="4" :lg="2">
-        <CCard class="cabania-glass cabania-glass--danger h-100">
+        <CCard class="cabania-glass-banner cabania-glass-banner--danger h-100">
           <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsLast12 }}
-            </div>
-            <div class="cabania-glass__label small">Últimos 12M</div>
+            <div class="fs-4 fw-semibold">{{ animLast12 }}</div>
+            <div class="cabania-glass__label small">Últimos 6M</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="cabania-glass cabania-glass--warning h-100">
+        <CCard class="cabania-glass-banner cabania-glass-banner--warning h-100">
           <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsLast3 }}
-            </div>
+            <div class="fs-4 fw-semibold">{{ animLast3 }}</div>
             <div class="cabania-glass__label small">Últimos 3M</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="cabania-glass cabania-glass--info h-100">
+        <CCard class="cabania-glass-banner cabania-glass-banner--info h-100">
           <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsPreviousMonth }}
-            </div>
+            <div class="fs-4 fw-semibold">{{ animPrevMonth }}</div>
             <div class="cabania-glass__label small">Mes Anterior</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="cabania-glass cabania-glass--primary h-100">
+        <CCard class="cabania-glass-banner cabania-glass-banner--primary h-100">
           <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsThisMonth }}
-            </div>
+            <div class="fs-4 fw-semibold">{{ animThisMonth }}</div>
             <div class="cabania-glass__label small">Este Mes</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="cabania-glass cabania-glass--warning h-100">
+        <CCard class="cabania-glass-banner cabania-glass-banner--warning h-100">
           <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsNext3 }}
-            </div>
+            <div class="fs-4 fw-semibold">{{ animNext3 }}</div>
             <div class="cabania-glass__label small">Próximos 3M</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :xs="4" :lg="2">
-        <CCard class="cabania-glass cabania-glass--success h-100">
+        <CCard class="cabania-glass-banner cabania-glass-banner--success h-100">
           <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalAccommodationsNext12 }}
-            </div>
-            <div class="cabania-glass__label small">Próximos 12M</div>
+            <div class="fs-4 fw-semibold">{{ animNext12 }}</div>
+            <div class="cabania-glass__label small">Próximos 6M</div>
           </CCardBody>
         </CCard>
       </CCol>
@@ -128,7 +116,7 @@
     <CRow class="mb-4">
       <CCol :md="6">
         <CCard class="h-100">
-          <CCardHeader>Hospedajes - Últimos 12 Meses</CCardHeader>
+          <CCardHeader>Hospedajes - Últimos 6 Meses</CCardHeader>
           <CCardBody>
             <div v-if="accommodationsHistory.venues?.length > 0" style="height: 300px;">
               <highcharts :options="historyChartOptions" />
@@ -141,7 +129,7 @@
       </CCol>
       <CCol :md="6">
         <CCard class="h-100">
-          <CCardHeader>Hospedajes - Próximos 12 Meses</CCardHeader>
+          <CCardHeader>Hospedajes - Próximos 6 Meses</CCardHeader>
           <CCardBody>
             <div v-if="accommodationsForecast.venues?.length > 0" style="height: 300px;">
               <highcharts :options="forecastChartOptions" />
@@ -174,11 +162,11 @@
 
     <CRow class="mb-4 g-3">
       <CCol :sm="6" :lg="3">
-        <CCard class="cabania-glass cabania-glass--primary h-100">
+        <CCard class="cabania-glass-banner cabania-glass-banner--primary h-100">
           <CCardBody class="pb-3">
             <div class="fs-4 fw-semibold">
-              {{ formatCurrency(incomeSummary.currentMonth.total) }}
-              <span v-if="incomeSummary.percentChange !== 0" class="fs-6 fw-normal ms-2" :class="incomeSummary.percentChange >= 0 ? 'text-current' : 'text-danger'">
+              {{ animIncomeThisMonth }}
+              <span v-if="incomeSummary.percentChange !== 0" class="fs-6 fw-normal ms-2">
                 {{ incomeSummary.percentChange >= 0 ? '+' : '' }}{{ incomeSummary.percentChange }}%
               </span>
             </div>
@@ -187,21 +175,17 @@
         </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <CCard class="cabania-glass cabania-glass--info h-100">
+        <CCard class="cabania-glass-banner cabania-glass-banner--info h-100">
           <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ formatCurrency(incomeSummary.previousMonth.total) }}
-            </div>
+            <div class="fs-4 fw-semibold">{{ animIncomePrevMonth }}</div>
             <div class="cabania-glass__label">Ingresos Mes Anterior</div>
           </CCardBody>
         </CCard>
       </CCol>
       <CCol :sm="6" :lg="3">
-        <CCard class="cabania-glass cabania-glass--success h-100">
+        <CCard class="cabania-glass-banner cabania-glass-banner--success h-100">
           <CCardBody class="pb-3">
-            <div class="fs-4 fw-semibold">
-              {{ totalIncomeByVenue }}
-            </div>
+            <div class="fs-4 fw-semibold">{{ animIncomeTotal }}</div>
             <div class="cabania-glass__label">Ingresos Totales</div>
             <small class="cabania-glass__label">{{ incomeByVenue.length }} cabañas con ingresos</small>
           </CCardBody>
@@ -256,6 +240,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
+import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
@@ -340,6 +325,22 @@ const totalAccommodationsPreviousMonth = computed(() => {
   return accommodationsHistory.value.venues.reduce((sum, venue) =>
     sum + (venue.counts[venue.counts.length - 1] || 0), 0)
 })
+
+// Animated display values
+const animLast12 = useAnimatedNumber(totalAccommodationsLast12)
+const animLast3 = useAnimatedNumber(totalAccommodationsLast3)
+const animPrevMonth = useAnimatedNumber(totalAccommodationsPreviousMonth)
+const animThisMonth = useAnimatedNumber(totalAccommodationsThisMonth)
+const animNext3 = useAnimatedNumber(totalAccommodationsNext3)
+const animNext12 = useAnimatedNumber(totalAccommodationsNext12)
+
+const rawIncomeThisMonth = computed(() => incomeSummary.value.currentMonth.total || 0)
+const rawIncomePrevMonth = computed(() => incomeSummary.value.previousMonth.total || 0)
+const rawIncomeTotal = computed(() => incomeByVenue.value.reduce((sum, item) => sum + Number(item.total || 0), 0))
+
+const animIncomeThisMonth = useAnimatedNumber(rawIncomeThisMonth, { formatter: formatCurrency })
+const animIncomePrevMonth = useAnimatedNumber(rawIncomePrevMonth, { formatter: formatCurrency })
+const animIncomeTotal = useAnimatedNumber(rawIncomeTotal, { formatter: formatCurrency })
 
 const chartColors = [
   '#10b981', '#0ea5e9', '#6366f1', '#f43f5e', '#f59e0b',
@@ -511,7 +512,7 @@ async function loadIncomeByVenue() {
 
 async function loadAccommodationsHistory() {
   try {
-    const response = await fetch(`/api/analytics/accommodations-history?${getAnalyticsParams()}`, { credentials: 'include' })
+    const response = await fetch(`/api/analytics/accommodations-history?months=6&${getAnalyticsParams()}`, { credentials: 'include' })
     if (response.ok) {
       accommodationsHistory.value = await response.json()
     }
@@ -522,7 +523,7 @@ async function loadAccommodationsHistory() {
 
 async function loadAccommodationsForecast() {
   try {
-    const response = await fetch(`/api/analytics/accommodations-forecast?${getAnalyticsParams()}`, { credentials: 'include' })
+    const response = await fetch(`/api/analytics/accommodations-forecast?months=6&${getAnalyticsParams()}`, { credentials: 'include' })
     if (response.ok) {
       accommodationsForecast.value = await response.json()
     }

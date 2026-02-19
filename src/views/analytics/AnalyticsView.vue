@@ -44,7 +44,7 @@
         <CCard class="cabania-glass-banner cabania-glass-banner--success h-100">
           <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
-              {{ formatCurrency(summary.income) }}
+              {{ animIncome }}
             </div>
             <div class="cabania-glass__label">Ingresos</div>
           </CCardBody>
@@ -54,7 +54,7 @@
         <CCard class="cabania-glass-banner cabania-glass-banner--danger h-100">
           <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
-              {{ formatCurrency(summary.expenses) }}
+              {{ animExpenses }}
             </div>
             <div class="cabania-glass__label">Egresos</div>
           </CCardBody>
@@ -64,7 +64,7 @@
         <CCard class="cabania-glass-banner cabania-glass-banner--warning h-100">
           <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
-              {{ formatCurrency(summary.depositsHeld) }}
+              {{ animDeposits }}
             </div>
             <div class="cabania-glass__label">Depósitos Retenidos</div>
           </CCardBody>
@@ -74,7 +74,7 @@
         <CCard class="cabania-glass-banner cabania-glass-banner--primary h-100">
           <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
-              {{ formatCurrency(summary.profit) }}
+              {{ animProfit }}
             </div>
             <div class="cabania-glass__label">Utilidad</div>
           </CCardBody>
@@ -157,6 +157,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
+import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
@@ -190,6 +191,11 @@ const expensesByCategory = ref([])
 const loading = ref(false)
 const loadingTrend = ref(false)
 const loadingCategories = ref(false)
+
+const animIncome = useAnimatedNumber(computed(() => summary.value.income), { formatter: formatCurrency })
+const animExpenses = useAnimatedNumber(computed(() => summary.value.expenses), { formatter: formatCurrency })
+const animDeposits = useAnimatedNumber(computed(() => summary.value.depositsHeld), { formatter: formatCurrency })
+const animProfit = useAnimatedNumber(computed(() => summary.value.profit), { formatter: formatCurrency })
 
 const chartColors = [
   '#10b981', '#0ea5e9', '#6366f1', '#f43f5e', '#f59e0b',
