@@ -428,6 +428,43 @@ async function setupAuth(app) {
     }
   });
 
+  // Change password (requires auth)
+  app.post('/api/auth/change-password', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims.sub);
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: 'Contraseña actual y nueva son requeridas' });
+      }
+      if (newPassword.length < 8) {
+        return res.status(400).json({ message: 'La nueva contraseña debe tener al menos 8 caracteres' });
+      }
+
+      const user = await prisma.users.findUnique({ where: { id: userId } });
+      if (!user || !user.password_hash) {
+        return res.status(400).json({ message: 'Usuario no encontrado' });
+      }
+
+      const isValid = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!isValid) {
+        return res.status(401).json({ message: 'Contraseña actual incorrecta' });
+      }
+
+      const salt = await bcrypt.genSalt(12);
+      const hash = await bcrypt.hash(newPassword, salt);
+      await prisma.users.update({
+        where: { id: userId },
+        data: { password_hash: hash },
+      });
+
+      res.json({ message: 'Contraseña actualizada exitosamente' });
+    } catch (error) {
+      console.error('Error changing password:', error);
+      res.status(500).json({ message: 'Error al cambiar contraseña' });
+    }
+  });
+
   // Delete passkey (requires auth)
   app.delete('/api/auth/passkeys/:id', isAuthenticated, async (req, res) => {
     try {

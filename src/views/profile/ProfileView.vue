@@ -190,6 +190,81 @@
         </CCardBody>
       </CCard>
 
+      <!-- Change Password -->
+      <CCard class="mb-4">
+        <CCardHeader>
+          <strong>
+            <CIcon :icon="cilLockLocked" class="me-2" />
+            Cambiar Contraseña
+          </strong>
+        </CCardHeader>
+        <CCardBody>
+          <CAlert v-if="pwMsg.text" :color="pwMsg.color" class="py-2" :dismissible="false">
+            {{ pwMsg.text }}
+          </CAlert>
+          <div class="mb-3">
+            <CFormLabel>Contraseña actual</CFormLabel>
+            <CFormInput type="password" v-model="pwForm.current" autocomplete="current-password" />
+          </div>
+          <div class="mb-3">
+            <CFormLabel>Nueva contraseña</CFormLabel>
+            <div class="input-group">
+              <CFormInput
+                :type="showNewPw ? 'text' : 'password'"
+                v-model="pwForm.newPw"
+                autocomplete="new-password"
+              />
+              <CButton color="secondary" variant="outline" @click="showNewPw = !showNewPw" :title="showNewPw ? 'Ocultar' : 'Mostrar'">
+                <CIcon :icon="showNewPw ? cilLockUnlocked : cilLockLocked" />
+              </CButton>
+            </div>
+          </div>
+          <div class="mb-3">
+            <CFormLabel>Confirmar nueva contraseña</CFormLabel>
+            <CFormInput type="password" v-model="pwForm.confirm" autocomplete="new-password" />
+            <small v-if="pwForm.confirm && pwForm.newPw !== pwForm.confirm" class="text-danger">
+              Las contraseñas no coinciden
+            </small>
+          </div>
+
+          <!-- Random password generator -->
+          <div class="border rounded p-3 mb-3">
+            <strong class="d-block mb-2 small text-secondary">Generar contraseña aleatoria</strong>
+            <CRow class="align-items-end g-2">
+              <CCol :xs="5" :sm="4">
+                <CFormLabel class="small mb-1">Caracteres</CFormLabel>
+                <CFormInput type="number" v-model.number="pwGen.length" min="8" max="64" size="sm" />
+              </CCol>
+              <CCol :xs="7" :sm="4">
+                <CFormCheck
+                  v-model="pwGen.specialChars"
+                  label="Caracteres especiales"
+                  class="small"
+                />
+              </CCol>
+              <CCol :xs="12" :sm="4">
+                <CButton color="info" variant="outline" size="sm" class="w-100" @click="generatePassword">
+                  Generar
+                </CButton>
+              </CCol>
+            </CRow>
+          </div>
+
+          <CButton
+            color="primary"
+            class="w-100"
+            :disabled="savingPw || !pwForm.current || !pwForm.newPw || pwForm.newPw !== pwForm.confirm || pwForm.newPw.length < 8"
+            @click="handleChangePassword"
+          >
+            <CSpinner v-if="savingPw" size="sm" class="me-1" />
+            Cambiar Contraseña
+          </CButton>
+          <small v-if="pwForm.newPw && pwForm.newPw.length < 8" class="text-danger d-block mt-1">
+            Mínimo 8 caracteres
+          </small>
+        </CCardBody>
+      </CCard>
+
       <!-- Passkeys Management -->
       <CCard class="mb-4">
         <CCardHeader class="d-flex justify-content-between align-items-center">
@@ -280,10 +355,63 @@
 import { ref, computed, onMounted } from 'vue'
 import { useAuth } from '@/composables/useAuth'
 import { CIcon } from '@coreui/icons-vue'
-import { cilFingerprint } from '@coreui/icons'
+import { cilFingerprint, cilLockLocked, cilLockUnlocked } from '@coreui/icons'
 
 const { user, isLoading, isAuthenticated, login, logout, supportsPasskeys, registerPasskey, getPasskeys, deletePasskey } = useAuth()
 
+// --- Change password ---
+const pwForm = ref({ current: '', newPw: '', confirm: '' })
+const savingPw = ref(false)
+const showNewPw = ref(false)
+const pwMsg = ref({ text: '', color: 'success' })
+const pwGen = ref({ length: 16, specialChars: true })
+
+const generatePassword = () => {
+  const lower = 'abcdefghijklmnopqrstuvwxyz'
+  const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+  const digits = '0123456789'
+  const special = '!@#$%&*_+-='
+  let chars = lower + upper + digits
+  if (pwGen.value.specialChars) chars += special
+  const len = Math.max(8, Math.min(64, pwGen.value.length || 16))
+  let result = ''
+  const array = new Uint32Array(len)
+  crypto.getRandomValues(array)
+  for (let i = 0; i < len; i++) {
+    result += chars[array[i] % chars.length]
+  }
+  pwForm.value.newPw = result
+  pwForm.value.confirm = result
+  showNewPw.value = true
+}
+
+const handleChangePassword = async () => {
+  if (pwForm.value.newPw !== pwForm.value.confirm) return
+  savingPw.value = true
+  pwMsg.value = { text: '', color: 'success' }
+  try {
+    const res = await fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        currentPassword: pwForm.value.current,
+        newPassword: pwForm.value.newPw,
+      }),
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.message || 'Error al cambiar contraseña')
+    pwMsg.value = { text: 'Contraseña actualizada exitosamente', color: 'success' }
+    pwForm.value = { current: '', newPw: '', confirm: '' }
+    showNewPw.value = false
+  } catch (err) {
+    pwMsg.value = { text: err.message, color: 'danger' }
+  } finally {
+    savingPw.value = false
+  }
+}
+
+// --- Passkeys ---
 const passkeys = ref([])
 const loadingPasskeys = ref(false)
 const showRegisterModal = ref(false)
