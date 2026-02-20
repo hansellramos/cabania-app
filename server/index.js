@@ -32,13 +32,40 @@ app.use(express.json());
 async function seedDefaultMessageTemplates() {
   const defaultTemplates = [
     {
+      code: 'welcome',
+      name: 'Bienvenida post-reserva',
+      category: 'engagement',
+      content: 'Genera un mensaje de bienvenida para el cliente que acaba de oficializar su reserva. Incluye: agradecimiento por elegirnos, indicaciones de cómo llegar (usa los links de Waze y Google Maps del venue), información del depósito (monto, método de pago, estado), horario de llegada, y cualquier dato importante para su estadía. El tono debe ser cálido y emocionante.',
+      is_system: true,
+      venue_id: null,
+      sort_order: 1
+    },
+    {
+      code: 'pre_stay',
+      name: 'Recordatorio pre-estadía',
+      category: 'engagement',
+      content: 'Genera un mensaje para enviar 1 día antes de la llegada del cliente. Incluye: recordatorio de la fecha y hora de llegada, indicaciones para llegar, recordatorio del plan contratado y qué incluye, cualquier preparación que deba hacer el cliente. Tono de emoción y anticipación: "¡Ya casi es el día!"',
+      is_system: true,
+      venue_id: null,
+      sort_order: 2
+    },
+    {
+      code: 'post_stay',
+      name: 'Follow-up post-estadía',
+      category: 'engagement',
+      content: 'Genera un mensaje para enviar 1 día después de que el cliente se fue. Incluye: agradecimiento por visitarnos, invitación a seguirnos en redes sociales (Instagram del venue), pedirle que nos etiquete en sus fotos y nos comparta su experiencia, mencionar que nos encanta ver cómo nuestros clientes disfrutan. Si hay depósito pendiente de devolver, mencionar que está en proceso. Tono cálido y cercano, orientado a crear comunidad.',
+      is_system: true,
+      venue_id: null,
+      sort_order: 3
+    },
+    {
       code: 'location',
       name: '¿Cómo llegar?',
       category: 'ubicacion',
       content: 'Proporciona instrucciones de cómo llegar al venue usando la información de dirección, enlaces de Waze y Google Maps disponibles.',
       is_system: true,
       venue_id: null,
-      sort_order: 1
+      sort_order: 4
     },
     {
       code: 'wifi',
@@ -47,7 +74,7 @@ async function seedDefaultMessageTemplates() {
       content: 'Proporciona la información del WiFi: nombre de red (SSID) y contraseña.',
       is_system: true,
       venue_id: null,
-      sort_order: 2
+      sort_order: 5
     },
     {
       code: 'delivery',
@@ -56,7 +83,7 @@ async function seedDefaultMessageTemplates() {
       content: 'Proporciona información sobre servicios de domicilios cercanos disponibles.',
       is_system: true,
       venue_id: null,
-      sort_order: 3
+      sort_order: 6
     },
     {
       code: 'beer_delivery',
@@ -65,7 +92,7 @@ async function seedDefaultMessageTemplates() {
       content: 'Proporciona información sobre servicios de domicilios de cervezas disponibles.',
       is_system: true,
       venue_id: null,
-      sort_order: 4
+      sort_order: 7
     },
     {
       code: 'plans',
@@ -74,7 +101,7 @@ async function seedDefaultMessageTemplates() {
       content: 'Proporciona información detallada sobre los planes disponibles, precios, y qué incluyen.',
       is_system: true,
       venue_id: null,
-      sort_order: 5
+      sort_order: 8
     },
     {
       code: 'general_info',
@@ -83,7 +110,7 @@ async function seedDefaultMessageTemplates() {
       content: 'Proporciona información general sobre el venue, horarios, servicios y amenidades.',
       is_system: true,
       venue_id: null,
-      sort_order: 6
+      sort_order: 9
     }
   ];
 
@@ -4558,6 +4585,12 @@ Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otr
         ? await prisma.venue_plans.findUnique({ where: { id: accommodation.plan_id } })
         : null;
 
+      // Fetch deposit for this accommodation
+      const deposits = await prisma.deposits.findMany({
+        where: { accommodation_id: accommodation_id }
+      });
+      const deposit = deposits.length > 0 ? deposits[0] : null;
+
       // Build venue context
       const venueContext = llmService.buildVenueContext(venue, [], plans);
 
@@ -4599,6 +4632,16 @@ ${venueContext}
 - Niños: ${accommodation.children || 0}
 - Plan: ${accPlan?.name || 'No asignado'}
 - Precio acordado: ${accommodation.agreed_price ? `$${accommodation.agreed_price}` : 'No definido'}
+
+## Datos del Depósito
+- Monto: ${deposit ? `$${deposit.amount}` : 'No registrado'}
+- Estado: ${deposit ? ({ pending: 'Pendiente', refunded: 'Devuelto', claimed: 'Retenido' }[deposit.status] || deposit.status) : 'N/A'}
+- Método de pago: ${deposit?.payment_method || 'No especificado'}
+- Verificado: ${deposit?.verified ? 'Sí' : 'No'}
+${deposit?.status === 'refunded' ? `- Monto devuelto: $${deposit.refund_amount}\n` : ''}${deposit?.status === 'claimed' ? `- Monto retenido: $${deposit.damage_amount}\n- Motivo: ${deposit.damage_notes}\n` : ''}
+## Redes Sociales del Venue
+- Instagram: ${venue?.instagram || 'No configurado'}
+- WhatsApp: ${venue?.whatsapp || 'No configurado'}
 
 ## Instrucción del Template
 ${template.content}

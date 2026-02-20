@@ -133,6 +133,7 @@ const loadingTemplates = ref(false)
 const templateStates = reactive({})
 
 const categoryLabels = {
+  engagement: 'Engagement',
   ubicacion: 'Ubicación',
   wifi: 'WiFi',
   domicilios: 'Domicilios',
@@ -141,6 +142,7 @@ const categoryLabels = {
 }
 
 const categoryColors = {
+  engagement: 'danger',
   ubicacion: 'primary',
   wifi: 'info',
   domicilios: 'warning',
