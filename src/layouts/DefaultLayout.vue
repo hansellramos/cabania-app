@@ -4,6 +4,7 @@ import AppFooter from '@/components/AppFooter.vue'
 import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import TrialBanner from '@/components/TrialBanner.vue'
+import PasskeyBanner from '@/components/PasskeyBanner.vue'
 </script>
 
 <template>
@@ -11,6 +12,7 @@ import TrialBanner from '@/components/TrialBanner.vue'
     <AppSidebar />
     <div class="wrapper d-flex flex-column min-vh-100">
       <TrialBanner />
+      <PasskeyBanner />
       <AppHeader />
       <div class="body flex-grow-1">
         <CContainer class="px-4" lg>

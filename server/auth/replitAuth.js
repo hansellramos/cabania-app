@@ -1,11 +1,42 @@
 const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
+const WebAuthnStrategy = require('passport-fido2-webauthn');
+const SessionChallengeStore = WebAuthnStrategy.SessionChallengeStore;
+// Override origin detection so it works behind Vite proxy in local dev
+const webauthnUtils = require('passport-fido2-webauthn/lib/utils');
+webauthnUtils.originalOrigin = function(req) {
+  // Production: require explicit env var
+  if (process.env.RP_ORIGIN) return process.env.RP_ORIGIN;
+  // Dev only: derive from request (Vite proxy changes Host header)
+  if (process.env.NODE_ENV !== 'production') {
+    const proto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
+    const host = req.headers['x-forwarded-host'] || req.headers['host'];
+    return `${proto.split(',')[0].trim()}://${host}`;
+  }
+  // Fallback: should not reach here in production (RP_ORIGIN must be set)
+  return 'https://' + (req.headers['host'] || 'localhost');
+};
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const session = require('express-session');
 const connectPg = require('connect-pg-simple');
 const { prisma } = require('../db');
 
 const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
+
+// WebAuthn Relying Party config
+// Production: RP_ID and RP_ORIGIN env vars REQUIRED
+// Dev: falls back to deriving from request Host header
+const RP_NAME = 'CabanIA';
+
+function getRpId(req) {
+  if (process.env.RP_ID) return process.env.RP_ID;
+  if (process.env.NODE_ENV !== 'production') {
+    const host = req.headers['x-forwarded-host'] || req.headers['host'] || 'localhost';
+    return host.split(':')[0];
+  }
+  return req.headers['host']?.split(':')[0] || 'localhost';
+}
 
 function getSession() {
   const pgStore = connectPg(session);
@@ -64,6 +95,65 @@ async function setupAuth(app) {
         });
       } catch (error) {
         return done(error);
+      }
+    }
+  ));
+
+  // WebAuthn strategy for passkey authentication
+  const challengeStore = new SessionChallengeStore();
+
+  passport.use(new WebAuthnStrategy({
+    store: challengeStore
+  },
+    // verify callback — called during passkey login
+    async function (id, userHandle, cb) {
+      try {
+        const credential = await prisma.passkey_credentials.findUnique({
+          where: { credential_id: id },
+          include: { user: true }
+        });
+        if (!credential) {
+          return cb(null, false, { message: 'Passkey no reconocida' });
+        }
+        if (credential.user.is_locked) {
+          return cb(null, false, { message: 'Cuenta bloqueada' });
+        }
+        // Update last_used_at
+        await prisma.passkey_credentials.update({
+          where: { id: credential.id },
+          data: { last_used_at: new Date() }
+        });
+        const sessionUser = {
+          claims: { sub: credential.user.id },
+          expires_at: Math.floor(Date.now() / 1000) + SESSION_TTL,
+        };
+        return cb(null, sessionUser, credential.public_key);
+      } catch (error) {
+        return cb(error);
+      }
+    },
+    // register callback — called during passkey registration
+    // NOTE: `user` here is the WebAuthn user object from challenge options (NOT req.user)
+    // user.id = Buffer with our DB user ID, user._passkeyDisplayName = custom field
+    async function (user, id, publicKey, cb) {
+      try {
+        const userId = user.id.toString('utf-8');
+        const displayName = user._passkeyDisplayName || user.displayName || 'Passkey';
+        await prisma.passkey_credentials.create({
+          data: {
+            user_id: userId,
+            credential_id: id,
+            public_key: publicKey,
+            display_name: displayName,
+          }
+        });
+        // Return session-compatible user object
+        return cb(null, {
+          claims: { sub: userId },
+          expires_at: Math.floor(Date.now() / 1000) + SESSION_TTL,
+        });
+      } catch (error) {
+        return cb(error);
       }
     }
   ));
@@ -198,12 +288,198 @@ async function setupAuth(app) {
         }
       }
 
+      // Count passkeys for this user
+      const passkeyCount = await prisma.passkey_credentials.count({
+        where: { user_id: userId },
+      });
+
       // Exclude password_hash from response
       const { password_hash, ...userData } = user;
-      res.json({ ...userData, permissionDetails, subscription });
+      res.json({ ...userData, permissionDetails, subscription, has_passkeys: passkeyCount > 0, passkey_count: passkeyCount });
     } catch (error) {
       console.error('Error fetching user:', error);
       res.status(500).json({ message: 'Failed to fetch user' });
+    }
+  });
+
+  // --- Passkey routes ---
+
+  // Registration options (requires auth) — generates challenge + creation options
+  app.post('/api/auth/passkey/register/options', isAuthenticated, async (req, res, next) => {
+    try {
+      const userId = String(req.user.claims.sub);
+      const user = await prisma.users.findUnique({ where: { id: userId } });
+      if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
+
+      // Use the DB user ID as the WebAuthn user handle so the register callback can read it
+      const userHandle = Buffer.from(userId, 'utf-8');
+      const displayName = req.body.displayName || 'Passkey';
+      const options = {
+        rp: { id: getRpId(req), name: RP_NAME },
+        user: {
+          id: userHandle,
+          name: user.email,
+          displayName: user.first_name ? `${user.first_name} ${user.last_name || ''}`.trim() : user.email,
+          _passkeyDisplayName: displayName,
+        },
+        pubKeyCredParams: [
+          { type: 'public-key', alg: -7 },   // ES256
+          { type: 'public-key', alg: -257 },  // RS256
+        ],
+        authenticatorSelection: {
+          residentKey: 'required',
+          userVerification: 'preferred',
+        },
+        attestation: 'none',
+        timeout: 60000,
+      };
+
+      // Exclude existing credentials to prevent re-registration
+      const existing = await prisma.passkey_credentials.findMany({
+        where: { user_id: userId },
+        select: { credential_id: true },
+      });
+      if (existing.length > 0) {
+        options.excludeCredentials = existing.map((c) => ({
+          type: 'public-key',
+          id: c.credential_id,
+        }));
+      }
+
+      // The store generates its own challenge and returns it via callback
+      challengeStore.challenge(req, options, (err, challenge) => {
+        if (err) return next(err);
+        const jsonOptions = {
+          ...options,
+          user: { ...options.user, id: options.user.id.toString('base64url') },
+          challenge: challenge.toString('base64url'),
+        };
+        res.json(jsonOptions);
+      });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  // Registration (requires auth) — stores the new credential
+  app.post('/api/auth/passkey/register', isAuthenticated, (req, res, next) => {
+    passport.authenticate('webauthn', (err, user, info) => {
+      if (err) return next(err);
+      if (!user) {
+        return res.status(400).json({ message: info?.message || 'Error al registrar passkey' });
+      }
+      req.logIn(user, (err) => {
+        if (err) return next(err);
+        res.json({ message: 'Passkey registrada exitosamente' });
+      });
+    })(req, res, next);
+  });
+
+  // Login options (public) — generates challenge for assertion
+  app.post('/api/auth/passkey/login/options', (req, res, next) => {
+    const options = {
+      rpId: getRpId(req),
+      userVerification: 'preferred',
+      timeout: 60000,
+    };
+
+    // The store generates its own challenge and returns it via callback
+    challengeStore.challenge(req, options, (err, challenge) => {
+      if (err) return next(err);
+      res.json({
+        ...options,
+        challenge: challenge.toString('base64url'),
+      });
+    });
+  });
+
+  // Login with passkey (public) — verifies assertion and creates session
+  app.post('/api/auth/passkey/login', (req, res, next) => {
+    passport.authenticate('webauthn', (err, user, info) => {
+      if (err) return next(err);
+      if (!user) {
+        return res.status(401).json({ message: info?.message || 'Autenticación fallida' });
+      }
+      req.logIn(user, (err) => {
+        if (err) return next(err);
+        res.json({ message: 'OK' });
+      });
+    })(req, res, next);
+  });
+
+  // List passkeys (requires auth)
+  app.get('/api/auth/passkeys', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims.sub);
+      const passkeys = await prisma.passkey_credentials.findMany({
+        where: { user_id: userId },
+        select: {
+          id: true,
+          display_name: true,
+          created_at: true,
+          last_used_at: true,
+        },
+        orderBy: { created_at: 'desc' },
+      });
+      res.json(passkeys);
+    } catch (error) {
+      console.error('Error listing passkeys:', error);
+      res.status(500).json({ message: 'Error al listar passkeys' });
+    }
+  });
+
+  // Change password (requires auth)
+  app.post('/api/auth/change-password', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims.sub);
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: 'Contraseña actual y nueva son requeridas' });
+      }
+      if (newPassword.length < 8) {
+        return res.status(400).json({ message: 'La nueva contraseña debe tener al menos 8 caracteres' });
+      }
+
+      const user = await prisma.users.findUnique({ where: { id: userId } });
+      if (!user || !user.password_hash) {
+        return res.status(400).json({ message: 'Usuario no encontrado' });
+      }
+
+      const isValid = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!isValid) {
+        return res.status(401).json({ message: 'Contraseña actual incorrecta' });
+      }
+
+      const salt = await bcrypt.genSalt(12);
+      const hash = await bcrypt.hash(newPassword, salt);
+      await prisma.users.update({
+        where: { id: userId },
+        data: { password_hash: hash },
+      });
+
+      res.json({ message: 'Contraseña actualizada exitosamente' });
+    } catch (error) {
+      console.error('Error changing password:', error);
+      res.status(500).json({ message: 'Error al cambiar contraseña' });
+    }
+  });
+
+  // Delete passkey (requires auth)
+  app.delete('/api/auth/passkeys/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims.sub);
+      const passkey = await prisma.passkey_credentials.findFirst({
+        where: { id: req.params.id, user_id: userId },
+      });
+      if (!passkey) {
+        return res.status(404).json({ message: 'Passkey no encontrada' });
+      }
+      await prisma.passkey_credentials.delete({ where: { id: passkey.id } });
+      res.json({ message: 'Passkey eliminada' });
+    } catch (error) {
+      console.error('Error deleting passkey:', error);
+      res.status(500).json({ message: 'Error al eliminar passkey' });
     }
   });
 }

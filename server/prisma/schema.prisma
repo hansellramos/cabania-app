@@ -125,6 +125,20 @@ model users {
   profile_id     String?   @db.Uuid
   password_hash  String?   @db.VarChar(255)
   profile        profiles? @relation(fields: [profile_id], references: [id])
+  passkey_credentials passkey_credentials[]
+}
+
+model passkey_credentials {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id       String    @db.VarChar(255)
+  credential_id String    @unique
+  public_key    String
+  display_name  String?
+  created_at    DateTime  @default(now()) @db.Timestamptz(6)
+  last_used_at  DateTime? @db.Timestamptz(6)
+  user          users     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
 }
 
 model permissions {

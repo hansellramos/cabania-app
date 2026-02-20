@@ -48,3 +48,4 @@ __screenshots__/
 *.tsbuildinfo
 .eslintcache
 *.timestamp-*-*.mjs
+.vercel
