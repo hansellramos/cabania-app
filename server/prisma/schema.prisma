@@ -232,6 +232,11 @@ model venues {
   venue_info           String?
   wifi_password        String?       @db.VarChar(100)
   wifi_ssid            String?       @db.VarChar(100)
+  deposit_base_amount           Decimal?  @db.Decimal
+  deposit_max_people_included   Int?
+  deposit_per_extra_person      Decimal?  @db.Decimal
+  deposit_refund_hours          Int?
+  deposit_policy                String?
   venue_plans          venue_plans[]
 }
 
@@ -386,6 +391,8 @@ model deposits {
   venue_id         String?            @db.Uuid
   organization_id  String?            @db.Uuid
   amount           Decimal            @db.Decimal
+  calculated_amount  Decimal?         @db.Decimal
+  override_reason    String?
   status           String             @default("pending") @db.VarChar(50)
   payment_method   String?            @db.VarChar(100)
   payment_date     DateTime?          @db.Date
