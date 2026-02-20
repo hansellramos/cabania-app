@@ -2,12 +2,19 @@ const passport = require('passport');
 const LocalStrategy = require('passport-local').Strategy;
 const WebAuthnStrategy = require('passport-fido2-webauthn');
 const SessionChallengeStore = WebAuthnStrategy.SessionChallengeStore;
-// Override origin detection to use our configured RP_ORIGIN
-// The library computes origin from the request Host header, which breaks behind proxies
+// Override origin detection so it works behind Vite proxy in local dev
 const webauthnUtils = require('passport-fido2-webauthn/lib/utils');
-const _origOrigin = webauthnUtils.originalOrigin;
 webauthnUtils.originalOrigin = function(req) {
-  return (process.env.RP_ORIGIN || 'http://localhost:5173');
+  // Production: require explicit env var
+  if (process.env.RP_ORIGIN) return process.env.RP_ORIGIN;
+  // Dev only: derive from request (Vite proxy changes Host header)
+  if (process.env.NODE_ENV !== 'production') {
+    const proto = req.headers['x-forwarded-proto'] || (req.connection.encrypted ? 'https' : 'http');
+    const host = req.headers['x-forwarded-host'] || req.headers['host'];
+    return `${proto.split(',')[0].trim()}://${host}`;
+  }
+  // Fallback: should not reach here in production (RP_ORIGIN must be set)
+  return 'https://' + (req.headers['host'] || 'localhost');
 };
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
@@ -18,9 +25,18 @@ const { prisma } = require('../db');
 const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
 // WebAuthn Relying Party config
-const RP_ID = process.env.RP_ID || 'localhost';
+// Production: RP_ID and RP_ORIGIN env vars REQUIRED
+// Dev: falls back to deriving from request Host header
 const RP_NAME = 'CabanIA';
-const RP_ORIGIN = process.env.RP_ORIGIN || 'http://localhost:5173';
+
+function getRpId(req) {
+  if (process.env.RP_ID) return process.env.RP_ID;
+  if (process.env.NODE_ENV !== 'production') {
+    const host = req.headers['x-forwarded-host'] || req.headers['host'] || 'localhost';
+    return host.split(':')[0];
+  }
+  return req.headers['host']?.split(':')[0] || 'localhost';
+}
 
 function getSession() {
   const pgStore = connectPg(session);
@@ -299,7 +315,7 @@ async function setupAuth(app) {
       const userHandle = Buffer.from(userId, 'utf-8');
       const displayName = req.body.displayName || 'Passkey';
       const options = {
-        rp: { id: RP_ID, name: RP_NAME },
+        rp: { id: getRpId(req), name: RP_NAME },
         user: {
           id: userHandle,
           name: user.email,
@@ -362,7 +378,7 @@ async function setupAuth(app) {
   // Login options (public) — generates challenge for assertion
   app.post('/api/auth/passkey/login/options', (req, res, next) => {
     const options = {
-      rpId: RP_ID,
+      rpId: getRpId(req),
       userVerification: 'preferred',
       timeout: 60000,
     };
