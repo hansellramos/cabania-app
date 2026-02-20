@@ -189,16 +189,135 @@
           </div>
         </CCardBody>
       </CCard>
+
+      <!-- Passkeys Management -->
+      <CCard class="mb-4">
+        <CCardHeader class="d-flex justify-content-between align-items-center">
+          <strong>
+            <CIcon :icon="cilFingerprint" class="me-2" />
+            Passkeys
+          </strong>
+          <CButton
+            v-if="supportsPasskeys"
+            color="primary"
+            size="sm"
+            @click="showRegisterModal = true"
+          >
+            Registrar Passkey
+          </CButton>
+        </CCardHeader>
+        <CCardBody>
+          <div v-if="!supportsPasskeys" class="text-center py-3">
+            <p class="text-muted mb-0">Tu navegador no soporta passkeys.</p>
+          </div>
+
+          <div v-else-if="loadingPasskeys" class="text-center py-3">
+            <CSpinner size="sm" color="primary" />
+          </div>
+
+          <div v-else-if="passkeys.length === 0" class="text-center py-3">
+            <CIcon :icon="cilFingerprint" size="xl" class="text-secondary mb-2" />
+            <p class="text-muted mb-0">No tienes passkeys registradas.</p>
+            <p class="small text-muted">Las passkeys te permiten iniciar sesión sin contraseña usando tu huella, rostro o PIN.</p>
+          </div>
+
+          <CListGroup v-else flush>
+            <CListGroupItem
+              v-for="pk in passkeys"
+              :key="pk.id"
+              class="d-flex justify-content-between align-items-center"
+            >
+              <div>
+                <strong>{{ pk.display_name || 'Passkey' }}</strong>
+                <small class="d-block text-muted">
+                  Creada {{ formatDate(pk.created_at) }}
+                  <template v-if="pk.last_used_at">
+                    &middot; Último uso {{ formatDate(pk.last_used_at) }}
+                  </template>
+                </small>
+              </div>
+              <CButton
+                color="danger"
+                variant="ghost"
+                size="sm"
+                @click="handleDelete(pk)"
+              >
+                <CIcon icon="cil-trash" />
+              </CButton>
+            </CListGroupItem>
+          </CListGroup>
+        </CCardBody>
+      </CCard>
     </CCol>
   </CRow>
+
+  <!-- Register Passkey Modal -->
+  <CModal :visible="showRegisterModal" @close="showRegisterModal = false" alignment="center">
+    <CModalHeader>
+      <CModalTitle>Registrar Passkey</CModalTitle>
+    </CModalHeader>
+    <CModalBody>
+      <p class="text-muted">Dale un nombre a tu passkey para identificarla después.</p>
+      <CFormInput
+        v-model="passkeyName"
+        placeholder="Ej: MacBook Pro, iPhone"
+        @keyup.enter="handleRegister"
+      />
+    </CModalBody>
+    <CModalFooter>
+      <CButton color="secondary" variant="outline" @click="showRegisterModal = false">
+        Cancelar
+      </CButton>
+      <CButton color="primary" @click="handleRegister" :disabled="registeringPasskey">
+        <CSpinner v-if="registeringPasskey" size="sm" class="me-1" />
+        Registrar
+      </CButton>
+    </CModalFooter>
+  </CModal>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useAuth } from '@/composables/useAuth'
 import { CIcon } from '@coreui/icons-vue'
+import { cilFingerprint } from '@coreui/icons'
 
-const { user, isLoading, isAuthenticated, login, logout } = useAuth()
+const { user, isLoading, isAuthenticated, login, logout, supportsPasskeys, registerPasskey, getPasskeys, deletePasskey } = useAuth()
+
+const passkeys = ref([])
+const loadingPasskeys = ref(false)
+const showRegisterModal = ref(false)
+const passkeyName = ref('')
+const registeringPasskey = ref(false)
+
+const loadPasskeys = async () => {
+  loadingPasskeys.value = true
+  passkeys.value = await getPasskeys()
+  loadingPasskeys.value = false
+}
+
+const handleRegister = async () => {
+  registeringPasskey.value = true
+  const success = await registerPasskey(passkeyName.value || 'Passkey')
+  registeringPasskey.value = false
+  if (success) {
+    showRegisterModal.value = false
+    passkeyName.value = ''
+    await loadPasskeys()
+  }
+}
+
+const handleDelete = async (pk) => {
+  if (!confirm(`¿Eliminar la passkey "${pk.display_name || 'Passkey'}"?`)) return
+  await deletePasskey(pk.id)
+  await loadPasskeys()
+}
+
+onMounted(() => {
+  if (supportsPasskeys.value) {
+    loadPasskeys()
+  }
+})
 
 const userInitials = computed(() => {
   if (!user.value) return '?'

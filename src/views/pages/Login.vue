@@ -97,6 +97,25 @@
           <span v-if="submitting" class="cabania-spinner cabania-spinner--sm"></span>
           Iniciar sesión
         </button>
+
+        <template v-if="supportsPasskeys">
+          <div class="cabania-divider">
+            <span>o</span>
+          </div>
+          <button
+            type="button"
+            class="cabania-btn cabania-btn--passkey"
+            :disabled="submitting"
+            @click="handlePasskeyLogin"
+          >
+            <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
+              <path d="M12 2C9.243 2 7 4.243 7 7s2.243 5 5 5 5-2.243 5-5-2.243-5-5-5zm0 8c-1.654 0-3-1.346-3-3s1.346-3 3-3 3 1.346 3 3-1.346 3-3 3z" fill="currentColor"/>
+              <path d="M15.71 12.71A5.97 5.97 0 0 1 12 14a5.97 5.97 0 0 1-3.71-1.29C5.24 13.59 3 16.18 3 19.25V20a1 1 0 0 0 1 1h9" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+              <path d="M18 15v2m0 4v.01M18 24a5 5 0 1 0 0-10 5 5 0 0 0 0 10z" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+            </svg>
+            Iniciar con Passkey
+          </button>
+        </template>
       </form>
     </div>
   </div>
@@ -109,7 +128,7 @@ import { useAuth } from '@/composables/useAuth';
 
 const THEME_KEY = 'coreui-free-vue-admin-template-theme';
 const router = useRouter();
-const { user, isAuthenticated, isLoading, login, error } = useAuth();
+const { user, isAuthenticated, isLoading, login, loginWithPasskey, supportsPasskeys, error } = useAuth();
 
 const email = ref('');
 const password = ref('');
@@ -158,6 +177,15 @@ const goToDashboard = () => {
 const handleLogin = async () => {
   submitting.value = true;
   const success = await login(email.value, password.value);
+  submitting.value = false;
+  if (success) {
+    router.push('/');
+  }
+};
+
+const handlePasskeyLogin = async () => {
+  submitting.value = true;
+  const success = await loginWithPasskey();
   submitting.value = false;
   if (success) {
     router.push('/');
@@ -476,6 +504,37 @@ const handleLogin = async () => {
   font-size: 1.25rem;
   cursor: pointer;
   line-height: 1;
+}
+
+/* --- Divider --- */
+.cabania-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 1.25rem 0;
+  color: var(--cl-text-muted);
+  font-size: 0.8rem;
+}
+
+.cabania-divider::before,
+.cabania-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--cl-input-border);
+}
+
+/* --- Passkey button --- */
+.cabania-btn--passkey {
+  background: var(--cl-input-bg);
+  color: var(--cl-text);
+  border: 1px solid var(--cl-input-border);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.cabania-btn--passkey:hover:not(:disabled) {
+  border-color: rgba(14, 165, 233, 0.4);
 }
 
 /* --- Spinner --- */
