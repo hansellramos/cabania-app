@@ -554,6 +554,12 @@ const routes = [
         meta: { breadcrumb: 'Análisis Financiero' },
       },
       {
+        path: '/admin/ai-usage',
+        name: 'AIUsage',
+        component: () => import('@/views/analytics/AIUsageView.vue'),
+        meta: { breadcrumb: 'Uso de IA' },
+      },
+      {
         path: '/business/estimates',
         name: 'EstimatesList',
         component: () => import('@/views/estimates/EstimatesListView.vue'),

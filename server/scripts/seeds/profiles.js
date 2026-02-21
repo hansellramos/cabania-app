@@ -20,6 +20,7 @@ const data = [
       'payments:view', 'payments:create', 'payments:edit', 'payments:delete', 'payments:verify',
       'deposits:view', 'deposits:create', 'deposits:edit', 'deposits:delete',
       'contacts:view', 'contacts:create', 'contacts:edit', 'contacts:delete',
+      'ai-usage:view',
     ],
     is_system: true,
   },
