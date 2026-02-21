@@ -4617,6 +4617,12 @@ Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otr
         ? await prisma.venue_plans.findUnique({ where: { id: accommodation.plan_id } })
         : null;
 
+      // Fetch deposit for this accommodation
+      const deposits = await prisma.deposits.findMany({
+        where: { accommodation_id: accommodation_id }
+      });
+      const deposit = deposits.length > 0 ? deposits[0] : null;
+
       // Build venue context
       const venueContext = llmService.buildVenueContext(venue, [], plans);
 
@@ -4658,6 +4664,17 @@ ${venueContext}
 - Niños: ${accommodation.children || 0}
 - Plan: ${accPlan?.name || 'No asignado'}
 - Precio acordado: ${accommodation.agreed_price ? `$${accommodation.agreed_price}` : 'No definido'}
+${deposit || venue.deposit_base_amount != null ? `
+## Depósito de Garantía${deposit ? `
+- Monto: $${deposit.amount}
+- Estado: ${deposit.status === 'pending' ? 'Pendiente' : deposit.status === 'refunded' ? 'Devuelto' : deposit.status === 'claimed' ? 'Retenido' : deposit.status}
+- Verificado: ${deposit.verified ? 'Sí' : 'No'}
+- Método de pago: ${deposit.payment_method || 'No especificado'}
+- Referencia: ${deposit.reference || 'No especificada'}` : '- No hay depósito registrado aún'}${venue.deposit_base_amount != null ? `
+- Monto base según reglas: $${venue.deposit_base_amount} (hasta ${venue.deposit_max_people_included || 0} personas)
+- Por persona adicional: $${venue.deposit_per_extra_person || 0}
+- Devolución en: ${venue.deposit_refund_hours || 'No definido'} horas hábiles${venue.deposit_policy ? `\n- Política: ${venue.deposit_policy}` : ''}` : ''}` : `
+IMPORTANTE: Este venue NO tiene reglas de depósito configuradas. NO menciones depósitos, garantías ni montos de depósito en el mensaje bajo ninguna circunstancia.`}
 
 ## Instrucción del Template
 ${template.content}
