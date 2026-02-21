@@ -410,9 +410,16 @@ async function startServer() {
 
   app.put('/api/venues/:id', isAuthenticated, async (req, res) => {
     try {
+      const data = { ...req.body };
+      if (data.deposit_max_people_included !== undefined) {
+        data.deposit_max_people_included = data.deposit_max_people_included ? parseInt(data.deposit_max_people_included, 10) : null;
+      }
+      if (data.deposit_refund_hours !== undefined) {
+        data.deposit_refund_hours = data.deposit_refund_hours ? parseInt(data.deposit_refund_hours, 10) : null;
+      }
       const venue = await prisma.venues.update({
         where: { id: req.params.id },
-        data: req.body
+        data
       });
       res.json(venue);
     } catch (error) {
