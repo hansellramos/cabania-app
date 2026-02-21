@@ -10,6 +10,39 @@ const { setupAuth, isAuthenticated } = require('./auth/replitAuth');
 const { loadUserPermissions, hasPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
 const llmService = require('./llm-service');
 
+// AI audit logging helper
+async function logAICall(data) {
+  try {
+    const systemPrompt = data.system_prompt || '';
+    const userPrompt = data.user_prompt || '';
+    const responseContent = data.response_content || '';
+    await prisma.ai_audit_logs.create({
+      data: {
+        venue_id: data.venue_id || null,
+        feature: data.feature,
+        provider_code: data.provider_code,
+        model: data.model,
+        system_prompt: systemPrompt.substring(0, 50000),
+        user_prompt: userPrompt.substring(0, 50000),
+        response_content: responseContent.substring(0, 50000),
+        input_tokens: data.input_tokens || null,
+        output_tokens: data.output_tokens || null,
+        response_time_ms: data.response_time_ms || null,
+        request_size_bytes: Buffer.byteLength(systemPrompt + userPrompt, 'utf8'),
+        response_size_bytes: Buffer.byteLength(responseContent, 'utf8'),
+        cost_estimate: data.cost_estimate || null,
+        user_id: data.user_id || null,
+        accommodation_id: data.accommodation_id || null,
+        conversation_id: data.conversation_id || null,
+        error: data.error || null,
+        metadata: data.metadata || null
+      }
+    });
+  } catch (err) {
+    console.error('[ai-audit] Error logging AI call:', err.message);
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -3283,7 +3316,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Se requiere la URL de la imagen' });
       }
 
-      const { model, generateObject, z } = await getAIModelForReceipt('[analyze-receipt]');
+      const { model, generateObject, z, modelConfig: expModelConfig, providerCode: expProviderCode } = await getAIModelForReceipt('[analyze-receipt]');
       const { base64Image, mediaType } = await fetchReceiptImage(imageUrl, '[analyze-receipt]');
 
       // Fetch existing providers for matching
@@ -3383,7 +3416,22 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         }
       }
 
-      console.log(`[analyze-receipt] Done in ${Date.now() - startTime}ms (AI: ${Date.now() - aiStartTime}ms)`, JSON.stringify(data));
+      const expAiTime = Date.now() - aiStartTime;
+
+      logAICall({
+        feature: 'expense_receipt_analysis',
+        provider_code: expProviderCode,
+        model: expModelConfig?.model || expProviderCode,
+        user_prompt: prompt,
+        response_content: JSON.stringify(data),
+        input_tokens: result.usage?.promptTokens || result.usage?.prompt_tokens,
+        output_tokens: result.usage?.completionTokens || result.usage?.completion_tokens,
+        response_time_ms: expAiTime,
+        user_id: req.user?.id,
+        metadata: { organization_id }
+      });
+
+      console.log(`[analyze-receipt] Done in ${Date.now() - startTime}ms (AI: ${expAiTime}ms)`, JSON.stringify(data));
       res.json({ success: true, data });
     } catch (error) {
       console.error(`[analyze-receipt] Error after ${Date.now() - startTime}ms:`, error);
@@ -4440,6 +4488,282 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
   });
 
   // ==========================================
+  // AI Usage Analytics Endpoints
+  // ==========================================
+
+  app.get('/api/analytics/ai-usage', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, period, viewAll } = req.query;
+      const viewAllFlag = viewAll === 'true';
+
+      // Determine accessible venue IDs via org filter
+      let venueFilter = undefined;
+      if (venue_id) {
+        venueFilter = venue_id;
+      } else {
+        let accessibleOrgIds = null;
+        if (req.user) {
+          const userId = String(req.user.claims?.sub);
+          const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+          if (viewAllFlag && currentUser?.is_super_admin) {
+            accessibleOrgIds = null;
+          } else if (currentUser?.is_super_admin) {
+            const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+            accessibleOrgIds = userOrgs.map(uo => uo.organization_id);
+          } else {
+            accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+          }
+        }
+        if (accessibleOrgIds !== null && accessibleOrgIds.length > 0) {
+          const accessibleVenues = await prisma.venues.findMany({
+            where: { organization: { in: accessibleOrgIds } },
+            select: { id: true }
+          });
+          venueFilter = { in: accessibleVenues.map(v => v.id) };
+        }
+      }
+
+      // Date range
+      const range = calculateDateRange(period || 'last_6_months');
+      const dateWhere = { created_at: { gte: range.startDate, lte: range.endDate } };
+
+      const where = { ...dateWhere };
+      if (venueFilter) {
+        where.venue_id = typeof venueFilter === 'string' ? venueFilter : venueFilter;
+      }
+
+      // Aggregates
+      const agg = await prisma.ai_audit_logs.aggregate({
+        where,
+        _sum: { input_tokens: true, output_tokens: true, cost_estimate: true },
+        _avg: { response_time_ms: true },
+        _count: true
+      });
+
+      // Group by feature
+      const allLogs = await prisma.ai_audit_logs.findMany({
+        where,
+        select: { feature: true, input_tokens: true, output_tokens: true, cost_estimate: true }
+      });
+      const featureMap = {};
+      for (const log of allLogs) {
+        if (!featureMap[log.feature]) {
+          featureMap[log.feature] = { feature: log.feature, count: 0, tokens: 0, cost: 0 };
+        }
+        featureMap[log.feature].count++;
+        featureMap[log.feature].tokens += (log.input_tokens || 0) + (log.output_tokens || 0);
+        featureMap[log.feature].cost += parseFloat(log.cost_estimate || 0);
+      }
+
+      res.json({
+        totalCalls: agg._count,
+        totalTokens: (agg._sum.input_tokens || 0) + (agg._sum.output_tokens || 0),
+        totalCost: parseFloat(agg._sum.cost_estimate || 0),
+        avgResponseTime: Math.round(agg._avg.response_time_ms || 0),
+        byFeature: Object.values(featureMap)
+      });
+    } catch (error) {
+      console.error('[ai-usage] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/analytics/ai-usage-by-venue', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, period, viewAll } = req.query;
+      const viewAllFlag = viewAll === 'true';
+
+      // Determine accessible venue IDs
+      let venueFilter = undefined;
+      if (venue_id) {
+        venueFilter = venue_id;
+      } else {
+        let accessibleOrgIds = null;
+        if (req.user) {
+          const userId = String(req.user.claims?.sub);
+          const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+          if (viewAllFlag && currentUser?.is_super_admin) {
+            accessibleOrgIds = null;
+          } else if (currentUser?.is_super_admin) {
+            const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+            accessibleOrgIds = userOrgs.map(uo => uo.organization_id);
+          } else {
+            accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+          }
+        }
+        if (accessibleOrgIds !== null && accessibleOrgIds.length > 0) {
+          const accessibleVenues = await prisma.venues.findMany({
+            where: { organization: { in: accessibleOrgIds } },
+            select: { id: true }
+          });
+          venueFilter = { in: accessibleVenues.map(v => v.id) };
+        }
+      }
+
+      // Calculate months
+      const now = new Date();
+      let numMonths = 6;
+      switch (period) {
+        case 'last_12_months': numMonths = 12; break;
+        case 'last_6_months': numMonths = 6; break;
+        case 'last_3_months': numMonths = 3; break;
+        case 'this_month': numMonths = 1; break;
+        case 'this_quarter': numMonths = Math.min(now.getMonth() - Math.floor(now.getMonth() / 3) * 3 + 1, 3); break;
+        case 'this_year': numMonths = now.getMonth() + 1; break;
+        default: numMonths = 6;
+      }
+
+      const result = [];
+      const allVenueIds = new Set();
+
+      for (let i = numMonths - 1; i >= 0; i--) {
+        const startDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const endDate = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59, 999);
+
+        const where = { created_at: { gte: startDate, lte: endDate } };
+        if (venueFilter) {
+          where.venue_id = typeof venueFilter === 'string' ? venueFilter : venueFilter;
+        }
+
+        const logs = await prisma.ai_audit_logs.findMany({
+          where,
+          select: { venue_id: true, input_tokens: true, output_tokens: true, cost_estimate: true }
+        });
+
+        const venueMap = {};
+        for (const log of logs) {
+          const vid = log.venue_id || '__system__';
+          if (vid !== '__system__') allVenueIds.add(vid);
+          if (!venueMap[vid]) {
+            venueMap[vid] = { venue_id: vid, calls: 0, tokens: 0, cost: 0 };
+          }
+          venueMap[vid].calls++;
+          venueMap[vid].tokens += (log.input_tokens || 0) + (log.output_tokens || 0);
+          venueMap[vid].cost += parseFloat(log.cost_estimate || 0);
+        }
+
+        result.push({
+          month: startDate.toISOString().slice(0, 7),
+          monthName: startDate.toLocaleString('es-CO', { month: 'short', year: 'numeric' }),
+          venues: Object.values(venueMap)
+        });
+      }
+
+      // Lookup venue names
+      const venueNames = {};
+      if (allVenueIds.size > 0) {
+        const venueRecords = await prisma.venues.findMany({
+          where: { id: { in: [...allVenueIds] } },
+          select: { id: true, name: true }
+        });
+        for (const v of venueRecords) {
+          venueNames[v.id] = v.name;
+        }
+      }
+
+      // Enrich with names
+      for (const month of result) {
+        for (const v of month.venues) {
+          v.venue_name = v.venue_id === '__system__' ? 'Sistema' : (venueNames[v.venue_id] || 'Desconocido');
+        }
+      }
+
+      res.json(result);
+    } catch (error) {
+      console.error('[ai-usage-by-venue] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/analytics/ai-usage-detail', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, period, viewAll, page: pageStr, limit: limitStr } = req.query;
+      const viewAllFlag = viewAll === 'true';
+      const page = Math.max(1, parseInt(pageStr) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(limitStr) || 50));
+
+      // Determine accessible venue IDs
+      let venueFilter = undefined;
+      if (venue_id) {
+        venueFilter = venue_id;
+      } else {
+        let accessibleOrgIds = null;
+        if (req.user) {
+          const userId = String(req.user.claims?.sub);
+          const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+          if (viewAllFlag && currentUser?.is_super_admin) {
+            accessibleOrgIds = null;
+          } else if (currentUser?.is_super_admin) {
+            const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+            accessibleOrgIds = userOrgs.map(uo => uo.organization_id);
+          } else {
+            accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+          }
+        }
+        if (accessibleOrgIds !== null && accessibleOrgIds.length > 0) {
+          const accessibleVenues = await prisma.venues.findMany({
+            where: { organization: { in: accessibleOrgIds } },
+            select: { id: true }
+          });
+          venueFilter = { in: accessibleVenues.map(v => v.id) };
+        }
+      }
+
+      // Date range
+      const range = calculateDateRange(period || 'last_6_months');
+      const where = { created_at: { gte: range.startDate, lte: range.endDate } };
+      if (venueFilter) {
+        where.venue_id = typeof venueFilter === 'string' ? venueFilter : venueFilter;
+      }
+
+      const total = await prisma.ai_audit_logs.count({ where });
+      const logs = await prisma.ai_audit_logs.findMany({
+        where,
+        select: {
+          id: true, created_at: true, feature: true, venue_id: true,
+          model: true, input_tokens: true, output_tokens: true,
+          response_time_ms: true, cost_estimate: true, error: true
+        },
+        orderBy: { created_at: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit
+      });
+
+      // Lookup venue names
+      const venueIds = [...new Set(logs.map(l => l.venue_id).filter(Boolean))];
+      const venueNames = {};
+      if (venueIds.length > 0) {
+        const venueRecords = await prisma.venues.findMany({
+          where: { id: { in: venueIds } },
+          select: { id: true, name: true }
+        });
+        for (const v of venueRecords) {
+          venueNames[v.id] = v.name;
+        }
+      }
+
+      const data = logs.map(l => ({
+        ...l,
+        cost_estimate: parseFloat(l.cost_estimate || 0),
+        venue_name: l.venue_id ? (venueNames[l.venue_id] || 'Desconocido') : 'Sistema'
+      }));
+
+      res.json({
+        data,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      });
+    } catch (error) {
+      console.error('[ai-usage-detail] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==========================================
   // AI Receipt Helpers (shared by payment and expense extraction)
   // ==========================================
 
@@ -4502,8 +4826,17 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         return res.status(400).json({ error: 'Se requiere la URL de la imagen' });
       }
 
-      const { model, generateObject, z, modelConfig } = await getAIModelForReceipt();
+      const { model, generateObject, z, modelConfig, providerCode: receiptProviderCode } = await getAIModelForReceipt();
       const { base64Image, mediaType } = await fetchReceiptImage(imageUrl);
+
+      const receiptPrompt = `Analiza esta imagen de un comprobante de pago o transferencia bancaria y extrae la siguiente información:
+
+1. Monto/valor de la transferencia (solo el número, sin símbolos de moneda)
+2. Número de referencia o transacción (puede estar etiquetado como "Referencia", "No. Transacción", "ID", "Comprobante", etc.)
+3. Fecha de la transferencia (en formato YYYY-MM-DD si es posible)
+
+Si algún dato no está visible o no se puede determinar, devuelve null para ese campo.
+Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otras entidades colombianas.`;
 
       const aiStartTime = Date.now();
       const result = await generateObject({
@@ -4512,14 +4845,7 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
           role: 'user',
           content: [
             { type: 'image', image: `data:${mediaType};base64,${base64Image}` },
-            { type: 'text', text: `Analiza esta imagen de un comprobante de pago o transferencia bancaria y extrae la siguiente información:
-
-1. Monto/valor de la transferencia (solo el número, sin símbolos de moneda)
-2. Número de referencia o transacción (puede estar etiquetado como "Referencia", "No. Transacción", "ID", "Comprobante", etc.)
-3. Fecha de la transferencia (en formato YYYY-MM-DD si es posible)
-
-Si algún dato no está visible o no se puede determinar, devuelve null para ese campo.
-Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otras entidades colombianas.` }
+            { type: 'text', text: receiptPrompt }
           ]
         }],
         schema: z.object({
@@ -4528,8 +4854,21 @@ Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otr
           payment_date: z.string().nullable().describe('Fecha de la transferencia en formato YYYY-MM-DD')
         })
       });
+      const aiTime = Date.now() - aiStartTime;
 
-      console.log(`[extract-receipt] Done in ${Date.now() - startTime}ms (AI: ${Date.now() - aiStartTime}ms)`, JSON.stringify(result.object));
+      logAICall({
+        feature: 'payment_receipt_extraction',
+        provider_code: receiptProviderCode,
+        model: modelConfig?.model || receiptProviderCode,
+        user_prompt: receiptPrompt,
+        response_content: JSON.stringify(result.object),
+        input_tokens: result.usage?.promptTokens || result.usage?.prompt_tokens,
+        output_tokens: result.usage?.completionTokens || result.usage?.completion_tokens,
+        response_time_ms: aiTime,
+        user_id: req.user?.id
+      });
+
+      console.log(`[extract-receipt] Done in ${Date.now() - startTime}ms (AI: ${aiTime}ms)`, JSON.stringify(result.object));
       res.json({ success: true, data: result.object });
     } catch (error) {
       console.error(`[extract-receipt] Error after ${Date.now() - startTime}ms:`, error);
@@ -4758,6 +5097,22 @@ REGLAS:
         model: modelOverride
       });
       const llmTime = Date.now() - llmStart;
+
+      logAICall({
+        venue_id: venue?.id,
+        feature: 'message_generation',
+        provider_code: providerCode,
+        model: result.model || modelOverride || providerCode,
+        system_prompt: systemPrompt,
+        user_prompt: 'Genera el mensaje.',
+        response_content: result.content,
+        input_tokens: result.usage?.prompt_tokens,
+        output_tokens: result.usage?.completion_tokens,
+        response_time_ms: llmTime,
+        user_id: req.user?.id,
+        accommodation_id,
+        metadata: { template_id, template_code: template.code }
+      });
 
       res.json({
         message: result.content,
@@ -5234,6 +5589,9 @@ REGLAS:
       llmMessages.push({ role: 'user', content: userMessage });
       
       // Call LLM using configured model with tools
+      const chatLlmStart = Date.now();
+      let chatTotalInputTokens = 0;
+      let chatTotalOutputTokens = 0;
       let llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
         maxTokens: 1024,
         temperature: 0.7,
@@ -5668,7 +6026,26 @@ REGLAS:
         where: { id: conversation.id },
         data: { updated_at: new Date() }
       });
-      
+
+      // Audit log for chat
+      chatTotalInputTokens += llmResponse.usage?.prompt_tokens || 0;
+      chatTotalOutputTokens += llmResponse.usage?.completion_tokens || 0;
+      logAICall({
+        venue_id,
+        feature: 'chat',
+        provider_code: chatProviderCode,
+        model: llmResponse.model || chatProviderCode,
+        system_prompt: systemPrompt,
+        user_prompt: userMessage,
+        response_content: llmResponse.content,
+        input_tokens: chatTotalInputTokens,
+        output_tokens: chatTotalOutputTokens,
+        response_time_ms: Date.now() - chatLlmStart,
+        user_id: req.user?.id,
+        conversation_id: conversation.id,
+        metadata: { tools_used: toolsUsed, source }
+      });
+
       res.json({
         conversation_id: conversation.id,
         message: llmResponse.content,

@@ -185,6 +185,12 @@ export default [
   },
   {
     component: 'CNavItem',
+    name: 'Uso de IA',
+    to: '/admin/ai-usage',
+    icon: 'cil-chart',
+  },
+  {
+    component: 'CNavItem',
     name: 'Configuración',
     to: '/settings',
     icon: 'cil-settings',

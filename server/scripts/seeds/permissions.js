@@ -33,6 +33,7 @@ const data = [
   { code: 'venues:delete', name: 'Eliminar venues', description: 'Permite eliminar venues' },
   { code: 'venues:edit', name: 'Editar venues', description: 'Permite editar venues' },
   { code: 'venues:view', name: 'Ver venues', description: 'Permite ver venues de organizaciones asignadas' },
+  { code: 'ai-usage:view', name: 'Ver uso de IA', description: 'Permite ver estadísticas y registros de uso de IA' },
 ];
 
 async function seed(prisma) {
