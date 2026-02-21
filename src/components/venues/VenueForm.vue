@@ -173,6 +173,78 @@
       />
       <div class="form-text">Información sobre domicilios y servicios de entrega para los huéspedes.</div>
     </div>
+    <div class="mb-4">
+      <div
+        class="d-flex align-items-center justify-content-between p-2 border rounded cursor-pointer"
+        style="cursor: pointer;"
+        @click="showDepositRules = !showDepositRules"
+      >
+        <h6 class="mb-0">Reglas de Depósito</h6>
+        <CIcon :name="showDepositRules ? 'cil-chevron-top' : 'cil-chevron-bottom'" />
+      </div>
+      <div v-if="showDepositRules" class="border border-top-0 rounded-bottom p-3">
+        <CRow class="mb-3">
+          <CCol :md="6">
+            <CFormLabel for="depositBaseAmount">Monto Base</CFormLabel>
+            <CFormInput
+              id="depositBaseAmount"
+              v-model="form.deposit_base_amount"
+              type="number"
+              placeholder="Ej: 200000"
+            />
+            <div class="form-text">Monto base del depósito de garantía</div>
+          </CCol>
+          <CCol :md="6">
+            <CFormLabel for="depositMaxPeople">Personas Incluidas</CFormLabel>
+            <CFormInput
+              id="depositMaxPeople"
+              v-model="form.deposit_max_people_included"
+              type="number"
+              placeholder="Ej: 20"
+            />
+            <div class="form-text">Número máximo de personas incluidas en el monto base</div>
+          </CCol>
+        </CRow>
+        <CRow class="mb-3">
+          <CCol :md="6">
+            <CFormLabel for="depositPerExtra">Costo por Persona Extra</CFormLabel>
+            <CFormInput
+              id="depositPerExtra"
+              v-model="form.deposit_per_extra_person"
+              type="number"
+              placeholder="Ej: 5000"
+            />
+            <div class="form-text">Monto adicional por cada persona que exceda el límite</div>
+          </CCol>
+          <CCol :md="6">
+            <CFormLabel for="depositRefundHours">Horas para Devolución</CFormLabel>
+            <CFormInput
+              id="depositRefundHours"
+              v-model="form.deposit_refund_hours"
+              type="number"
+              placeholder="Ej: 24"
+            />
+            <div class="form-text">Horas hábiles para devolución del depósito</div>
+          </CCol>
+        </CRow>
+        <div class="mb-3">
+          <CFormLabel for="depositPolicy">Política de Depósito</CFormLabel>
+          <CFormTextarea
+            id="depositPolicy"
+            v-model="form.deposit_policy"
+            rows="3"
+            placeholder="Describe la política de depósitos de esta cabaña..."
+          />
+        </div>
+        <div v-if="form.deposit_base_amount" class="alert alert-info mb-0">
+          <strong>Vista previa:</strong>
+          Para {{ form.deposit_max_people_included || 0 }} personas: ${{ Number(form.deposit_base_amount || 0).toLocaleString('es-CO') }}.
+          <span v-if="form.deposit_per_extra_person">
+            Cada persona adicional: +${{ Number(form.deposit_per_extra_person).toLocaleString('es-CO') }}
+          </span>
+        </div>
+      </div>
+    </div>
     <div class="mb-3">
       <CFormCheck
         id="venueIsPublic"
@@ -188,6 +260,7 @@
 
 <script setup>
 import { ref, watch, onMounted, computed } from 'vue'
+import { CIcon } from '@coreui/icons-vue'
 import mapboxgl from 'mapbox-gl'
 import MapboxGeocoder from '@mapbox/mapbox-gl-geocoder'
 import 'mapbox-gl/dist/mapbox-gl.css'
@@ -212,6 +285,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'submit', 'cancel'])
 
 const form = ref({ ...props.modelValue, instagram: '', organization: '' })
+const showDepositRules = ref(false)
 const organizations = ref([])
 const mapContainer = ref(null)
 const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN
@@ -245,6 +319,10 @@ watch(
   (val) => {
     if (val) {
       form.value = { ...val }
+      // Auto-expand deposit rules section if rules are configured
+      if (val.deposit_base_amount) {
+        showDepositRules.value = true
+      }
       // Store original location only once when data first loads in edit mode
       if (props.isEdit && originalLocation.value.latitude === null && val.latitude && val.longitude) {
         originalLocation.value = { latitude: val.latitude, longitude: val.longitude }

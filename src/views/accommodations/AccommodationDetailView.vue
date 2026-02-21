@@ -213,6 +213,12 @@
                   <CCol :md="3">
                     <h6 class="text-muted mb-1">Monto</h6>
                     <p class="fs-4 fw-bold text-primary mb-0">{{ formatCurrency(deposit.amount) }}</p>
+                    <div v-if="deposit.calculated_amount && parseFloat(deposit.amount) !== parseFloat(deposit.calculated_amount)">
+                      <s class="text-muted small">Calculado: {{ formatCurrency(deposit.calculated_amount) }}</s>
+                      <div v-if="deposit.override_reason" class="text-muted small">
+                        Razón: {{ deposit.override_reason }}
+                      </div>
+                    </div>
                   </CCol>
                   <CCol :md="3">
                     <h6 class="text-muted mb-1">Estado</h6>

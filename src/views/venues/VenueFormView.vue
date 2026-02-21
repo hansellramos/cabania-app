@@ -317,6 +317,11 @@ async function handleSubmit(data) {
   if (venueData.latitude === '') venueData.latitude = null;
   if (venueData.longitude === '') venueData.longitude = null;
 
+  // Remove relation/read-only fields that Prisma doesn't accept on update
+  delete venueData.id;
+  delete venueData.created_at;
+  delete venueData.venue_plans;
+
   if (isEdit.value) {
     await updateVenue(route.params.id, venueData)
   } else {

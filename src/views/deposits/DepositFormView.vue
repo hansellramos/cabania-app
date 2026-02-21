@@ -126,16 +126,54 @@
                 </div>
               </CCol>
             </CRow>
-            <CRow class="mb-3">
+            <CRow class="mb-3" v-if="calculatedDeposit !== null">
+              <CCol :md="6">
+                <CFormLabel>Depósito Calculado</CFormLabel>
+                <div class="form-control-plaintext">
+                  <span class="fs-4 fw-bold text-primary">{{ formatCurrency(calculatedDeposit) }}</span>
+                  <div class="small text-muted" v-if="venueRules">
+                    {{ selectedAccommodationData?.adults || 0 }} personas
+                    (hasta {{ venueRules.max_people_included }} incl.)
+                    <span v-if="venueRules.refund_hours"> · Devolución: {{ venueRules.refund_hours }}h hábiles</span>
+                  </div>
+                </div>
+              </CCol>
               <CCol :md="6">
                 <CFormLabel>Monto del Depósito *</CFormLabel>
-                <CFormInput 
-                  type="number" 
-                  v-model="form.amount" 
+                <CFormInput
+                  type="number"
+                  v-model="form.amount"
+                  placeholder="Ej: 200000"
+                  required
+                />
+                <div v-if="isOverridden" class="small mt-1" :class="overridePercentClass">
+                  {{ overridePercentText }}
+                </div>
+              </CCol>
+            </CRow>
+            <CRow class="mb-3" v-else>
+              <CCol :md="6">
+                <CFormLabel>Monto del Depósito *</CFormLabel>
+                <CFormInput
+                  type="number"
+                  v-model="form.amount"
                   placeholder="Ej: 200000"
                   required
                 />
               </CCol>
+            </CRow>
+            <CRow class="mb-3" v-if="isOverridden">
+              <CCol :md="12">
+                <CFormLabel>Razón del Ajuste *</CFormLabel>
+                <CFormInput
+                  v-model="form.override_reason"
+                  placeholder="Ej: Cliente frecuente, descuento especial"
+                  required
+                />
+                <div class="form-text">Obligatorio cuando el monto difiere del calculado</div>
+              </CCol>
+            </CRow>
+            <CRow class="mb-3">
               <CCol :md="6">
                 <CFormLabel>Método de Pago</CFormLabel>
                 <CFormSelect v-model="form.payment_method">
@@ -227,7 +265,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 
@@ -254,6 +292,10 @@ const extractingData = ref(false)
 const extractionError = ref('')
 const extractionSuccess = ref(false)
 
+const calculatedDeposit = ref(null)
+const venueRules = ref(null)
+const selectedAccommodationData = ref(null)
+
 const form = ref({
   accommodation_id: '',
   amount: '',
@@ -261,8 +303,38 @@ const form = ref({
   payment_date: new Date().toISOString().split('T')[0],
   reference: '',
   notes: '',
-  receipt_url: ''
+  receipt_url: '',
+  override_reason: ''
 })
+
+const isOverridden = computed(() => {
+  if (calculatedDeposit.value === null) return false
+  const amount = parseFloat(form.value.amount) || 0
+  return amount !== calculatedDeposit.value
+})
+
+const overridePercent = computed(() => {
+  if (!calculatedDeposit.value || calculatedDeposit.value === 0) return 0
+  const amount = parseFloat(form.value.amount) || 0
+  return Math.round(((amount - calculatedDeposit.value) / calculatedDeposit.value) * 100)
+})
+
+const overridePercentText = computed(() => {
+  const pct = overridePercent.value
+  if (pct === 0) return ''
+  const sign = pct > 0 ? '+' : ''
+  return `${sign}${pct}% ${pct > 0 ? 'por encima' : 'por debajo'} de lo calculado`
+})
+
+const overridePercentClass = computed(() => {
+  const pct = overridePercent.value
+  return pct > 0 ? 'text-warning' : 'text-danger'
+})
+
+function formatCurrency(amount) {
+  if (amount === null || amount === undefined) return '—'
+  return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(amount)
+}
 
 const goBack = () => {
   if (fromAccommodation.value) {
@@ -271,6 +343,37 @@ const goBack = () => {
     router.push('/business/deposits')
   }
 }
+
+const fetchDepositCalculation = async (accommodationId) => {
+  if (!accommodationId) {
+    calculatedDeposit.value = null
+    venueRules.value = null
+    selectedAccommodationData.value = null
+    return
+  }
+  try {
+    const res = await fetch(`/api/accommodations/${accommodationId}/deposit-calculation`, { credentials: 'include' })
+    if (res.ok) {
+      const data = await res.json()
+      calculatedDeposit.value = data.calculated_amount
+      venueRules.value = data.venue_rules || null
+      // Also store accommodation data for display
+      selectedAccommodationData.value = accommodations.value.find(a => a.id === accommodationId) || null
+      // Pre-fill amount if not editing and calculation is available
+      if (data.calculated_amount !== null && !isEditing.value && !form.value.amount) {
+        form.value.amount = data.calculated_amount
+      }
+    }
+  } catch (error) {
+    console.error('Error fetching deposit calculation:', error)
+  }
+}
+
+watch(() => form.value.accommodation_id, (newId) => {
+  if (newId) {
+    fetchDepositCalculation(newId)
+  }
+})
 
 const loadAccommodations = async () => {
   try {
@@ -298,7 +401,12 @@ const loadDeposit = async () => {
         payment_date: deposit.payment_date ? deposit.payment_date.split('T')[0] : '',
         reference: deposit.reference || '',
         notes: deposit.notes || '',
-        receipt_url: deposit.receipt_url || ''
+        receipt_url: deposit.receipt_url || '',
+        override_reason: deposit.override_reason || ''
+      }
+      // Load calculation data for existing deposit
+      if (deposit.calculated_amount != null) {
+        calculatedDeposit.value = parseFloat(deposit.calculated_amount)
       }
     }
   } catch (error) {
@@ -482,15 +590,23 @@ const saveDeposit = async () => {
     return
   }
   
+  // Validate override reason is provided when amount differs from calculated
+  if (isOverridden.value && !form.value.override_reason?.trim()) {
+    alert('Debe indicar la razón del ajuste cuando el monto difiere del calculado')
+    return
+  }
+
   saving.value = true
   try {
     const selectedAccommodation = accommodations.value.find(a => a.id === form.value.accommodation_id)
-    
+
     const payload = {
       accommodation_id: form.value.accommodation_id,
       venue_id: selectedAccommodation?.venue || null,
       organization_id: selectedAccommodation?.venue_data?.organization || null,
       amount: parseFloat(form.value.amount),
+      calculated_amount: calculatedDeposit.value,
+      override_reason: isOverridden.value ? form.value.override_reason : null,
       payment_method: form.value.payment_method || null,
       payment_date: form.value.payment_date || null,
       reference: form.value.reference || null,
