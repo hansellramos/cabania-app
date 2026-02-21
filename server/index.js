@@ -35,7 +35,7 @@ async function seedDefaultMessageTemplates() {
       code: 'welcome',
       name: 'Bienvenida post-reserva',
       category: 'engagement',
-      content: 'Genera un mensaje de bienvenida para el cliente que acaba de oficializar su reserva. Incluye: agradecimiento por elegirnos, indicaciones de cómo llegar (usa los links de Waze y Google Maps del venue), información del depósito (monto, método de pago, estado), horario de llegada, y cualquier dato importante para su estadía. El tono debe ser cálido y emocionante.',
+      content: 'Genera un mensaje de bienvenida para el cliente que acaba de oficializar su reserva. Incluye: agradecimiento por elegirnos, indicaciones de cómo llegar (usa los links de Waze y Google Maps del venue), horario de llegada, y cualquier dato importante para su estadía. Si hay saldo pendiente del hospedaje o depósito sin pagar, menciona los montos que debe cancelar al momento de llegar a la cabaña. Si no hay saldos pendientes ni depósito pendiente, NO menciones pagos. El tono debe ser cálido y emocionante.',
       is_system: true,
       venue_id: null,
       sort_order: 1
@@ -53,7 +53,7 @@ async function seedDefaultMessageTemplates() {
       code: 'post_stay',
       name: 'Follow-up post-estadía',
       category: 'engagement',
-      content: 'Genera un mensaje para enviar 1 día después de que el cliente se fue. Incluye: agradecimiento por visitarnos, invitación a seguirnos en redes sociales (Instagram del venue), pedirle que nos etiquete en sus fotos y nos comparta su experiencia, mencionar que nos encanta ver cómo nuestros clientes disfrutan. Si hay depósito pendiente de devolver, mencionar que está en proceso. Tono cálido y cercano, orientado a crear comunidad.',
+      content: 'Genera un mensaje para enviar 1 día después de que el cliente se fue. Incluye: agradecimiento por visitarnos, invitación a seguirnos en redes sociales (Instagram del venue), pedirle que nos etiquete en sus fotos y nos comparta su experiencia, mencionar que nos encanta ver cómo nuestros clientes disfrutan. Si hay un depósito pendiente de devolver (verificado), mencionar que está en proceso de devolución según las reglas. Si no hay depósito, NO menciones depósitos. Tono cálido y cercano, orientado a crear comunidad.',
       is_system: true,
       venue_id: null,
       sort_order: 3
@@ -118,7 +118,12 @@ async function seedDefaultMessageTemplates() {
     const existing = await prisma.message_templates.findFirst({
       where: { code: template.code, venue_id: null }
     });
-    if (!existing) {
+    if (existing) {
+      await prisma.message_templates.update({
+        where: { id: existing.id },
+        data: { content: template.content, sort_order: template.sort_order }
+      });
+    } else {
       await prisma.message_templates.create({ data: template });
       console.log(`Created default message template: ${template.code}`);
     }
@@ -4650,6 +4655,14 @@ Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otr
       });
       const deposit = deposits.length > 0 ? deposits[0] : null;
 
+      // Fetch payments to calculate pending balance
+      const payments = await prisma.payments.findMany({
+        where: { accommodation: accommodation_id }
+      });
+      const totalPaid = payments.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+      const agreedPrice = parseFloat(accommodation.agreed_price) || 0;
+      const pendingBalance = agreedPrice - totalPaid;
+
       // Build venue context
       const venueContext = llmService.buildVenueContext(venue, [], plans);
 
@@ -4666,7 +4679,9 @@ Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otr
       let timeStr = 'No definida';
       if (accommodation.time) {
         const t = accommodation.time;
-        if (typeof t === 'string' && t.includes('T')) {
+        if (t instanceof Date) {
+          timeStr = `${String(t.getUTCHours()).padStart(2, '0')}:${String(t.getUTCMinutes()).padStart(2, '0')}`;
+        } else if (typeof t === 'string' && t.includes('T')) {
           const td = new Date(t);
           timeStr = `${String(td.getUTCHours()).padStart(2, '0')}:${String(td.getUTCMinutes()).padStart(2, '0')}`;
         } else if (typeof t === 'string') {
@@ -4690,14 +4705,16 @@ ${venueContext}
 - Adultos: ${accommodation.adults || 0}
 - Niños: ${accommodation.children || 0}
 - Plan: ${accPlan?.name || 'No asignado'}
-- Precio acordado: ${accommodation.agreed_price ? `$${accommodation.agreed_price}` : 'No definido'}
+- Precio acordado: ${agreedPrice ? `$${agreedPrice.toLocaleString('es-CO')}` : 'No definido'}
+- Total pagado: $${totalPaid.toLocaleString('es-CO')}
+- Saldo pendiente: ${pendingBalance > 0 ? `$${pendingBalance.toLocaleString('es-CO')}` : 'Pagado en su totalidad'}
+${venue.deposit_base_amount != null ? `
+## Depósito de Garantía
+${deposit && deposit.status === 'pending' ? `- Depósito registrado: $${parseFloat(deposit.amount).toLocaleString('es-CO')} (${deposit.verified ? 'Verificado' : 'Pendiente de verificación'})` : deposit && deposit.status === 'refunded' ? `- Depósito devuelto: $${parseFloat(deposit.refund_amount || deposit.amount).toLocaleString('es-CO')}` : deposit && deposit.status === 'claimed' ? `- Depósito retenido por daños: $${parseFloat(deposit.damage_amount || deposit.amount).toLocaleString('es-CO')}` : `- Depósito NO pagado aún. Monto requerido: $${parseFloat(venue.deposit_base_amount).toLocaleString('es-CO')}. Debe pagarse al momento de ingresar a la cabaña.`}
+- Reglas: $${parseFloat(venue.deposit_base_amount).toLocaleString('es-CO')} para hasta ${venue.deposit_max_people_included || 0} personas, +$${parseFloat(venue.deposit_per_extra_person || 0).toLocaleString('es-CO')} por persona adicional
+- Devolución en ${venue.deposit_refund_hours || 24} horas hábiles después de la salida` : `
+IMPORTANTE: Este venue NO tiene reglas de depósito. NO menciones depósitos ni garantías en el mensaje.`}
 
-## Datos del Depósito
-- Monto: ${deposit ? `$${deposit.amount}` : 'No registrado'}
-- Estado: ${deposit ? ({ pending: 'Pendiente', refunded: 'Devuelto', claimed: 'Retenido' }[deposit.status] || deposit.status) : 'N/A'}
-- Método de pago: ${deposit?.payment_method || 'No especificado'}
-- Verificado: ${deposit?.verified ? 'Sí' : 'No'}
-${deposit?.status === 'refunded' ? `- Monto devuelto: $${deposit.refund_amount}\n` : ''}${deposit?.status === 'claimed' ? `- Monto retenido: $${deposit.damage_amount}\n- Motivo: ${deposit.damage_notes}\n` : ''}
 ## Redes Sociales del Venue
 - Instagram: ${venue?.instagram || 'No configurado'}
 - WhatsApp: ${venue?.whatsapp || 'No configurado'}
