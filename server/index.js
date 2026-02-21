@@ -3626,12 +3626,53 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
     }
   });
 
+  // Deposit calculation endpoint
+  app.get('/api/accommodations/:id/deposit-calculation', isAuthenticated, async (req, res) => {
+    try {
+      const accommodation = await prisma.accommodations.findUnique({
+        where: { id: req.params.id }
+      });
+      if (!accommodation) {
+        return res.status(404).json({ error: 'Hospedaje no encontrado' });
+      }
+
+      if (!accommodation.venue) {
+        return res.json({ calculated_amount: null });
+      }
+
+      const venue = await prisma.venues.findUnique({ where: { id: accommodation.venue } });
+      if (!venue || venue.deposit_base_amount == null) {
+        return res.json({ calculated_amount: null });
+      }
+
+      const base = parseFloat(venue.deposit_base_amount) || 0;
+      const maxIncluded = venue.deposit_max_people_included || 0;
+      const perExtra = parseFloat(venue.deposit_per_extra_person) || 0;
+      const adults = accommodation.adults || 0;
+      const extraPeople = Math.max(0, adults - maxIncluded);
+      const calculated = base + extraPeople * perExtra;
+
+      res.json({
+        calculated_amount: calculated,
+        venue_rules: {
+          base_amount: base,
+          max_people_included: maxIncluded,
+          per_extra_person: perExtra,
+          refund_hours: venue.deposit_refund_hours,
+          policy: venue.deposit_policy
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post('/api/deposits', isAuthenticated, async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
       const currentUser = await prisma.users.findUnique({ where: { id: userId } });
       const { evidence, ...depositData } = req.body;
-      
+
       // Verify user has access to the organization
       if (!currentUser?.is_super_admin && depositData.organization_id) {
         const accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
@@ -3639,7 +3680,25 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
           return res.status(403).json({ error: 'No tiene acceso a esta organización' });
         }
       }
-      
+
+      // Auto-calculate deposit amount if venue has rules
+      if (depositData.accommodation_id && depositData.calculated_amount === undefined) {
+        const accommodation = await prisma.accommodations.findUnique({
+          where: { id: depositData.accommodation_id }
+        });
+        if (accommodation?.venue) {
+          const venue = await prisma.venues.findUnique({ where: { id: accommodation.venue } });
+          if (venue?.deposit_base_amount != null) {
+            const base = parseFloat(venue.deposit_base_amount) || 0;
+            const maxIncluded = venue.deposit_max_people_included || 0;
+            const perExtra = parseFloat(venue.deposit_per_extra_person) || 0;
+            const adults = accommodation.adults || 0;
+            const extraPeople = Math.max(0, adults - maxIncluded);
+            depositData.calculated_amount = base + extraPeople * perExtra;
+          }
+        }
+      }
+
       const deposit = await prisma.deposits.create({
         data: {
           ...depositData,
