@@ -41,8 +41,8 @@ __screenshots__/
 .playwright-mcp/
 
 # Claude / AI
-.claude/
-!.claude/commands/
+.claude/settings.local.json
+.claude/skills/
 .agents/
 
 # Misc
