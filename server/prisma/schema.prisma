@@ -426,17 +426,19 @@ model deposit_evidence {
 }
 
 model llm_providers {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code       String    @unique @db.VarChar(50)
-  name       String    @db.VarChar(100)
-  api_key    String?
-  base_url   String?
-  model      String?   @db.VarChar(100)
-  is_active  Boolean   @default(true)
-  is_default Boolean   @default(false)
-  config     Json?     @db.Json
-  created_at DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at DateTime? @db.Timestamptz(6)
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                  String    @unique @db.VarChar(50)
+  name                  String    @db.VarChar(100)
+  api_key               String?
+  base_url              String?
+  model                 String?   @db.VarChar(100)
+  is_active             Boolean   @default(true)
+  is_default            Boolean   @default(false)
+  config                Json?     @db.Json
+  input_price_per_mtok  Decimal?  @db.Decimal(10, 4)
+  output_price_per_mtok Decimal?  @db.Decimal(10, 4)
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime? @db.Timestamptz(6)
 }
 
 model ai_settings {

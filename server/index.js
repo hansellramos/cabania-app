@@ -10,12 +10,62 @@ const { setupAuth, isAuthenticated } = require('./auth/replitAuth');
 const { loadUserPermissions, hasPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
 const llmService = require('./llm-service');
 
-// AI audit logging helper
+// AI audit logging helper — price cache for cost calculation
+const _providerPriceCache = { data: null, expires: 0 };
+const PRICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function getProviderPrices() {
+  const now = Date.now();
+  if (_providerPriceCache.data && now < _providerPriceCache.expires) {
+    return _providerPriceCache.data;
+  }
+  try {
+    const providers = await prisma.llm_providers.findMany({
+      where: { is_active: true },
+      select: { code: true, input_price_per_mtok: true, output_price_per_mtok: true }
+    });
+    const map = {};
+    for (const p of providers) {
+      map[p.code] = {
+        input: parseFloat(p.input_price_per_mtok || 0),
+        output: parseFloat(p.output_price_per_mtok || 0)
+      };
+    }
+    _providerPriceCache.data = map;
+    _providerPriceCache.expires = now + PRICE_CACHE_TTL;
+    return map;
+  } catch (err) {
+    console.error('[ai-audit] Error loading provider prices:', err.message);
+    return _providerPriceCache.data || {};
+  }
+}
+
+function invalidateProviderPriceCache() {
+  _providerPriceCache.data = null;
+  _providerPriceCache.expires = 0;
+}
+
 async function logAICall(data) {
   try {
     const systemPrompt = data.system_prompt || '';
     const userPrompt = data.user_prompt || '';
     const responseContent = data.response_content || '';
+
+    // Calculate cost if not provided
+    let costEstimate = data.cost_estimate || null;
+    if (costEstimate === null && (data.input_tokens || data.output_tokens)) {
+      try {
+        const prices = await getProviderPrices();
+        const providerPrices = prices[data.provider_code];
+        if (providerPrices) {
+          costEstimate = (
+            (data.input_tokens || 0) * providerPrices.input / 1000000 +
+            (data.output_tokens || 0) * providerPrices.output / 1000000
+          );
+        }
+      } catch (_) { /* ignore pricing errors */ }
+    }
+
     await prisma.ai_audit_logs.create({
       data: {
         venue_id: data.venue_id || null,
@@ -30,7 +80,7 @@ async function logAICall(data) {
         response_time_ms: data.response_time_ms || null,
         request_size_bytes: Buffer.byteLength(systemPrompt + userPrompt, 'utf8'),
         response_size_bytes: Buffer.byteLength(responseContent, 'utf8'),
-        cost_estimate: data.cost_estimate || null,
+        cost_estimate: costEstimate,
         user_id: data.user_id || null,
         accommodation_id: data.accommodation_id || null,
         conversation_id: data.conversation_id || null,
@@ -4529,7 +4579,12 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
 
       const where = { ...dateWhere };
       if (venueFilter) {
-        where.venue_id = typeof venueFilter === 'string' ? venueFilter : venueFilter;
+        if (typeof venueFilter === 'string') {
+          where.venue_id = venueFilter;
+        } else {
+          // Include system logs (venue_id = null) along with accessible venues
+          where.OR = [{ venue_id: venueFilter }, { venue_id: null }];
+        }
       }
 
       // Aggregates
@@ -4540,27 +4595,46 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         _count: true
       });
 
-      // Group by feature
+      // Group by feature + provider
       const allLogs = await prisma.ai_audit_logs.findMany({
         where,
-        select: { feature: true, input_tokens: true, output_tokens: true, cost_estimate: true }
+        select: { feature: true, provider_code: true, input_tokens: true, output_tokens: true, cost_estimate: true }
       });
       const featureMap = {};
+      // Also track tokens by provider for client-side recalc
+      const tokensByProvider = {};
       for (const log of allLogs) {
         if (!featureMap[log.feature]) {
-          featureMap[log.feature] = { feature: log.feature, count: 0, tokens: 0, cost: 0 };
+          featureMap[log.feature] = { feature: log.feature, count: 0, tokens: 0, cost: 0, input_tokens: 0, output_tokens: 0, byProvider: {} };
         }
-        featureMap[log.feature].count++;
-        featureMap[log.feature].tokens += (log.input_tokens || 0) + (log.output_tokens || 0);
-        featureMap[log.feature].cost += parseFloat(log.cost_estimate || 0);
+        const f = featureMap[log.feature];
+        f.count++;
+        const inTok = log.input_tokens || 0;
+        const outTok = log.output_tokens || 0;
+        f.tokens += inTok + outTok;
+        f.input_tokens += inTok;
+        f.output_tokens += outTok;
+        f.cost += parseFloat(log.cost_estimate || 0);
+        // Per-provider breakdown within feature
+        const pc = log.provider_code;
+        if (!f.byProvider[pc]) f.byProvider[pc] = { input_tokens: 0, output_tokens: 0 };
+        f.byProvider[pc].input_tokens += inTok;
+        f.byProvider[pc].output_tokens += outTok;
+        // Global per-provider
+        if (!tokensByProvider[pc]) tokensByProvider[pc] = { input_tokens: 0, output_tokens: 0 };
+        tokensByProvider[pc].input_tokens += inTok;
+        tokensByProvider[pc].output_tokens += outTok;
       }
 
       res.json({
         totalCalls: agg._count,
         totalTokens: (agg._sum.input_tokens || 0) + (agg._sum.output_tokens || 0),
+        totalInputTokens: agg._sum.input_tokens || 0,
+        totalOutputTokens: agg._sum.output_tokens || 0,
         totalCost: parseFloat(agg._sum.cost_estimate || 0),
         avgResponseTime: Math.round(agg._avg.response_time_ms || 0),
-        byFeature: Object.values(featureMap)
+        byFeature: Object.values(featureMap),
+        tokensByProvider
       });
     } catch (error) {
       console.error('[ai-usage] Error:', error.message);
@@ -4622,12 +4696,16 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
 
         const where = { created_at: { gte: startDate, lte: endDate } };
         if (venueFilter) {
-          where.venue_id = typeof venueFilter === 'string' ? venueFilter : venueFilter;
+          if (typeof venueFilter === 'string') {
+            where.venue_id = venueFilter;
+          } else {
+            where.OR = [{ venue_id: venueFilter }, { venue_id: null }];
+          }
         }
 
         const logs = await prisma.ai_audit_logs.findMany({
           where,
-          select: { venue_id: true, input_tokens: true, output_tokens: true, cost_estimate: true }
+          select: { venue_id: true, provider_code: true, input_tokens: true, output_tokens: true, cost_estimate: true }
         });
 
         const venueMap = {};
@@ -4635,11 +4713,20 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
           const vid = log.venue_id || '__system__';
           if (vid !== '__system__') allVenueIds.add(vid);
           if (!venueMap[vid]) {
-            venueMap[vid] = { venue_id: vid, calls: 0, tokens: 0, cost: 0 };
+            venueMap[vid] = { venue_id: vid, calls: 0, tokens: 0, cost: 0, input_tokens: 0, output_tokens: 0, byProvider: {} };
           }
-          venueMap[vid].calls++;
-          venueMap[vid].tokens += (log.input_tokens || 0) + (log.output_tokens || 0);
-          venueMap[vid].cost += parseFloat(log.cost_estimate || 0);
+          const v = venueMap[vid];
+          const inTok = log.input_tokens || 0;
+          const outTok = log.output_tokens || 0;
+          v.calls++;
+          v.tokens += inTok + outTok;
+          v.input_tokens += inTok;
+          v.output_tokens += outTok;
+          v.cost += parseFloat(log.cost_estimate || 0);
+          const pc = log.provider_code;
+          if (!v.byProvider[pc]) v.byProvider[pc] = { input_tokens: 0, output_tokens: 0 };
+          v.byProvider[pc].input_tokens += inTok;
+          v.byProvider[pc].output_tokens += outTok;
         }
 
         result.push({
@@ -4713,7 +4800,11 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       const range = calculateDateRange(period || 'last_6_months');
       const where = { created_at: { gte: range.startDate, lte: range.endDate } };
       if (venueFilter) {
-        where.venue_id = typeof venueFilter === 'string' ? venueFilter : venueFilter;
+        if (typeof venueFilter === 'string') {
+          where.venue_id = venueFilter;
+        } else {
+          where.OR = [{ venue_id: venueFilter }, { venue_id: null }];
+        }
       }
 
       const total = await prisma.ai_audit_logs.count({ where });
@@ -4721,7 +4812,7 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         where,
         select: {
           id: true, created_at: true, feature: true, venue_id: true,
-          model: true, input_tokens: true, output_tokens: true,
+          provider_code: true, model: true, input_tokens: true, output_tokens: true,
           response_time_ms: true, cost_estimate: true, error: true
         },
         orderBy: { created_at: 'desc' },
@@ -5158,6 +5249,49 @@ REGLAS:
   // LLM Providers API
   // ==========================================
   
+  // GET /api/llm-providers/pricing - Get pricing for all active providers
+  app.get('/api/llm-providers/pricing', isAuthenticated, async (req, res) => {
+    try {
+      const providers = await prisma.llm_providers.findMany({
+        where: { is_active: true },
+        select: { id: true, code: true, name: true, model: true, input_price_per_mtok: true, output_price_per_mtok: true },
+        orderBy: { name: 'asc' }
+      });
+      res.json(providers.map(p => ({
+        ...p,
+        input_price_per_mtok: parseFloat(p.input_price_per_mtok || 0),
+        output_price_per_mtok: parseFloat(p.output_price_per_mtok || 0)
+      })));
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PUT /api/llm-providers/:id/pricing - Update provider pricing (super_admin only)
+  app.put('/api/llm-providers/:id/pricing', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user?.claims?.sub);
+      const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+      if (!currentUser?.is_super_admin) {
+        return res.status(403).json({ error: 'Acceso denegado' });
+      }
+      const { input_price_per_mtok, output_price_per_mtok } = req.body;
+      const provider = await prisma.llm_providers.update({
+        where: { id: req.params.id },
+        data: {
+          input_price_per_mtok: input_price_per_mtok != null ? input_price_per_mtok : undefined,
+          output_price_per_mtok: output_price_per_mtok != null ? output_price_per_mtok : undefined,
+          updated_at: new Date()
+        }
+      });
+      invalidateProviderPriceCache();
+      const { api_key, ...safeProvider } = provider;
+      res.json(safeProvider);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // GET /api/llm-providers - List active providers
   app.get('/api/llm-providers', isAuthenticated, async (req, res) => {
     try {

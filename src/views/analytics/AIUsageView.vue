@@ -24,6 +24,69 @@
       </CCardBody>
     </CCard>
 
+    <!-- Price Simulator (dev mode only) -->
+    <CCard v-if="settingsStore.developmentMode" class="mb-4">
+      <CCardHeader
+        class="d-flex align-items-center justify-content-between"
+        role="button"
+        @click="simulatorOpen = !simulatorOpen"
+      >
+        <span>Simulador de Precios</span>
+        <CIcon :icon="simulatorOpen ? 'cil-chevron-top' : 'cil-chevron-bottom'" />
+      </CCardHeader>
+      <CCollapse :visible="simulatorOpen">
+        <CCardBody class="p-0">
+          <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle">
+              <thead>
+                <tr>
+                  <th>Proveedor</th>
+                  <th>Modelo</th>
+                  <th class="text-end" style="width: 140px">Input $/MTok</th>
+                  <th class="text-end" style="width: 140px">Output $/MTok</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="p in providerPricing" :key="p.id">
+                  <td>{{ p.name }}</td>
+                  <td><small class="text-body-secondary">{{ p.model }}</small></td>
+                  <td class="text-end">
+                    <input
+                      type="number"
+                      class="form-control form-control-sm text-end"
+                      step="0.01"
+                      min="0"
+                      :value="simPrices[p.code]?.input"
+                      @input="updateSimPrice(p.code, 'input', $event.target.value)"
+                    />
+                  </td>
+                  <td class="text-end">
+                    <input
+                      type="number"
+                      class="form-control form-control-sm text-end"
+                      step="0.01"
+                      min="0"
+                      :value="simPrices[p.code]?.output"
+                      @input="updateSimPrice(p.code, 'output', $event.target.value)"
+                    />
+                  </td>
+                </tr>
+                <tr v-if="providerPricing.length === 0">
+                  <td colspan="4" class="text-center text-body-secondary py-3">Cargando proveedores...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="d-flex justify-content-end p-3 pt-2">
+            <CButton color="primary" size="sm" :disabled="savingPrices" @click="savePrices">
+              <CSpinner v-if="savingPrices" size="sm" class="me-1" />
+              Guardar precios
+            </CButton>
+          </div>
+        </CCardBody>
+      </CCollapse>
+    </CCard>
+
     <div v-if="loading" class="text-center py-5">
       <CSpinner color="primary" />
       <div class="text-body-secondary mt-2">Cargando datos...</div>
@@ -50,7 +113,7 @@
       <CCol :sm="6" :lg="3">
         <CCard class="cabania-glass-banner cabania-glass-banner--warning h-100">
           <CCardBody class="pb-3 text-end">
-            <div class="fs-4 fw-semibold">{{ animTotalCost }}</div>
+            <div class="fs-4 fw-semibold">{{ displayTotalCost }}</div>
             <div class="cabania-glass__label">Costo Estimado</div>
           </CCardBody>
         </CCard>
@@ -83,7 +146,7 @@
         <CCard class="h-100">
           <CCardHeader>Uso por Feature</CCardHeader>
           <CCardBody>
-            <div v-if="summary.byFeature && summary.byFeature.length > 0" style="height: 300px;">
+            <div v-if="displayByFeature && displayByFeature.length > 0" style="height: 300px;">
               <highcharts :options="featurePieChartOptions" />
             </div>
             <div v-else class="text-center text-body-secondary py-5">
@@ -112,7 +175,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in detailData" :key="row.id">
+              <tr v-for="row in displayDetailData" :key="row.id">
                 <td class="text-nowrap">{{ formatDate(row.created_at) }}</td>
                 <td>
                   <CBadge :color="featureBadgeColors[row.feature] || 'secondary'" shape="rounded-pill">
@@ -143,7 +206,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, reactive, onMounted, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
@@ -177,17 +240,88 @@ const selectedPeriod = ref('last_6_months')
 const selectedVenueId = ref('')
 const venues = ref([])
 
-const summary = ref({ totalCalls: 0, totalTokens: 0, totalCost: 0, avgResponseTime: 0, byFeature: [] })
+const summary = ref({ totalCalls: 0, totalTokens: 0, totalInputTokens: 0, totalOutputTokens: 0, totalCost: 0, avgResponseTime: 0, byFeature: [], tokensByProvider: {} })
 const monthlyByVenue = ref([])
 const detailData = ref([])
 const pagination = ref({ page: 1, limit: 50, total: 0, totalPages: 0 })
 
 const loading = ref(false)
 
+// Price simulator state
+const simulatorOpen = ref(false)
+const providerPricing = ref([])
+const simPrices = reactive({})
+const savingPrices = ref(false)
+const simActive = computed(() => settingsStore.developmentMode && providerPricing.value.length > 0)
+
+function updateSimPrice(code, type, val) {
+  if (!simPrices[code]) simPrices[code] = { input: 0, output: 0 }
+  simPrices[code][type] = parseFloat(val) || 0
+}
+
+// Compute cost from tokens using sim prices
+function calcCostFromTokens(byProvider) {
+  if (!byProvider || !simActive.value) return null
+  let cost = 0
+  for (const [pc, tok] of Object.entries(byProvider)) {
+    const prices = simPrices[pc]
+    if (prices) {
+      cost += (tok.input_tokens || 0) * prices.input / 1000000
+      cost += (tok.output_tokens || 0) * prices.output / 1000000
+    }
+  }
+  return cost
+}
+
+function calcCostForRow(row) {
+  if (!simActive.value || !row.provider_code) return row.cost_estimate
+  const prices = simPrices[row.provider_code]
+  if (!prices) return row.cost_estimate
+  return (row.input_tokens || 0) * prices.input / 1000000 + (row.output_tokens || 0) * prices.output / 1000000
+}
+
+// Simulated total cost
+const displayTotalCost = computed(() => {
+  if (simActive.value && summary.value.tokensByProvider) {
+    const cost = calcCostFromTokens(summary.value.tokensByProvider)
+    if (cost !== null) return '$' + cost.toFixed(4)
+  }
+  return '$' + (summary.value.totalCost || 0).toFixed(4)
+})
+
+// Simulated byFeature
+const displayByFeature = computed(() => {
+  const features = summary.value.byFeature || []
+  if (!simActive.value) return features
+  return features.map(f => ({
+    ...f,
+    cost: calcCostFromTokens(f.byProvider) ?? f.cost
+  }))
+})
+
+// Simulated detail data
+const displayDetailData = computed(() => {
+  if (!simActive.value) return detailData.value
+  return detailData.value.map(row => ({
+    ...row,
+    cost_estimate: calcCostForRow(row)
+  }))
+})
+
+// Simulated monthly by venue for chart
+const displayMonthlyByVenue = computed(() => {
+  if (!simActive.value) return monthlyByVenue.value
+  return monthlyByVenue.value.map(month => ({
+    ...month,
+    venues: month.venues.map(v => ({
+      ...v,
+      cost: calcCostFromTokens(v.byProvider) ?? v.cost
+    }))
+  }))
+})
+
 const animTotalCalls = useAnimatedNumber(computed(() => summary.value.totalCalls), { formatter: formatNumber })
 const animTotalTokens = useAnimatedNumber(computed(() => summary.value.totalTokens), { formatter: formatNumber })
-// Cost uses x10000 scale for animation (useAnimatedNumber rounds to int)
-const animTotalCost = useAnimatedNumber(computed(() => Math.round(summary.value.totalCost * 10000)), { formatter: (n) => '$' + (n / 10000).toFixed(4) })
 const animAvgTime = useAnimatedNumber(computed(() => summary.value.avgResponseTime), { formatter: (n) => n + ' ms' })
 
 const chartColors = [
@@ -198,16 +332,15 @@ const labelColor = '#94a3b8'
 const gridColor = 'rgba(148, 163, 184, 0.15)'
 
 const costByVenueChartOptions = computed(() => {
-  // Build stacked series: one series per venue
+  const source = displayMonthlyByVenue.value
   const venueSet = new Map()
-  for (const month of monthlyByVenue.value) {
+  for (const month of source) {
     for (const v of month.venues) {
       if (!venueSet.has(v.venue_name)) venueSet.set(v.venue_name, [])
     }
   }
-  // Fill data arrays
   for (const [name] of venueSet) {
-    const data = monthlyByVenue.value.map(month => {
+    const data = source.map(month => {
       const found = month.venues.find(v => v.venue_name === name)
       return found ? Math.round(found.cost * 10000) / 10000 : 0
     })
@@ -229,7 +362,7 @@ const costByVenueChartOptions = computed(() => {
     },
     title: { text: undefined },
     xAxis: {
-      categories: monthlyByVenue.value.map(m => m.monthName),
+      categories: source.map(m => m.monthName),
       labels: { style: { color: labelColor } }
     },
     yAxis: {
@@ -266,7 +399,7 @@ const featurePieChartOptions = computed(() => ({
     }
   },
   series: [{
-    data: (summary.value.byFeature || []).map((item, i) => ({
+    data: (displayByFeature.value || []).map((item, i) => ({
       name: featureLabels[item.feature] || item.feature,
       y: item.count,
       color: chartColors[i % chartColors.length]
@@ -340,6 +473,47 @@ async function loadDetail(page = 1) {
   }
 }
 
+async function loadPricing() {
+  try {
+    const response = await fetch('/api/llm-providers/pricing', { credentials: 'include' })
+    if (response.ok) {
+      providerPricing.value = await response.json()
+      for (const p of providerPricing.value) {
+        simPrices[p.code] = {
+          input: p.input_price_per_mtok,
+          output: p.output_price_per_mtok
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error loading pricing:', error)
+  }
+}
+
+async function savePrices() {
+  savingPrices.value = true
+  try {
+    for (const p of providerPricing.value) {
+      const prices = simPrices[p.code]
+      if (!prices) continue
+      await fetch(`/api/llm-providers/${p.id}/pricing`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          input_price_per_mtok: prices.input,
+          output_price_per_mtok: prices.output
+        })
+      })
+    }
+    await loadPricing()
+  } catch (error) {
+    console.error('Error saving prices:', error)
+  } finally {
+    savingPrices.value = false
+  }
+}
+
 function goToPage(page) {
   loadDetail(page)
 }
@@ -354,7 +528,7 @@ async function loadAllData() {
 }
 
 onMounted(async () => {
-  await loadVenues()
+  await Promise.all([loadVenues(), loadPricing()])
   await loadAllData()
 })
 </script>
