@@ -42,6 +42,7 @@ __screenshots__/
 
 # Claude / AI
 .claude/
+!.claude/commands/
 .agents/
 
 # Misc
