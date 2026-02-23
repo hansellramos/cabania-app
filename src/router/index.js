@@ -582,6 +582,17 @@ const routes = [
     ],
   },
   {
+    path: '/p/:slug',
+    name: 'PublicVenue',
+    component: () => import('@/layouts/PublicLayout.vue'),
+    children: [{
+      path: '',
+      name: 'PublicVenueDetail',
+      component: () => import('@/views/public/PublicVenueView.vue'),
+      props: true
+    }]
+  },
+  {
     path: '/pages',
     redirect: '/pages/404',
     name: 'Pages',
@@ -628,7 +639,7 @@ const router = createRouter({
 const { posthog } = usePostHog()
 
 // Public routes that don't require authentication
-const publicRoutes = ['/availability', '/pages/login', '/pages/register', '/pages/404', '/pages/500']
+const publicRoutes = ['/availability', '/p/', '/pages/login', '/pages/register', '/pages/404', '/pages/500']
 
 // Routes that don't require subscription
 const noSubscriptionRoutes = ['/no-subscription', '/profile']
