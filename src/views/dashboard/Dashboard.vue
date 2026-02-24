@@ -7,6 +7,10 @@
             <div class="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-2">
               <h4 class="mb-0">Análisis de Hospedajes</h4>
               <div class="d-flex align-items-center gap-3 flex-wrap">
+                <CFormSelect v-model="selectedBasis" @change="loadAllAnalytics" size="sm" style="max-width: 180px;">
+                  <option value="cash">Base caja</option>
+                  <option value="accrual">Base devengo</option>
+                </CFormSelect>
                 <div class="position-relative" style="min-width: 200px; max-width: 300px;">
                   <CFormInput
                     v-model="orgSearch"
@@ -288,6 +292,7 @@ const { user } = useAuth()
 const loading = ref(false)
 const organizations = ref([])
 const selectedOrganizations = ref([])
+const selectedBasis = ref('cash')
 const orgSearch = ref('')
 const showOrgDropdown = ref(false)
 
@@ -536,6 +541,7 @@ function getAnalyticsParams() {
   if (selectedOrganizations.value.length > 0) {
     params.append('organizations', selectedOrganizations.value.map(o => o.id).join(','))
   }
+  params.append('basis', selectedBasis.value)
   return params.toString()
 }
 

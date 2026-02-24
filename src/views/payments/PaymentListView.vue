@@ -10,14 +10,21 @@
         </CCardHeader>
         <CCardBody>
           <CRow class="mb-3 g-2">
-            <CCol :md="3">
+            <CCol :md="2">
+              <CFormLabel class="small">Base contable</CFormLabel>
+              <CFormSelect v-model="filters.basis" size="sm">
+                <option value="cash">Caja (fecha pago)</option>
+                <option value="accrual">Devengo (fecha hospedaje)</option>
+              </CFormSelect>
+            </CCol>
+            <CCol :md="2">
               <CFormLabel class="small">Método de pago</CFormLabel>
               <CFormSelect v-model="filters.method" size="sm">
                 <option value="">Todos</option>
                 <option v-for="m in availableMethods" :key="m" :value="m">{{ m }}</option>
               </CFormSelect>
             </CCol>
-            <CCol :md="3">
+            <CCol :md="2">
               <CFormLabel class="small">Estado</CFormLabel>
               <CFormSelect v-model="filters.status" size="sm">
                 <option value="">Todos</option>
@@ -48,7 +55,7 @@
                   style="cursor: pointer; user-select: none;"
                   @click="toggleSort('payment_date')"
                 >
-                  Fecha {{ sortIcon('payment_date') }}
+                  {{ filters.basis === 'accrual' ? 'Fecha Hospedaje' : 'Fecha Pago' }} {{ sortIcon('payment_date') }}
                 </CTableHeaderCell>
                 <CTableHeaderCell
                   style="cursor: pointer; user-select: none;"
@@ -77,7 +84,7 @@
             </CTableHead>
             <CTableBody>
               <CTableRow v-for="payment in paginatedPayments" :key="payment.id">
-                <CTableDataCell>{{ formatDate(payment.payment_date) }}</CTableDataCell>
+                <CTableDataCell>{{ formatDate(filters.basis === 'accrual' ? (payment.accommodation_data?.date || payment.payment_date) : payment.payment_date) }}</CTableDataCell>
                 <CTableDataCell>{{ formatCurrency(payment.amount) }}</CTableDataCell>
                 <CTableDataCell class="d-mobile-none">{{ payment.payment_method || '—' }}</CTableDataCell>
                 <CTableDataCell class="d-mobile-none">{{ payment.reference || '—' }}</CTableDataCell>
@@ -277,6 +284,7 @@ const selectedReceiptUrl = ref('')
 const receiptLoadError = ref(false)
 
 const filters = reactive({
+  basis: 'cash',
   method: '',
   status: '',
   from_date: '',
@@ -323,11 +331,17 @@ const filteredPayments = computed(() => {
   }
   if (filters.from_date) {
     const from = new Date(filters.from_date)
-    result = result.filter(p => new Date(p.payment_date) >= from)
+    result = result.filter(p => {
+      const d = filters.basis === 'accrual' ? (p.accommodation_data?.date || p.payment_date) : p.payment_date
+      return new Date(d) >= from
+    })
   }
   if (filters.to_date) {
     const to = new Date(filters.to_date + 'T23:59:59')
-    result = result.filter(p => new Date(p.payment_date) <= to)
+    result = result.filter(p => {
+      const d = filters.basis === 'accrual' ? (p.accommodation_data?.date || p.payment_date) : p.payment_date
+      return new Date(d) <= to
+    })
   }
   if (searchQuery.value) {
     const q = searchQuery.value.toLowerCase()
@@ -348,6 +362,10 @@ const filteredPayments = computed(() => {
         va = parseFloat(va) || 0
         vb = parseFloat(vb) || 0
       } else if (key === 'payment_date') {
+        if (filters.basis === 'accrual') {
+          va = a.accommodation_data?.date || a.payment_date
+          vb = b.accommodation_data?.date || b.payment_date
+        }
         va = va ? new Date(va).getTime() : 0
         vb = vb ? new Date(vb).getTime() : 0
       } else if (key === 'verified') {
@@ -415,14 +433,15 @@ const loadPayments = async () => {
 
 const formatDate = (date) => {
   if (!date) return '—'
-  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
+  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
 const formatDateTime = (date) => {
   if (!date) return '—'
   return new Date(date).toLocaleString('es-CO', {
     day: '2-digit', month: 'short', year: 'numeric',
-    hour: '2-digit', minute: '2-digit'
+    hour: '2-digit', minute: '2-digit',
+    timeZone: 'America/Bogota'
   })
 }
 
@@ -433,7 +452,7 @@ const formatCurrency = (amount) => {
 
 const formatAccommodation = (acc) => {
   if (!acc) return '—'
-  const date = acc.date ? new Date(acc.date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' }) : ''
+  const date = acc.date ? new Date(acc.date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', timeZone: 'UTC' }) : ''
   return date || 'Reserva'
 }
 

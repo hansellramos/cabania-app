@@ -317,7 +317,7 @@ const loadDeposits = async () => {
 
 const formatDate = (date) => {
   if (!date) return '—'
-  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
+  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
 const formatCurrency = (amount) => {
@@ -350,7 +350,8 @@ const formatDateTime = (date) => {
     month: 'short',
     year: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
+    timeZone: 'America/Bogota'
   })
 }
 

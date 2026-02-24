@@ -29,6 +29,13 @@
               </option>
             </CFormSelect>
           </CCol>
+          <CCol :xs="6" :md="3" :lg="2">
+            <label class="form-label">Base contable</label>
+            <CFormSelect v-model="selectedBasis" @change="loadAllData">
+              <option value="cash">Caja</option>
+              <option value="accrual">Devengo</option>
+            </CFormSelect>
+          </CCol>
         </CRow>
       </CCardBody>
     </CCard>
@@ -174,6 +181,7 @@ const periodOptions = [
 const selectedPeriod = ref('last_6_months')
 const selectedVenueId = ref('')
 const selectedOrganizationId = ref('')
+const selectedBasis = ref('cash')
 
 const venues = ref([])
 const organizations = ref([])
@@ -330,6 +338,7 @@ function getQueryParams() {
     params.append('organization_id', selectedOrganizationId.value)
   }
   params.append('viewAll', viewAll.toString())
+  params.append('basis', selectedBasis.value)
 
   return params.toString()
 }
