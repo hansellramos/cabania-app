@@ -416,8 +416,8 @@ const loadDeposit = async () => {
 
 const formatAccommodation = (acc) => {
   if (!acc) return ''
-  const date = acc.date ? new Date(acc.date).toLocaleDateString('es-CO', { 
-    day: '2-digit', month: 'short', year: 'numeric'
+  const date = acc.date ? new Date(acc.date).toLocaleDateString('es-CO', {
+    day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC'
   }) : ''
   const venue = acc.venue_data?.name || ''
   const customer = acc.customer_data?.fullname || ''

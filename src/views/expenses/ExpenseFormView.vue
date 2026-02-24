@@ -983,7 +983,7 @@ const loadAccommodations = async () => {
 }
 
 const formatAccommodationLabel = (acc) => {
-  const date = acc.date ? new Date(acc.date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' }) : ''
+  const date = acc.date ? new Date(acc.date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' }) : ''
   const customer = acc.customer_data?.fullname || ''
   return `${date}${customer ? ' - ' + customer : ''}`
 }

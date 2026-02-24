@@ -1601,7 +1601,8 @@ async function startServer() {
           venue_id: accommodation?.venue || null,
           amount: currentPayment.amount,
           type: 'accommodation',
-          date: currentPayment.payment_date || accommodation?.date || new Date()
+          date: currentPayment.payment_date || accommodation?.date || new Date(),
+          accrual_date: accommodation?.date || null
         };
         
         await prisma.incomes.upsert({
@@ -1681,8 +1682,10 @@ async function startServer() {
   // Income summary for current month with comparison to previous month
   app.get('/api/analytics/income-summary', isAuthenticated, async (req, res) => {
     try {
+      const { basis } = req.query;
+      const dateField = basis === 'accrual' ? 'accrual_date' : 'date';
       const orgIds = await getAnalyticsOrgIds(req);
-      
+
       if (orgIds !== null && orgIds.length === 0) {
         return res.json({
           currentMonth: { total: 0, count: 0 },
@@ -1690,27 +1693,27 @@ async function startServer() {
           percentChange: 0
         });
       }
-      
+
       const now = new Date();
       const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-      
+
       const whereClause = orgIds !== null ? { organization_id: { in: orgIds } } : {};
-      
+
       // Current month incomes
       const currentMonthIncomes = await prisma.incomes.findMany({
         where: {
           ...whereClause,
-          date: { gte: currentMonthStart }
+          [dateField]: { gte: currentMonthStart }
         }
       });
-      
+
       // Previous month incomes
       const previousMonthIncomes = await prisma.incomes.findMany({
         where: {
           ...whereClause,
-          date: { gte: previousMonthStart, lte: previousMonthEnd }
+          [dateField]: { gte: previousMonthStart, lte: previousMonthEnd }
         }
       });
       
@@ -1734,7 +1737,8 @@ async function startServer() {
   // Income breakdown by venue for pie chart
   app.get('/api/analytics/income-by-venue', isAuthenticated, async (req, res) => {
     try {
-      const { period } = req.query;
+      const { period, basis } = req.query;
+      const dateField = basis === 'accrual' ? 'accrual_date' : 'date';
       const orgIds = await getAnalyticsOrgIds(req);
 
       if (orgIds !== null && orgIds.length === 0) {
@@ -1746,7 +1750,7 @@ async function startServer() {
       // Add date filter if period is specified
       if (period) {
         const { startDate, endDate } = calculateDateRange(period);
-        whereClause.date = {
+        whereClause[dateField] = {
           gte: startDate,
           lte: endDate
         };
@@ -4639,7 +4643,8 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
   // Analytics API
   app.get('/api/analytics/summary', async (req, res) => {
     try {
-      const { venue_id, organization_id, from_date, to_date, period, viewAll } = req.query;
+      const { venue_id, organization_id, from_date, to_date, period, viewAll, basis } = req.query;
+      const incomeDateField = basis === 'accrual' ? 'accrual_date' : 'date';
       const viewAllFlag = viewAll === 'true';
       
       let accessibleOrgIds = null;
@@ -4683,7 +4688,7 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       const orgFilter = accessibleOrgIds !== null ? { in: accessibleOrgIds } : undefined;
       
       const incomeWhere = {
-        date: { gte: startDate, lte: endDate }
+        [incomeDateField]: { gte: startDate, lte: endDate }
       };
       if (orgFilter) incomeWhere.organization_id = orgFilter;
       if (venue_id) incomeWhere.venue_id = venue_id;
@@ -4821,7 +4826,8 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
 
   app.get('/api/analytics/monthly-trend', async (req, res) => {
     try {
-      const { venue_id, organization_id, period, viewAll } = req.query;
+      const { venue_id, organization_id, period, viewAll, basis } = req.query;
+      const incomeDateField = basis === 'accrual' ? 'accrual_date' : 'date';
       const viewAllFlag = viewAll === 'true';
 
       // Calculate number of months based on period
@@ -4897,10 +4903,10 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         if (organization_id) baseWhere.organization_id = organization_id;
         
         const incomeResult = await prisma.incomes.aggregate({
-          where: { ...baseWhere, date: { gte: startDate, lte: endDate } },
+          where: { ...baseWhere, [incomeDateField]: { gte: startDate, lte: endDate } },
           _sum: { amount: true }
         });
-        
+
         const expenseResult = await prisma.expenses.aggregate({
           where: { ...baseWhere, expense_date: { gte: startDate, lte: endDate } },
           _sum: { amount: true }

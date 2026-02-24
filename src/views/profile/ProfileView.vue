@@ -496,7 +496,8 @@ function formatDate(dateStr) {
   return date.toLocaleDateString('es-CO', {
     year: 'numeric',
     month: 'long',
-    day: 'numeric'
+    day: 'numeric',
+    timeZone: 'America/Bogota'
   })
 }
 </script>

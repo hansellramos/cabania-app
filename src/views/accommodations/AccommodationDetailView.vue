@@ -828,7 +828,7 @@ async function loadPayments() {
 
 function formatPaymentDate(date) {
   if (!date) return '—'
-  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
+  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
 function formatCurrency(amount) {
@@ -892,7 +892,7 @@ function calcCheckout(timeStr, duration, dateStr) {
   const endMs = startMs + Number(duration) * 1000
   const end = new Date(endMs)
   
-  return end.toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' }) + 
+  return end.toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }) +
     ' ' + String(end.getUTCHours()).padStart(2, '0') + ':' + String(end.getUTCMinutes()).padStart(2, '0')
 }
 

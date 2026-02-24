@@ -79,13 +79,13 @@ const formatCurrency = (value) => {
 const formatDate = (dateStr) => {
   if (!dateStr) return ''
   const d = new Date(dateStr + 'T12:00:00')
-  return d.toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short' })
+  return d.toLocaleDateString('es-CO', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
 }
 
 const formatShortDate = (dateStr) => {
   if (!dateStr) return ''
   const d = new Date(dateStr + 'T12:00:00')
-  return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short' })
+  return d.toLocaleDateString('es-CO', { day: 'numeric', month: 'short', timeZone: 'UTC' })
 }
 </script>
 

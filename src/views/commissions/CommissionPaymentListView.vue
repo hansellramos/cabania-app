@@ -350,7 +350,7 @@ const loadAgents = async () => {
 
 const formatDate = (date) => {
   if (!date) return '—'
-  return new Date(date).toLocaleDateString('es-CO')
+  return new Date(date).toLocaleDateString('es-CO', { timeZone: 'UTC' })
 }
 
 const formatCurrency = (amount) => {

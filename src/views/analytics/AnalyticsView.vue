@@ -29,6 +29,10 @@
               </option>
             </CFormSelect>
           </CCol>
+          <CCol :xs="6" :md="3" :lg="2">
+            <label class="form-label">Base contable</label>
+            <ToggleButtonGroup v-model="selectedBasis" :options="basisOptions" @update:modelValue="loadAllData" />
+          </CCol>
         </CRow>
       </CCardBody>
     </CCard>
@@ -158,8 +162,14 @@ import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
+import ToggleButtonGroup from '@/components/ToggleButtonGroup.vue'
 
 const settingsStore = useSettingsStore()
+
+const basisOptions = [
+  { value: 'cash', label: 'Caja' },
+  { value: 'accrual', label: 'Devengo' },
+]
 const { user } = useAuth()
 
 const periodOptions = [
@@ -174,6 +184,7 @@ const periodOptions = [
 const selectedPeriod = ref('last_6_months')
 const selectedVenueId = ref('')
 const selectedOrganizationId = ref('')
+const selectedBasis = ref('cash')
 
 const venues = ref([])
 const organizations = ref([])
@@ -330,6 +341,7 @@ function getQueryParams() {
     params.append('organization_id', selectedOrganizationId.value)
   }
   params.append('viewAll', viewAll.toString())
+  params.append('basis', selectedBasis.value)
 
   return params.toString()
 }

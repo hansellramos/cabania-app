@@ -360,7 +360,8 @@ const formatPaymentDate = (date) => {
   return new Date(date).toLocaleDateString('es-CO', {
     day: '2-digit',
     month: 'short',
-    year: 'numeric'
+    year: 'numeric',
+    timeZone: 'UTC'
   })
 }
 
