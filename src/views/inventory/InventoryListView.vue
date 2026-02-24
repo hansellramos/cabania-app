@@ -44,7 +44,7 @@
               <CNavLink
                 :active="activeTab === 'supply'"
                 href="#"
-                @click.prevent="activeTab = 'supply'"
+                @click.prevent="activeTab = 'supply'; currentPage = 1"
               >
                 Insumos
                 <CBadge color="info" class="ms-1">{{ supplyItems.length }}</CBadge>
@@ -54,7 +54,7 @@
               <CNavLink
                 :active="activeTab === 'asset'"
                 href="#"
-                @click.prevent="activeTab = 'asset'"
+                @click.prevent="activeTab = 'asset'; currentPage = 1"
               >
                 Activos Fijos
                 <CBadge color="warning" class="ms-1">{{ assetItems.length }}</CBadge>
@@ -68,17 +68,43 @@
               <CTable hover responsive>
                 <CTableHead>
                   <CTableRow>
-                    <CTableHeaderCell>Nombre</CTableHeaderCell>
-                    <CTableHeaderCell>Categoria</CTableHeaderCell>
-                    <CTableHeaderCell class="d-mobile-none">Sede</CTableHeaderCell>
-                    <CTableHeaderCell>Cantidad</CTableHeaderCell>
+                    <CTableHeaderCell
+                      style="cursor: pointer; user-select: none;"
+                      @click="toggleSort('name')"
+                    >
+                      Nombre {{ sortIcon('name') }}
+                    </CTableHeaderCell>
+                    <CTableHeaderCell
+                      style="cursor: pointer; user-select: none;"
+                      @click="toggleSort('category')"
+                    >
+                      Categoria {{ sortIcon('category') }}
+                    </CTableHeaderCell>
+                    <CTableHeaderCell
+                      class="d-mobile-none"
+                      style="cursor: pointer; user-select: none;"
+                      @click="toggleSort('venue')"
+                    >
+                      Sede {{ sortIcon('venue') }}
+                    </CTableHeaderCell>
+                    <CTableHeaderCell
+                      style="cursor: pointer; user-select: none;"
+                      @click="toggleSort('quantity')"
+                    >
+                      Cantidad {{ sortIcon('quantity') }}
+                    </CTableHeaderCell>
                     <CTableHeaderCell>Stock Min.</CTableHeaderCell>
-                    <CTableHeaderCell>Costo Unit.</CTableHeaderCell>
+                    <CTableHeaderCell
+                      style="cursor: pointer; user-select: none;"
+                      @click="toggleSort('unit_cost')"
+                    >
+                      Costo Unit. {{ sortIcon('unit_cost') }}
+                    </CTableHeaderCell>
                     <CTableHeaderCell>Acciones</CTableHeaderCell>
                   </CTableRow>
                 </CTableHead>
                 <CTableBody>
-                  <CTableRow v-for="item in supplyItems" :key="item.id">
+                  <CTableRow v-for="item in paginatedItems" :key="item.id">
                     <CTableDataCell>
                       <strong>{{ item.name }}</strong>
                     </CTableDataCell>
@@ -123,7 +149,7 @@
                       </div>
                     </CTableDataCell>
                   </CTableRow>
-                  <CTableRow v-if="supplyItems.length === 0">
+                  <CTableRow v-if="activeFilteredItems.length === 0">
                     <CTableDataCell colspan="7" class="text-center text-muted py-4">
                       No hay insumos registrados
                     </CTableDataCell>
@@ -137,17 +163,38 @@
               <CTable hover responsive>
                 <CTableHead>
                   <CTableRow>
-                    <CTableHeaderCell>Nombre</CTableHeaderCell>
-                    <CTableHeaderCell>Categoria</CTableHeaderCell>
-                    <CTableHeaderCell class="d-mobile-none">Sede</CTableHeaderCell>
-                    <CTableHeaderCell>Cantidad</CTableHeaderCell>
+                    <CTableHeaderCell
+                      style="cursor: pointer; user-select: none;"
+                      @click="toggleSort('name')"
+                    >
+                      Nombre {{ sortIcon('name') }}
+                    </CTableHeaderCell>
+                    <CTableHeaderCell
+                      style="cursor: pointer; user-select: none;"
+                      @click="toggleSort('category')"
+                    >
+                      Categoria {{ sortIcon('category') }}
+                    </CTableHeaderCell>
+                    <CTableHeaderCell
+                      class="d-mobile-none"
+                      style="cursor: pointer; user-select: none;"
+                      @click="toggleSort('venue')"
+                    >
+                      Sede {{ sortIcon('venue') }}
+                    </CTableHeaderCell>
+                    <CTableHeaderCell
+                      style="cursor: pointer; user-select: none;"
+                      @click="toggleSort('quantity')"
+                    >
+                      Cantidad {{ sortIcon('quantity') }}
+                    </CTableHeaderCell>
                     <CTableHeaderCell>Condicion</CTableHeaderCell>
                     <CTableHeaderCell class="d-mobile-none">Ubicacion</CTableHeaderCell>
                     <CTableHeaderCell>Acciones</CTableHeaderCell>
                   </CTableRow>
                 </CTableHead>
                 <CTableBody>
-                  <CTableRow v-for="item in assetItems" :key="item.id">
+                  <CTableRow v-for="item in paginatedItems" :key="item.id">
                     <CTableDataCell>
                       <strong>{{ item.name }}</strong>
                     </CTableDataCell>
@@ -190,7 +237,7 @@
                       </div>
                     </CTableDataCell>
                   </CTableRow>
-                  <CTableRow v-if="assetItems.length === 0">
+                  <CTableRow v-if="activeFilteredItems.length === 0">
                     <CTableDataCell colspan="7" class="text-center text-muted py-4">
                       No hay activos fijos registrados
                     </CTableDataCell>
@@ -199,6 +246,26 @@
               </CTable>
             </CTabPane>
           </CTabContent>
+
+          <div v-if="totalPages > 1" class="d-flex flex-wrap align-items-center justify-content-between mt-3 gap-2">
+            <div class="small text-muted">
+              Mostrando {{ pageStart }}-{{ pageEnd }} de {{ activeFilteredItems.length }} registros
+            </div>
+            <CPagination size="sm" class="mb-0">
+              <CPaginationItem :disabled="currentPage === 1" @click="currentPage = 1">&laquo;</CPaginationItem>
+              <CPaginationItem :disabled="currentPage === 1" @click="currentPage--">&lsaquo;</CPaginationItem>
+              <CPaginationItem
+                v-for="page in visiblePages"
+                :key="page"
+                :active="page === currentPage"
+                @click="currentPage = page"
+              >
+                {{ page }}
+              </CPaginationItem>
+              <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage++">&rsaquo;</CPaginationItem>
+              <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage = totalPages">&raquo;</CPaginationItem>
+            </CPagination>
+          </div>
         </CCardBody>
       </CCard>
     </CCol>
@@ -221,7 +288,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton,
@@ -247,6 +314,11 @@ const filters = ref({
   search: ''
 })
 
+const sortKey = ref('name')
+const sortOrder = ref('asc')
+const perPage = ref(20)
+const currentPage = ref(1)
+
 const conditionLabel = {
   bueno: 'Bueno',
   regular: 'Regular',
@@ -266,12 +338,81 @@ const conditionColor = (condition) => {
   return colors[condition] || 'secondary'
 }
 
-const supplyItems = computed(() => {
-  return items.value.filter(item => item.type === 'supply')
+function toggleSort(key) {
+  if (sortKey.value === key) {
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortOrder.value = 'asc'
+  }
+}
+
+function sortIcon(key) {
+  if (sortKey.value !== key) return ''
+  return sortOrder.value === 'asc' ? '▲' : '▼'
+}
+
+const supplyItems = computed(() => items.value.filter(item => item.type === 'supply'))
+const assetItems = computed(() => items.value.filter(item => item.type === 'asset'))
+
+const activeFilteredItems = computed(() => {
+  let result = activeTab.value === 'supply' ? supplyItems.value : assetItems.value
+
+  if (sortKey.value) {
+    const key = sortKey.value
+    const dir = sortOrder.value === 'asc' ? 1 : -1
+    result = [...result].sort((a, b) => {
+      let va, vb
+      if (key === 'quantity' || key === 'unit_cost') {
+        va = parseFloat(a[key]) || 0
+        vb = parseFloat(b[key]) || 0
+      } else if (key === 'category') {
+        va = (a.category?.name || '').toLowerCase()
+        vb = (b.category?.name || '').toLowerCase()
+      } else if (key === 'venue') {
+        va = (a.venue_data?.name || '').toLowerCase()
+        vb = (b.venue_data?.name || '').toLowerCase()
+      } else {
+        va = (a[key] || '').toString().toLowerCase()
+        vb = (b[key] || '').toString().toLowerCase()
+      }
+      if (va < vb) return -1 * dir
+      if (va > vb) return 1 * dir
+      return 0
+    })
+  }
+
+  return result
 })
 
-const assetItems = computed(() => {
-  return items.value.filter(item => item.type === 'asset')
+const totalPages = computed(() => Math.ceil(activeFilteredItems.value.length / perPage.value))
+
+const paginatedItems = computed(() => {
+  const start = (currentPage.value - 1) * perPage.value
+  return activeFilteredItems.value.slice(start, start + perPage.value)
+})
+
+const pageStart = computed(() => {
+  if (activeFilteredItems.value.length === 0) return 0
+  return (currentPage.value - 1) * perPage.value + 1
+})
+
+const pageEnd = computed(() => {
+  return Math.min(currentPage.value * perPage.value, activeFilteredItems.value.length)
+})
+
+const visiblePages = computed(() => {
+  const pages = []
+  const total = totalPages.value
+  const current = currentPage.value
+  let start = Math.max(1, current - 2)
+  let end = Math.min(total, current + 2)
+  if (end - start < 4) {
+    if (start === 1) end = Math.min(total, start + 4)
+    else start = Math.max(1, end - 4)
+  }
+  for (let i = start; i <= end; i++) pages.push(i)
+  return pages
 })
 
 const newItemLink = computed(() => {
@@ -291,6 +432,7 @@ const formatCurrency = (amount) => {
 
 const loadItems = async () => {
   loading.value = true
+  currentPage.value = 1
   try {
     const params = new URLSearchParams()
     if (filters.value.venue_id) params.append('venue_id', filters.value.venue_id)
