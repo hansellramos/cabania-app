@@ -21,27 +21,59 @@
             </CCol>
           </CRow>
 
+          <div class="mb-3">
+            <CFormInput
+              v-model="searchQuery"
+              size="sm"
+              placeholder="Buscar por código, nombre o categoría..."
+            />
+          </div>
           <div v-if="loading" class="text-center py-4">
             <CSpinner color="primary" />
           </div>
-          <div v-else-if="messageTemplates.length === 0" class="text-center text-muted py-4">
+          <div v-else-if="filteredTemplates.length === 0" class="text-center text-muted py-4">
             No hay templates de mensajes registrados
           </div>
           <div v-else>
             <CTable hover responsive>
               <CTableHead>
                 <CTableRow>
-                  <CTableHeaderCell>Código</CTableHeaderCell>
-                  <CTableHeaderCell>Nombre</CTableHeaderCell>
-                  <CTableHeaderCell>Categoría</CTableHeaderCell>
-                  <CTableHeaderCell>Venue</CTableHeaderCell>
-                  <CTableHeaderCell>Estado</CTableHeaderCell>
+                  <CTableHeaderCell
+                    style="cursor: pointer; user-select: none;"
+                    @click="toggleSort('code')"
+                  >
+                    Código {{ sortIcon('code') }}
+                  </CTableHeaderCell>
+                  <CTableHeaderCell
+                    style="cursor: pointer; user-select: none;"
+                    @click="toggleSort('name')"
+                  >
+                    Nombre {{ sortIcon('name') }}
+                  </CTableHeaderCell>
+                  <CTableHeaderCell
+                    style="cursor: pointer; user-select: none;"
+                    @click="toggleSort('category')"
+                  >
+                    Categoría {{ sortIcon('category') }}
+                  </CTableHeaderCell>
+                  <CTableHeaderCell
+                    style="cursor: pointer; user-select: none;"
+                    @click="toggleSort('venue')"
+                  >
+                    Venue {{ sortIcon('venue') }}
+                  </CTableHeaderCell>
+                  <CTableHeaderCell
+                    style="cursor: pointer; user-select: none;"
+                    @click="toggleSort('is_active')"
+                  >
+                    Estado {{ sortIcon('is_active') }}
+                  </CTableHeaderCell>
                   <CTableHeaderCell v-if="isDev">Twilio</CTableHeaderCell>
                   <CTableHeaderCell class="text-end">Acciones</CTableHeaderCell>
                 </CTableRow>
               </CTableHead>
               <CTableBody>
-                <CTableRow v-for="template in messageTemplates" :key="template.id">
+                <CTableRow v-for="template in paginatedTemplates" :key="template.id">
                   <CTableDataCell>
                     <code>{{ template.code }}</code>
                   </CTableDataCell>
@@ -100,6 +132,26 @@
                 </CTableRow>
               </CTableBody>
             </CTable>
+
+            <div v-if="totalPages > 1" class="d-flex flex-wrap align-items-center justify-content-between mt-3 gap-2">
+              <div class="small text-muted">
+                Mostrando {{ pageStart }}-{{ pageEnd }} de {{ filteredTemplates.length }} registros
+              </div>
+              <CPagination size="sm" class="mb-0">
+                <CPaginationItem :disabled="currentPage === 1" @click="currentPage = 1">&laquo;</CPaginationItem>
+                <CPaginationItem :disabled="currentPage === 1" @click="currentPage--">&lsaquo;</CPaginationItem>
+                <CPaginationItem
+                  v-for="page in visiblePages"
+                  :key="page"
+                  :active="page === currentPage"
+                  @click="currentPage = page"
+                >
+                  {{ page }}
+                </CPaginationItem>
+                <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage++">&rsaquo;</CPaginationItem>
+                <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage = totalPages">&raquo;</CPaginationItem>
+              </CPagination>
+            </div>
           </div>
         </CCardBody>
       </CCard>
@@ -254,12 +306,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CSpinner,
   CTable, CTableHead, CTableRow, CTableHeaderCell, CTableBody, CTableDataCell,
   CBadge, CModal, CModalHeader, CModalTitle, CModalBody, CModalFooter,
-  CForm, CFormLabel, CFormInput, CFormTextarea, CFormSelect, CFormCheck
+  CForm, CFormLabel, CFormInput, CFormTextarea, CFormSelect, CFormCheck,
+  CPagination, CPaginationItem
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 import { fetchVenues } from '@/services/venueService'
@@ -269,6 +322,90 @@ const settingsStore = useSettingsStore()
 const isDev = computed(() => settingsStore.developmentMode)
 
 const messageTemplates = ref([])
+const searchQuery = ref('')
+const sortKey = ref('name')
+const sortOrder = ref('asc')
+const perPage = ref(20)
+const currentPage = ref(1)
+
+function toggleSort(key) {
+  if (sortKey.value === key) {
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortOrder.value = 'asc'
+  }
+}
+
+function sortIcon(key) {
+  if (sortKey.value !== key) return ''
+  return sortOrder.value === 'asc' ? '▲' : '▼'
+}
+
+const filteredTemplates = computed(() => {
+  let result = messageTemplates.value
+
+  if (searchQuery.value) {
+    const q = searchQuery.value.toLowerCase()
+    result = result.filter(t =>
+      (t.code && t.code.toLowerCase().includes(q)) ||
+      (t.name && t.name.toLowerCase().includes(q)) ||
+      (t.category && t.category.toLowerCase().includes(q))
+    )
+  }
+
+  if (sortKey.value) {
+    const key = sortKey.value
+    const dir = sortOrder.value === 'asc' ? 1 : -1
+    result = [...result].sort((a, b) => {
+      let va, vb
+      if (key === 'venue') {
+        va = (a.venue?.name || 'Global').toLowerCase()
+        vb = (b.venue?.name || 'Global').toLowerCase()
+      } else {
+        va = (a[key] || '').toString().toLowerCase()
+        vb = (b[key] || '').toString().toLowerCase()
+      }
+      if (va < vb) return -1 * dir
+      if (va > vb) return 1 * dir
+      return 0
+    })
+  }
+
+  return result
+})
+
+const totalPages = computed(() => Math.ceil(filteredTemplates.value.length / perPage.value))
+
+const paginatedTemplates = computed(() => {
+  const start = (currentPage.value - 1) * perPage.value
+  return filteredTemplates.value.slice(start, start + perPage.value)
+})
+
+const pageStart = computed(() => {
+  if (filteredTemplates.value.length === 0) return 0
+  return (currentPage.value - 1) * perPage.value + 1
+})
+
+const pageEnd = computed(() => {
+  return Math.min(currentPage.value * perPage.value, filteredTemplates.value.length)
+})
+
+const visiblePages = computed(() => {
+  const pages = []
+  const total = totalPages.value
+  const current = currentPage.value
+  let start = Math.max(1, current - 2)
+  let end = Math.min(total, current + 2)
+  if (end - start < 4) {
+    if (start === 1) end = Math.min(total, start + 4)
+    else start = Math.max(1, end - 4)
+  }
+  for (let i = start; i <= end; i++) pages.push(i)
+  return pages
+})
+
+watch(searchQuery, () => { currentPage.value = 1 })
 const venues = ref([])
 const selectedVenueId = ref('')
 const loading = ref(false)

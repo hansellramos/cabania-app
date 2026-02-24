@@ -9,7 +9,7 @@
     <CCardBody>
       <div class="mb-3">
         <label class="form-label">Filter by Name:</label>
-        <input type="text" v-model="nameInput" @input="onNameInput" class="form-control" placeholder="Search full name" />
+        <input type="text" v-model="nameInput" @input="onNameInput" class="form-control form-control-sm" placeholder="Search full name" />
         <ul v-if="filteredNames.length" class="list-group position-absolute z-3">
           <li v-for="name in filteredNames" :key="name" class="list-group-item list-group-item-action" @click="selectName(name)">{{ name }}</li>
         </ul>
@@ -23,16 +23,34 @@
       <CTable hover responsive>
         <CTableHead>
           <CTableRow>
-            <CTableHeaderCell scope="col">Full Name</CTableHeaderCell>
+            <CTableHeaderCell
+              scope="col"
+              style="cursor: pointer; user-select: none;"
+              @click="toggleSort('fullname')"
+            >
+              Full Name {{ sortIcon('fullname') }}
+            </CTableHeaderCell>
             <CTableHeaderCell scope="col">WhatsApp</CTableHeaderCell>
-            <CTableHeaderCell scope="col">Country</CTableHeaderCell>
+            <CTableHeaderCell
+              scope="col"
+              style="cursor: pointer; user-select: none;"
+              @click="toggleSort('country')"
+            >
+              Country {{ sortIcon('country') }}
+            </CTableHeaderCell>
             <CTableHeaderCell scope="col">State</CTableHeaderCell>
-            <CTableHeaderCell scope="col">City</CTableHeaderCell>
+            <CTableHeaderCell
+              scope="col"
+              style="cursor: pointer; user-select: none;"
+              @click="toggleSort('city')"
+            >
+              City {{ sortIcon('city') }}
+            </CTableHeaderCell>
             <CTableHeaderCell scope="col">Actions</CTableHeaderCell>
           </CTableRow>
         </CTableHead>
         <CTableBody>
-          <CTableRow v-for="contact in contacts" :key="contact.id">
+          <CTableRow v-for="contact in paginatedContacts" :key="contact.id">
             <CTableDataCell>
               <RouterLink :to="`/business/contacts/${contact.id}/read`" class="text-decoration-none">
                 {{ contact.fullname }}
@@ -49,12 +67,32 @@
           </CTableRow>
         </CTableBody>
       </CTable>
+
+      <div v-if="totalPages > 1" class="d-flex flex-wrap align-items-center justify-content-between mt-3 gap-2">
+        <div class="small text-muted">
+          Mostrando {{ pageStart }}-{{ pageEnd }} de {{ sortedContacts.length }} registros
+        </div>
+        <CPagination size="sm" class="mb-0">
+          <CPaginationItem :disabled="currentPage === 1" @click="currentPage = 1">&laquo;</CPaginationItem>
+          <CPaginationItem :disabled="currentPage === 1" @click="currentPage--">&lsaquo;</CPaginationItem>
+          <CPaginationItem
+            v-for="page in visiblePages"
+            :key="page"
+            :active="page === currentPage"
+            @click="currentPage = page"
+          >
+            {{ page }}
+          </CPaginationItem>
+          <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage++">&rsaquo;</CPaginationItem>
+          <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage = totalPages">&raquo;</CPaginationItem>
+        </CPagination>
+      </div>
     </CCardBody>
   </CCard>
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { fetchContacts, deleteContact } from '@/services/contactService'
 import { useSettingsStore } from '@/stores/settings'
@@ -69,9 +107,77 @@ const router = useRouter()
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
 
+const sortKey = ref('fullname')
+const sortOrder = ref('asc')
+const perPage = ref(20)
+const currentPage = ref(1)
+
+function toggleSort(key) {
+  if (sortKey.value === key) {
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortOrder.value = 'asc'
+  }
+}
+
+function sortIcon(key) {
+  if (sortKey.value !== key) return ''
+  return sortOrder.value === 'asc' ? '▲' : '▼'
+}
+
+const sortedContacts = computed(() => {
+  let result = contacts.value
+
+  if (sortKey.value) {
+    const key = sortKey.value
+    const dir = sortOrder.value === 'asc' ? 1 : -1
+    result = [...result].sort((a, b) => {
+      let va = (a[key] || '').toString().toLowerCase()
+      let vb = (b[key] || '').toString().toLowerCase()
+      if (va < vb) return -1 * dir
+      if (va > vb) return 1 * dir
+      return 0
+    })
+  }
+
+  return result
+})
+
+const totalPages = computed(() => Math.ceil(sortedContacts.value.length / perPage.value))
+
+const paginatedContacts = computed(() => {
+  const start = (currentPage.value - 1) * perPage.value
+  return sortedContacts.value.slice(start, start + perPage.value)
+})
+
+const pageStart = computed(() => {
+  if (sortedContacts.value.length === 0) return 0
+  return (currentPage.value - 1) * perPage.value + 1
+})
+
+const pageEnd = computed(() => {
+  return Math.min(currentPage.value * perPage.value, sortedContacts.value.length)
+})
+
+const visiblePages = computed(() => {
+  const pages = []
+  const total = totalPages.value
+  const current = currentPage.value
+  let start = Math.max(1, current - 2)
+  let end = Math.min(total, current + 2)
+  if (end - start < 4) {
+    if (start === 1) end = Math.min(total, start + 4)
+    else start = Math.max(1, end - 4)
+  }
+  for (let i = start; i <= end; i++) pages.push(i)
+  return pages
+})
+
 async function loadContacts(names = []) {
   const viewAll = user.value?.is_super_admin ? settingsStore.godModeViewAll : false
   contacts.value = await fetchContacts({ viewAll })
+  currentPage.value = 1
 }
 
 async function loadAllContacts() {
