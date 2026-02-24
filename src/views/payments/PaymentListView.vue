@@ -12,10 +12,7 @@
           <CRow class="mb-3 g-2">
             <CCol :md="2">
               <CFormLabel class="small">Base contable</CFormLabel>
-              <CFormSelect v-model="filters.basis" size="sm">
-                <option value="cash">Caja (fecha pago)</option>
-                <option value="accrual">Devengo (fecha hospedaje)</option>
-              </CFormSelect>
+              <ToggleButtonGroup v-model="filters.basis" :options="basisOptions" />
             </CCol>
             <CCol :md="2">
               <CFormLabel class="small">Método de pago</CFormLabel>
@@ -272,8 +269,14 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import { cilCheckAlt, cilX, cilPencil, cilTrash, cilImage } from '@coreui/icons'
+import ToggleButtonGroup from '@/components/ToggleButtonGroup.vue'
 
 const router = useRouter()
+
+const basisOptions = [
+  { value: 'cash', label: 'Caja' },
+  { value: 'accrual', label: 'Devengo' },
+]
 const payments = ref([])
 const searchQuery = ref('')
 const showDeleteModal = ref(false)

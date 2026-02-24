@@ -31,10 +31,7 @@
           </CCol>
           <CCol :xs="6" :md="3" :lg="2">
             <label class="form-label">Base contable</label>
-            <CFormSelect v-model="selectedBasis" @change="loadAllData">
-              <option value="cash">Caja</option>
-              <option value="accrual">Devengo</option>
-            </CFormSelect>
+            <ToggleButtonGroup v-model="selectedBasis" :options="basisOptions" @update:modelValue="loadAllData" />
           </CCol>
         </CRow>
       </CCardBody>
@@ -165,8 +162,14 @@ import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
+import ToggleButtonGroup from '@/components/ToggleButtonGroup.vue'
 
 const settingsStore = useSettingsStore()
+
+const basisOptions = [
+  { value: 'cash', label: 'Caja' },
+  { value: 'accrual', label: 'Devengo' },
+]
 const { user } = useAuth()
 
 const periodOptions = [
