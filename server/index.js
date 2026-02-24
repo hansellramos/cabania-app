@@ -469,6 +469,373 @@ async function startServer() {
     }
   });
 
+  // Public venue page endpoint (no auth)
+  app.get('/api/public/venues/:slug', async (req, res) => {
+    try {
+      const venue = await prisma.venues.findUnique({
+        where: { slug: req.params.slug }
+      });
+      if (!venue || !venue.is_public) {
+        return res.status(404).json({ error: 'Venue not found' });
+      }
+
+      // Load images, amenities, and plans in parallel
+      const [images, venueAmenityLinks, plans] = await Promise.all([
+        prisma.venue_images.findMany({
+          where: { venue_id: venue.id },
+          orderBy: { sort_order: 'asc' }
+        }),
+        prisma.venue_amenities.findMany({
+          where: { venue_id: venue.id }
+        }),
+        prisma.venue_plans.findMany({
+          where: { venue_id: venue.id, is_active: true },
+          orderBy: { name: 'asc' }
+        })
+      ]);
+
+      // Resolve amenity details
+      const amenityIds = venueAmenityLinks.map(va => va.amenity_id);
+      const amenities = amenityIds.length > 0
+        ? await prisma.amenities.findMany({ where: { id: { in: amenityIds }, is_active: true } })
+        : [];
+
+      // Load plan amenities
+      const planIds = plans.map(p => p.id);
+      const planAmenityLinks = planIds.length > 0
+        ? await prisma.plan_amenities.findMany({ where: { plan_id: { in: planIds } } })
+        : [];
+      const planAmenityIds = [...new Set(planAmenityLinks.map(pa => pa.amenity_id))];
+      const planAmenities = planAmenityIds.length > 0
+        ? await prisma.amenities.findMany({ where: { id: { in: planAmenityIds } } })
+        : [];
+      const amenityMap = {};
+      for (const a of planAmenities) amenityMap[a.id] = a;
+
+      const plansWithAmenities = plans.map(p => {
+        const pAmenities = planAmenityLinks
+          .filter(pa => pa.plan_id === p.id)
+          .map(pa => ({ ...amenityMap[pa.amenity_id], quantity: pa.quantity, notes: pa.notes }))
+          .filter(Boolean);
+        return { ...p, amenities: pAmenities };
+      });
+
+      // Return only public-safe fields
+      res.json({
+        venue: {
+          id: venue.id, name: venue.name, slug: venue.slug,
+          whatsapp: venue.whatsapp, instagram: venue.instagram,
+          address: venue.address, city: venue.city, department: venue.department,
+          suburb: venue.suburb, country: venue.country, address_reference: venue.address_reference,
+          latitude: venue.latitude, longitude: venue.longitude,
+          waze_link: venue.waze_link, google_maps_link: venue.google_maps_link,
+          venue_info: venue.venue_info, delivery_info: venue.delivery_info,
+          brand_color_primary: venue.brand_color_primary,
+          brand_color_secondary: venue.brand_color_secondary,
+          logo_url: venue.logo_url
+        },
+        images,
+        amenities,
+        plans: plansWithAmenities
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Public availability check (no auth, no LLM) — used by booking widget
+  const availabilityRateLimit = new Map(); // IP -> { count, resetAt }
+  app.post('/api/public/venues/:id/availability', async (req, res) => {
+    try {
+      // Rate limit: 10 requests per minute per IP
+      const ip = req.ip || req.connection.remoteAddress;
+      const now = Date.now();
+      const rl = availabilityRateLimit.get(ip);
+      if (rl && rl.resetAt > now) {
+        if (rl.count >= 10) {
+          return res.status(429).json({ error: 'Demasiadas consultas. Intenta en un momento.' });
+        }
+        rl.count++;
+      } else {
+        availabilityRateLimit.set(ip, { count: 1, resetAt: now + 60000 });
+      }
+      // Cleanup stale entries every 100 requests
+      if (availabilityRateLimit.size > 500) {
+        for (const [k, v] of availabilityRateLimit) {
+          if (v.resetAt <= now) availabilityRateLimit.delete(k);
+        }
+      }
+
+      const venueId = req.params.id;
+      const { check_in, check_out, adults, children, plan_id } = req.body;
+
+      if (!check_in) {
+        return res.status(400).json({ error: 'check_in es requerido' });
+      }
+
+      const venue = await prisma.venues.findUnique({ where: { id: venueId } });
+      if (!venue || !venue.is_public) {
+        return res.status(404).json({ error: 'Venue not found' });
+      }
+
+      // Parse and validate dates
+      const checkInDate = new Date(check_in);
+      const checkOutDate = check_out ? new Date(check_out) : checkInDate;
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
+      const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
+
+      if (checkInDay < today) {
+        return res.status(400).json({ error: 'La fecha de llegada está en el pasado.' });
+      }
+      if (checkOutDay < checkInDay) {
+        return res.status(400).json({ error: 'La fecha de salida debe ser igual o posterior a la de llegada.' });
+      }
+
+      const numAdults = parseInt(adults) || 1;
+      const numChildren = parseInt(children) || 0;
+      const totalGuests = numAdults + numChildren;
+
+      // Check overlapping accommodations
+      const existingAccommodations = await prisma.accommodations.findMany({
+        where: { venue: venueId }
+      });
+
+      let isAvailable = true;
+      for (const acc of existingAccommodations) {
+        const accDate = new Date(acc.date);
+        const durationSeconds = parseInt(acc.duration) || 43200;
+        const accEndDate = new Date(accDate.getTime() + durationSeconds * 1000);
+        const accStartDay = new Date(accDate.getUTCFullYear(), accDate.getUTCMonth(), accDate.getUTCDate());
+        const accEndDay = new Date(accEndDate.getUTCFullYear(), accEndDate.getUTCMonth(), accEndDate.getUTCDate());
+
+        if (accStartDay <= checkOutDay && accEndDay >= checkInDay) {
+          isAvailable = false;
+          break;
+        }
+      }
+
+      // Load active plans for this venue
+      const plans = await prisma.venue_plans.findMany({
+        where: { venue_id: venueId, is_active: true },
+        orderBy: { name: 'asc' }
+      });
+
+      // Filter suitable plans by guest count (and optionally by plan_id)
+      const suitablePlans = plans.filter(p => {
+        const planMin = p.min_guests || 1;
+        const planMax = p.max_capacity || 999;
+        const fits = totalGuests >= planMin && totalGuests <= planMax;
+        return plan_id ? (fits && p.id === plan_id) : fits;
+      }).map(p => {
+        const adultTotal = numAdults * parseFloat(p.adult_price);
+        const childTotal = numChildren * parseFloat(p.child_price);
+        return {
+          id: p.id,
+          name: p.name,
+          plan_type: p.plan_type,
+          adult_price: parseFloat(p.adult_price),
+          child_price: parseFloat(p.child_price),
+          estimated_total: adultTotal + childTotal,
+          check_in_time: p.check_in_time,
+          check_out_time: p.check_out_time,
+          includes_overnight: p.includes_overnight
+        };
+      });
+
+      // Get next available dates if not available
+      let nextAvailableDates = [];
+      if (!isAvailable) {
+        const checkInDayOfWeek = checkInDate.getDay();
+        const preferWeekends = checkInDayOfWeek === 0 || checkInDayOfWeek === 6;
+        const stayLength = Math.max(1, Math.ceil((checkOutDay - checkInDay) / (1000 * 60 * 60 * 24)) + 1);
+        nextAvailableDates = llmService.getNextAvailableDates(existingAccommodations, checkInDate, {
+          preferWeekends,
+          stayLength,
+          numDays: 30
+        });
+      }
+
+      res.json({
+        is_available: isAvailable,
+        check_in: check_in,
+        check_out: check_out || check_in,
+        adults: numAdults,
+        children: numChildren,
+        total_guests: totalGuests,
+        suitable_plans: suitablePlans,
+        next_available_dates: nextAvailableDates
+      });
+    } catch (error) {
+      console.error('Availability check error:', error);
+      res.status(500).json({ error: 'Error checking availability' });
+    }
+  });
+
+  // Public conversation loader (no auth) — restores chat for returning visitors
+  app.get('/api/public/chat/conversation/:id', async (req, res) => {
+    try {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(req.params.id)) {
+        return res.status(400).json({ error: 'Invalid conversation ID' });
+      }
+
+      const conversation = await prisma.chat_conversations.findUnique({
+        where: { id: req.params.id },
+        include: {
+          messages: {
+            orderBy: { created_at: 'asc' },
+            select: { role: true, content: true, created_at: true }
+          }
+        }
+      });
+
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const messages = conversation.messages.map(m => ({
+        role: m.role,
+        content: m.content.replace(/\n<!-- \{.*?\} -->/g, ''),
+        created_at: m.created_at
+      }));
+
+      const messageCount = messages.filter(m => m.role === 'user').length;
+      const limitSetting = await prisma.app_settings.findUnique({
+        where: { setting_key: 'public_chat_free_limit' }
+      });
+      const freeLimit = parseInt(limitSetting?.setting_value) || 20;
+      const isVerified = conversation.metadata?.verified === true;
+
+      res.json({
+        id: conversation.id,
+        venue_id: conversation.venue_id,
+        name: conversation.name,
+        phone: conversation.phone,
+        messages,
+        message_count: messageCount,
+        free_limit: freeLimit,
+        is_verified: isVerified
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Request verification code for public chat
+  app.post('/api/public/chat/verify/request', async (req, res) => {
+    try {
+      const { conversation_id, phone } = req.body;
+      if (!conversation_id || !phone) {
+        return res.status(400).json({ error: 'conversation_id and phone are required' });
+      }
+
+      const conversation = await prisma.chat_conversations.findUnique({
+        where: { id: conversation_id }
+      });
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Rate limit: max 3 requests per hour
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const recentRequests = await prisma.public_chat_verifications.count({
+        where: { conversation_id, created_at: { gte: oneHourAgo } }
+      });
+      if (recentRequests >= 3) {
+        return res.status(429).json({ error: 'Demasiadas solicitudes. Intenta de nuevo en una hora.' });
+      }
+
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+
+      await prisma.public_chat_verifications.create({
+        data: {
+          conversation_id,
+          phone,
+          code,
+          expires_at: new Date(Date.now() + 10 * 60 * 1000)
+        }
+      });
+
+      // TODO: Send code via WhatsApp (future integration)
+      const response = { success: true, message: 'Código de verificación generado' };
+      if (process.env.NODE_ENV !== 'production') {
+        response.code = code; // Dev only
+      }
+      res.json(response);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Confirm verification code for public chat
+  app.post('/api/public/chat/verify/confirm', async (req, res) => {
+    try {
+      const { conversation_id, code } = req.body;
+      if (!conversation_id || !code) {
+        return res.status(400).json({ error: 'conversation_id and code are required' });
+      }
+
+      const verification = await prisma.public_chat_verifications.findFirst({
+        where: {
+          conversation_id,
+          status: 'pending',
+          expires_at: { gte: new Date() }
+        },
+        orderBy: { created_at: 'desc' }
+      });
+
+      if (!verification) {
+        return res.status(404).json({ error: 'No hay código pendiente o ya expiró' });
+      }
+
+      if (verification.attempts >= 5) {
+        await prisma.public_chat_verifications.update({
+          where: { id: verification.id },
+          data: { status: 'expired' }
+        });
+        return res.status(429).json({ error: 'Demasiados intentos. Solicita un nuevo código.' });
+      }
+
+      await prisma.public_chat_verifications.update({
+        where: { id: verification.id },
+        data: { attempts: verification.attempts + 1 }
+      });
+
+      if (verification.code !== code.trim()) {
+        return res.status(400).json({
+          error: 'Código incorrecto',
+          attempts_remaining: 5 - (verification.attempts + 1)
+        });
+      }
+
+      // Mark verified
+      await prisma.public_chat_verifications.update({
+        where: { id: verification.id },
+        data: { status: 'verified', verified_at: new Date() }
+      });
+
+      // Update conversation metadata
+      const conversation = await prisma.chat_conversations.findUnique({
+        where: { id: conversation_id }
+      });
+      const metadata = conversation.metadata || {};
+      metadata.verified = true;
+      metadata.verified_at = new Date().toISOString();
+      metadata.verified_phone = verification.phone;
+
+      await prisma.chat_conversations.update({
+        where: { id: conversation_id },
+        data: { metadata, phone: verification.phone, updated_at: new Date() }
+      });
+
+      res.json({ success: true, verified: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get('/api/venues/:id', async (req, res) => {
     try {
       const venue = await prisma.venues.findUnique({
@@ -500,6 +867,26 @@ async function startServer() {
       if (data.deposit_refund_hours !== undefined) {
         data.deposit_refund_hours = data.deposit_refund_hours ? parseInt(data.deposit_refund_hours, 10) : null;
       }
+
+      // Auto-generate slug when is_public=true and slug is empty
+      if (data.is_public && !data.slug && data.name) {
+        let baseSlug = data.name
+          .toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
+          .replace(/[^a-z0-9\s-]/g, '')
+          .replace(/\s+/g, '-')
+          .replace(/-+/g, '-')
+          .replace(/^-|-$/g, '');
+        let slug = baseSlug;
+        let suffix = 1;
+        while (true) {
+          const existing = await prisma.venues.findUnique({ where: { slug } });
+          if (!existing || existing.id === req.params.id) break;
+          slug = `${baseSlug}-${suffix++}`;
+        }
+        data.slug = slug;
+      }
+
       const venue = await prisma.venues.update({
         where: { id: req.params.id },
         data
@@ -5689,13 +6076,47 @@ REGLAS:
             venue_id,
             source,
             external_id: externalId,
-            phone,
-            name: userName
+            phone: phone || req.body.visitor_phone || null,
+            name: userName || req.body.visitor_name || null
           }
         });
         conversation.messages = [];
       }
-      
+
+      // Update visitor info if provided
+      if (req.body.visitor_name || req.body.visitor_phone) {
+        const updateData = { updated_at: new Date() };
+        if (req.body.visitor_name && !conversation.name) updateData.name = req.body.visitor_name;
+        if (req.body.visitor_phone && !conversation.phone) updateData.phone = req.body.visitor_phone;
+        if (Object.keys(updateData).length > 1) {
+          await prisma.chat_conversations.update({
+            where: { id: conversation.id },
+            data: updateData
+          });
+        }
+      }
+
+      // Check free tier limit for public (non-authenticated) requests
+      if (!req.user) {
+        const limitSetting = await prisma.app_settings.findUnique({
+          where: { setting_key: 'public_chat_free_limit' }
+        });
+        const freeLimit = parseInt(limitSetting?.setting_value) || 20;
+        const isVerified = conversation.metadata?.verified === true;
+        const userMsgCount = conversation.messages
+          ? conversation.messages.filter(m => m.role === 'user').length
+          : 0;
+
+        if (!isVerified && userMsgCount >= freeLimit) {
+          return res.status(403).json({
+            error: 'free_limit_reached',
+            message_count: userMsgCount,
+            free_limit: freeLimit,
+            requires_verification: true
+          });
+        }
+      }
+
       // Save user message
       await prisma.chat_messages.create({
         data: {
@@ -6161,6 +6582,14 @@ REGLAS:
         data: { updated_at: new Date() }
       });
 
+      // Count user messages for limit tracking
+      const updatedMsgCount = await prisma.chat_messages.count({
+        where: { conversation_id: conversation.id, role: 'user' }
+      });
+      const limitSetting2 = await prisma.app_settings.findUnique({
+        where: { setting_key: 'public_chat_free_limit' }
+      });
+
       // Audit log for chat
       chatTotalInputTokens += llmResponse.usage?.prompt_tokens || 0;
       chatTotalOutputTokens += llmResponse.usage?.completion_tokens || 0;
@@ -6185,7 +6614,10 @@ REGLAS:
         message: llmResponse.content,
         provider: chatProviderCode,
         model: llmResponse.model,
-        tokens_used: llmResponse.usage?.total_tokens
+        tokens_used: llmResponse.usage?.total_tokens,
+        message_count: updatedMsgCount,
+        free_limit: parseInt(limitSetting2?.setting_value) || 20,
+        is_verified: conversation.metadata?.verified === true
       });
     } catch (error) {
       console.error('Chat error:', error);

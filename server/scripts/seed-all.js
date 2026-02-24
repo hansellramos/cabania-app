@@ -11,6 +11,7 @@ const seeds = [
   { name: 'amenities', fn: require('./seeds/amenities') },
   { name: 'countries', fn: require('./seeds/countries') },
   { name: 'states', fn: require('./seeds/states') },
+  { name: 'app_settings', fn: require('./seeds/app-settings') },
 ];
 
 async function seedAll() {
