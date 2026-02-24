@@ -430,17 +430,19 @@ model deposit_evidence {
 }
 
 model llm_providers {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code       String    @unique @db.VarChar(50)
-  name       String    @db.VarChar(100)
-  api_key    String?
-  base_url   String?
-  model      String?   @db.VarChar(100)
-  is_active  Boolean   @default(true)
-  is_default Boolean   @default(false)
-  config     Json?     @db.Json
-  created_at DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at DateTime? @db.Timestamptz(6)
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                  String    @unique @db.VarChar(50)
+  name                  String    @db.VarChar(100)
+  api_key               String?
+  base_url              String?
+  model                 String?   @db.VarChar(100)
+  is_active             Boolean   @default(true)
+  is_default            Boolean   @default(false)
+  config                Json?     @db.Json
+  input_price_per_mtok  Decimal?  @db.Decimal(10, 4)
+  output_price_per_mtok Decimal?  @db.Decimal(10, 4)
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime? @db.Timestamptz(6)
 }
 
 model ai_settings {
@@ -742,6 +744,37 @@ model commission_rules {
   agent        commission_agents @relation(fields: [agent_id], references: [id], onDelete: Cascade)
 
   @@index([agent_id, plan_type, sort_order])
+}
+
+// ========================================
+// AI AUDIT LOGS
+// ========================================
+
+model ai_audit_logs {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id            String?   @db.Uuid
+  feature             String    @db.VarChar(50)
+  provider_code       String    @db.VarChar(50)
+  model               String    @db.VarChar(100)
+  system_prompt       String?
+  user_prompt         String?
+  response_content    String?
+  input_tokens        Int?
+  output_tokens       Int?
+  response_time_ms    Int?
+  request_size_bytes  Int?
+  response_size_bytes Int?
+  cost_estimate       Decimal?  @db.Decimal
+  user_id             String?   @db.VarChar(255)
+  accommodation_id    String?   @db.Uuid
+  conversation_id     String?   @db.Uuid
+  error               String?
+  metadata            Json?     @db.Json
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([venue_id])
+  @@index([feature])
+  @@index([created_at])
 }
 
 model commission_payments {
