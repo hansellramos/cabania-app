@@ -17,11 +17,12 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { computed } from 'vue'
+import { useColorModes } from '@coreui/vue'
 
-const THEME_KEY = 'coreui-free-vue-admin-template-theme'
+const { colorMode, setColorMode } = useColorModes('coreui-free-vue-admin-template-theme')
 
-const theme = ref(localStorage.getItem(THEME_KEY) || 'auto')
+const theme = computed(() => colorMode.value || 'auto')
 
 const themeLabel = computed(() => {
   const labels = { light: 'Tema claro', dark: 'Tema oscuro', auto: 'Automático' }
@@ -31,11 +32,8 @@ const themeLabel = computed(() => {
 const cycleTheme = () => {
   const order = ['light', 'dark', 'auto']
   const idx = order.indexOf(theme.value)
-  theme.value = order[(idx + 1) % 3]
-  localStorage.setItem(THEME_KEY, theme.value)
+  setColorMode(order[(idx + 1) % 3])
 }
-
-defineExpose({ theme })
 </script>
 
 <style scoped>

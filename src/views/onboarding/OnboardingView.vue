@@ -1,5 +1,5 @@
 <template>
-  <div class="onboarding-wrapper">
+  <div class="onboarding-wrapper" :data-theme="resolvedTheme">
     <ThemeToggle />
 
     <!-- Background glow orbs -->
@@ -17,13 +17,13 @@
           <img src="/logo-wordmark.svg" alt="CabanIA" class="onboarding-logo-wordmark" />
         </div>
         <h2 class="onboarding-title">Bienvenido a CabanIA</h2>
-        <p class="onboarding-subtitle" v-if="currentStep <= 6">Configura tu propiedad paso a paso</p>
+        <p class="onboarding-subtitle" v-if="currentStep <= 5">Configura tu propiedad paso a paso</p>
       </div>
 
       <!-- Progress Bar -->
-      <div class="step-progress mb-4" v-if="currentStep <= 7">
+      <div class="step-progress mb-4" v-if="currentStep <= 6">
         <div
-          v-for="s in 7"
+          v-for="s in 6"
           :key="s"
           class="step-dot"
           :class="{
@@ -64,55 +64,85 @@
           @completed="onStepCompleted"
           @back="goBack"
         />
-        <ChatPreviewStep
+        <AmenitiesStep
           v-if="currentStep === 3"
           :venue-id="venueId"
+          :saved-data="getStepData(3)"
           @completed="onStepCompleted"
           @back="goBack"
         />
-        <AmenitiesStep
+        <CreatePlanStep
           v-if="currentStep === 4"
           :venue-id="venueId"
           :saved-data="getStepData(4)"
           @completed="onStepCompleted"
           @back="goBack"
         />
-        <CreatePlanStep
-          v-if="currentStep === 5"
-          :venue-id="venueId"
-          :saved-data="getStepData(5)"
-          @completed="onStepCompleted"
-          @back="goBack"
-        />
         <AvailabilityStep
-          v-if="currentStep === 6"
+          v-if="currentStep === 5"
           :venue-id="venueId"
           @completed="onStepCompleted"
           @back="goBack"
         />
         <TourStep
-          v-if="currentStep === 7"
+          v-if="currentStep === 6"
           @completed="finishOnboarding"
         />
       </template>
     </div>
+
+    <!-- Floating chat bubble (appears after venue is created) -->
+    <ChatBubbleWidget
+      v-if="venueId"
+      ref="chatRef"
+      :venue-id="venueId"
+      :venue="venueData"
+      :suggestions="chatSuggestions"
+      skip-contact-form
+      @panel-toggled="onChatToggled"
+    />
+
+    <!-- Engagement banner (appears after venue creation) -->
+    <Transition name="engage-banner">
+      <div v-if="showEngageBanner" class="engage-banner" @click="openChatFromBanner">
+        <div class="engage-pulse"></div>
+        <div class="engage-content">
+          <strong>Tu IA ya sabe de tu propiedad</strong>
+          <span>Toca para verla en acci&oacute;n</span>
+        </div>
+        <button class="engage-close" @click.stop="showEngageBanner = false">&times;</button>
+      </div>
+    </Transition>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ThemeToggle from '@/components/ThemeToggle.vue'
+import ChatBubbleWidget from '@/components/chat/ChatBubbleWidget.vue'
 import CreateAccountStep from './steps/CreateAccountStep.vue'
 import PropertyInfoStep from './steps/PropertyInfoStep.vue'
 import AmenitiesStep from './steps/AmenitiesStep.vue'
 import CreatePlanStep from './steps/CreatePlanStep.vue'
-import ChatPreviewStep from './steps/ChatPreviewStep.vue'
 import AvailabilityStep from './steps/AvailabilityStep.vue'
 import TourStep from './steps/TourStep.vue'
 
 const route = useRoute()
 const router = useRouter()
+
+// Watch data-coreui-theme on <html> (set by ThemeToggle via useColorModes)
+const resolvedTheme = ref(document.documentElement.getAttribute('data-coreui-theme') || 'light')
+let themeObserver
+onMounted(() => {
+  themeObserver = new MutationObserver(() => {
+    resolvedTheme.value = document.documentElement.getAttribute('data-coreui-theme') || 'light'
+  })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-coreui-theme'] })
+})
+onUnmounted(() => {
+  themeObserver?.disconnect()
+})
 
 const token = computed(() => route.query.token || '')
 const currentStep = ref(1)
@@ -121,8 +151,18 @@ const invitationData = ref(null)
 const tokenError = ref('')
 const initialLoading = ref(true)
 const venueId = ref(null)
+const venueData = ref(null)
+const chatRef = ref(null)
+const showEngageBanner = ref(false)
 
-const stepLabels = ['Cuenta', 'Propiedad', 'Prueba IA', 'Amenidades', 'Plan', 'Disponibilidad', 'Tour']
+const stepLabels = ['Cuenta', 'Propiedad', 'Amenidades', 'Plan', 'Disponibilidad', 'Tour']
+
+const chatSuggestions = [
+  '¿Dónde queda la cabaña?',
+  '¿Cuántas personas caben?',
+  '¿Tienen piscina?',
+  '¿Cuánto cuesta por noche?',
+]
 
 function getStepData(step) {
   return progressData.value[`step${step}`] || null
@@ -130,7 +170,10 @@ function getStepData(step) {
 
 async function onStepCompleted(data) {
   // Save step data to progress
-  if (data?.venueId) venueId.value = data.venueId
+  if (data?.venueId) {
+    venueId.value = data.venueId
+    venueData.value = { name: data.form?.name || 'tu propiedad' }
+  }
 
   const step = currentStep.value
   progressData.value[`step${step}`] = data
@@ -148,6 +191,22 @@ async function onStepCompleted(data) {
   }
 
   currentStep.value = step + 1
+
+  // After venue creation (step 2), show engagement banner
+  if (step === 2 && venueId.value) {
+    setTimeout(() => {
+      showEngageBanner.value = true
+    }, 800)
+  }
+}
+
+function openChatFromBanner() {
+  showEngageBanner.value = false
+  chatRef.value?.open()
+}
+
+function onChatToggled(open) {
+  if (open) showEngageBanner.value = false
 }
 
 function goBack() {
@@ -200,9 +259,10 @@ onMounted(async () => {
       const progress = await response.json()
       progressData.value = progress.data || {}
       currentStep.value = progress.current_step || 2
-      // Recover venueId from saved data
+      // Recover venueId and venue name from saved data
       if (progressData.value.step2?.venueId) {
         venueId.value = progressData.value.step2.venueId
+        venueData.value = { name: progressData.value.step2.form?.name || 'tu propiedad' }
       }
       if (progress.completed_at) {
         router.push('/dashboard')
@@ -220,15 +280,52 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* ── Light theme (default) ── */
 .onboarding-wrapper {
+  --ob-bg: #f1f5f9;
+  --ob-text: #0f172a;
+  --ob-text-secondary: #64748b;
+  --ob-text-muted: #94a3b8;
+  --ob-orb-emerald: rgba(16, 185, 129, 0.15);
+  --ob-orb-sky: rgba(14, 165, 233, 0.15);
+  --ob-orb-bottom: rgba(16, 185, 129, 0.08);
+  --ob-orb-blur: 120px;
+  --ob-step-bg: rgba(0, 0, 0, 0.05);
+  --ob-step-border: rgba(0, 0, 0, 0.08);
+  --ob-step-text: #475569;
+  --ob-engage-strong: #0f172a;
+  --ob-engage-span: #64748b;
+  --ob-engage-close: #94a3b8;
+  --ob-engage-close-hover: #0f172a;
+
   min-height: 100vh;
-  background-color: #020617;
+  background-color: var(--ob-bg);
+  color: var(--ob-text);
   display: flex;
   align-items: flex-start;
   justify-content: center;
   padding: 40px 16px;
   position: relative;
   overflow: hidden;
+}
+
+/* ── Dark theme ── */
+.onboarding-wrapper[data-theme="dark"] {
+  --ob-bg: #020617;
+  --ob-text: #f1f5f9;
+  --ob-text-secondary: #94a3b8;
+  --ob-text-muted: #64748b;
+  --ob-orb-emerald: rgba(16, 185, 129, 0.2);
+  --ob-orb-sky: rgba(14, 165, 233, 0.2);
+  --ob-orb-bottom: rgba(16, 185, 129, 0.1);
+  --ob-orb-blur: 96px;
+  --ob-step-bg: rgba(255, 255, 255, 0.06);
+  --ob-step-border: rgba(255, 255, 255, 0.08);
+  --ob-step-text: #64748b;
+  --ob-engage-strong: #f1f5f9;
+  --ob-engage-span: #94a3b8;
+  --ob-engage-close: #64748b;
+  --ob-engage-close-hover: #f1f5f9;
 }
 
 .onboarding-glow {
@@ -241,7 +338,7 @@ onMounted(async () => {
 .onboarding-orb {
   position: absolute;
   border-radius: 9999px;
-  filter: blur(96px);
+  filter: blur(var(--ob-orb-blur));
 }
 
 .onboarding-orb--emerald {
@@ -249,7 +346,7 @@ onMounted(async () => {
   left: -10%;
   width: 520px;
   height: 520px;
-  background: rgba(16, 185, 129, 0.2);
+  background: var(--ob-orb-emerald);
 }
 
 .onboarding-orb--sky {
@@ -257,7 +354,7 @@ onMounted(async () => {
   right: -10%;
   width: 520px;
   height: 520px;
-  background: rgba(14, 165, 233, 0.2);
+  background: var(--ob-orb-sky);
 }
 
 .onboarding-orb--emerald-bottom {
@@ -265,7 +362,7 @@ onMounted(async () => {
   left: 25%;
   width: 620px;
   height: 620px;
-  background: rgba(16, 185, 129, 0.1);
+  background: var(--ob-orb-bottom);
 }
 
 .onboarding-container {
@@ -297,14 +394,14 @@ onMounted(async () => {
 }
 
 .onboarding-title {
-  color: #f1f5f9;
+  color: var(--ob-text);
   font-weight: 700;
   font-size: 1.5rem;
   margin: 0;
 }
 
 .onboarding-subtitle {
-  color: #94a3b8;
+  color: var(--ob-text-secondary);
   font-size: 0.95rem;
   margin: 4px 0 0;
 }
@@ -333,9 +430,9 @@ onMounted(async () => {
   justify-content: center;
   font-size: 0.8rem;
   font-weight: 600;
-  background: rgba(255, 255, 255, 0.06);
-  color: #64748b;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--ob-step-bg);
+  color: var(--ob-step-text);
+  border: 1px solid var(--ob-step-border);
   transition: all 0.3s;
 }
 
@@ -353,15 +450,252 @@ onMounted(async () => {
 
 .step-label {
   font-size: 0.65rem;
-  color: #475569;
+  color: var(--ob-step-text);
   text-align: center;
 }
 
 .step-dot.active .step-label {
-  color: #f1f5f9;
+  color: var(--ob-text);
 }
 
 .step-dot.completed .step-label {
   color: #10b981;
+}
+
+/* Engagement banner */
+.engage-banner {
+  position: fixed;
+  bottom: 5.5rem;
+  right: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(14, 165, 233, 0.15));
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-radius: 14px;
+  cursor: pointer;
+  z-index: 10002;
+  box-shadow: 0 8px 32px rgba(16, 185, 129, 0.2);
+  max-width: 300px;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.engage-banner:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 40px rgba(16, 185, 129, 0.3);
+}
+
+.engage-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #10b981;
+  flex-shrink: 0;
+  animation: engagePulse 2s ease-in-out infinite;
+}
+
+@keyframes engagePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+}
+
+.engage-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.engage-content strong {
+  color: var(--ob-engage-strong);
+  font-size: 0.85rem;
+  line-height: 1.3;
+}
+
+.engage-content span {
+  color: var(--ob-engage-span);
+  font-size: 0.75rem;
+}
+
+.engage-close {
+  background: none;
+  border: none;
+  color: var(--ob-engage-close);
+  font-size: 1.1rem;
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+  flex-shrink: 0;
+  border-radius: 4px;
+  transition: color 0.2s;
+}
+
+.engage-close:hover {
+  color: var(--ob-engage-close-hover);
+}
+
+/* Engage banner transition */
+.engage-banner-enter-active {
+  transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.engage-banner-leave-active {
+  transition: all 0.25s ease-in;
+}
+
+.engage-banner-enter-from {
+  opacity: 0;
+  transform: translateY(1rem) scale(0.9);
+}
+
+.engage-banner-leave-to {
+  opacity: 0;
+  transform: translateY(0.5rem) scale(0.95);
+}
+
+@media (max-width: 640px) {
+  .engage-banner {
+    bottom: 4.5rem;
+    right: 0.75rem;
+    left: 0.75rem;
+    max-width: none;
+  }
+}
+</style>
+
+<!-- Unscoped: override step card styles based on theme -->
+<style>
+/* Light theme cards */
+.onboarding-wrapper .onboarding-card {
+  background: rgba(255, 255, 255, 0.65) !important;
+  border: 1px solid rgba(255, 255, 255, 0.6) !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  border-radius: 1.5rem !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.08) !important;
+}
+
+.onboarding-wrapper .onboarding-card .card-title {
+  color: #0f172a !important;
+}
+
+.onboarding-wrapper .onboarding-card .text-body-secondary {
+  color: #64748b !important;
+}
+
+/* Dark theme cards */
+.onboarding-wrapper[data-theme="dark"] .onboarding-card {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4) !important;
+}
+
+.onboarding-wrapper[data-theme="dark"] .onboarding-card .card-title {
+  color: #f1f5f9 !important;
+}
+
+.onboarding-wrapper[data-theme="dark"] .onboarding-card .text-body-secondary {
+  color: #94a3b8 !important;
+}
+
+/* Light theme form controls */
+.onboarding-wrapper .form-label,
+.onboarding-wrapper .onboarding-card label {
+  color: #334155 !important;
+}
+
+.onboarding-wrapper .form-control,
+.onboarding-wrapper .form-select {
+  background: rgba(255, 255, 255, 0.6) !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+  color: #0f172a !important;
+}
+
+/* Dark theme form controls */
+.onboarding-wrapper[data-theme="dark"] .form-label,
+.onboarding-wrapper[data-theme="dark"] .onboarding-card label {
+  color: #cbd5e1 !important;
+}
+
+.onboarding-wrapper[data-theme="dark"] .form-control,
+.onboarding-wrapper[data-theme="dark"] .form-select {
+  background: rgba(2, 6, 23, 0.4) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #f1f5f9 !important;
+}
+
+/* Light theme: ThemeToggle overrides */
+.onboarding-wrapper .theme-toggle {
+  background: rgba(0, 0, 0, 0.05) !important;
+  border-color: rgba(0, 0, 0, 0.1) !important;
+  color: #64748b !important;
+}
+.onboarding-wrapper .theme-toggle:hover {
+  background: rgba(0, 0, 0, 0.1) !important;
+  color: #0f172a !important;
+}
+
+/* Dark theme: ThemeToggle keeps its own defaults */
+.onboarding-wrapper[data-theme="dark"] .theme-toggle {
+  background: rgba(255, 255, 255, 0.05) !important;
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #94a3b8 !important;
+}
+.onboarding-wrapper[data-theme="dark"] .theme-toggle:hover {
+  background: rgba(255, 255, 255, 0.1) !important;
+  color: #f1f5f9 !important;
+}
+
+/* Light theme: logo uses normal versions */
+.onboarding-wrapper .onboarding-logo-icon {
+  content: url('/logo.svg');
+}
+.onboarding-wrapper .onboarding-logo-wordmark {
+  filter: none;
+}
+
+/* Dark theme: logo uses inverted versions */
+.onboarding-wrapper[data-theme="dark"] .onboarding-logo-icon {
+  content: url('/logo-inverted.svg');
+}
+
+/* Light: step card secondary elements */
+.onboarding-wrapper .tour-feature strong,
+.onboarding-wrapper .feature-icon {
+  color: #0f172a !important;
+}
+.onboarding-wrapper[data-theme="dark"] .tour-feature strong,
+.onboarding-wrapper[data-theme="dark"] .feature-icon {
+  color: #f1f5f9 !important;
+}
+
+/* Light: photo-add dashed border */
+.onboarding-wrapper .photo-add {
+  border-color: rgba(0, 0, 0, 0.15) !important;
+  color: #94a3b8 !important;
+}
+.onboarding-wrapper[data-theme="dark"] .photo-add {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+  color: #64748b !important;
+}
+
+/* Light: photo-item border */
+.onboarding-wrapper .photo-item {
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+.onboarding-wrapper[data-theme="dark"] .photo-item {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Light: tour feature cards */
+.onboarding-wrapper .tour-feature {
+  background: rgba(0, 0, 0, 0.03) !important;
+  border-color: rgba(0, 0, 0, 0.06) !important;
+}
+.onboarding-wrapper[data-theme="dark"] .tour-feature {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border-color: rgba(255, 255, 255, 0.06) !important;
 }
 </style>

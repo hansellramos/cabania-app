@@ -4,26 +4,15 @@
       <h4 class="card-title mb-1">Prueba el potencial desde ahora</h4>
       <p class="text-body-secondary mb-3">Escribe como si fueras un cliente preguntando por tu propiedad</p>
 
-      <!-- Chat area -->
-      <div class="chat-area" ref="chatArea">
-        <div v-if="messages.length === 0 && !sending" class="text-center py-4">
-          <div class="chat-empty-icon mb-2">💬</div>
-          <p class="text-body-secondary small mb-0">Envía un mensaje para ver cómo responde CabanIA</p>
-        </div>
-        <div
-          v-for="(msg, i) in messages"
-          :key="i"
-          :class="['chat-msg', msg.role === 'user' ? 'chat-msg--user' : 'chat-msg--bot']"
-        >
-          <div :class="['chat-bubble', msg.role === 'user' ? 'chat-bubble--user' : 'chat-bubble--bot']">
-            {{ msg.content }}
-          </div>
-        </div>
-        <div v-if="sending" class="chat-msg chat-msg--bot">
-          <div class="chat-bubble chat-bubble--bot">
-            <CSpinner size="sm" /> <span class="ms-2">Escribiendo...</span>
-          </div>
-        </div>
+      <!-- Chat messages (reusable component) -->
+      <div class="chat-wrapper">
+        <ChatMessages
+          ref="messagesRef"
+          :messages="messages"
+          :sending="sending"
+          venue-name="tu propiedad"
+          visitor-name=""
+        />
       </div>
 
       <!-- Suggestion chips -->
@@ -38,23 +27,15 @@
         </button>
       </div>
 
-      <!-- Input -->
-      <div class="chat-input mb-3">
-        <CFormInput
-          v-model="newMessage"
+      <!-- Chat input (reusable component) -->
+      <div class="chat-input-wrapper mb-3">
+        <ChatInput
+          ref="inputRef"
+          :sending="sending"
+          :disabled="!providerId"
           placeholder="Escribe un mensaje..."
-          @keyup.enter="sendMessage"
-          :disabled="sending || !providerId"
+          @send="onSendMessage"
         />
-        <CButton
-          color="primary"
-          class="chat-send-btn"
-          @click="sendMessage"
-          :disabled="sending || !newMessage.trim() || !providerId"
-        >
-          <span v-if="sending">...</span>
-          <span v-else>➤</span>
-        </CButton>
       </div>
 
       <CAlert v-if="error" color="danger" class="mb-3 small">{{ error }}</CAlert>
@@ -77,7 +58,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
+import ChatMessages from '@/components/chat/ChatMessages.vue'
+import ChatInput from '@/components/chat/ChatInput.vue'
 
 const props = defineProps({
   venueId: { type: String, required: true },
@@ -86,14 +69,14 @@ const props = defineProps({
 const emit = defineEmits(['completed', 'back'])
 
 const messages = ref([])
-const newMessage = ref('')
 const sending = ref(false)
 const error = ref('')
 const providerId = ref('')
 const conversationId = ref(null)
 const hasInteracted = ref(false)
 const showNext = ref(false)
-const chatArea = ref(null)
+const messagesRef = ref(null)
+const inputRef = ref(null)
 
 let skipTimer = null
 
@@ -129,28 +112,17 @@ async function loadDefaultProvider() {
   }
 }
 
-function scrollToBottom() {
-  nextTick(() => {
-    if (chatArea.value) {
-      chatArea.value.scrollTop = chatArea.value.scrollHeight
-    }
-  })
-}
-
 function sendChip(text) {
-  newMessage.value = text
-  sendMessage()
+  onSendMessage(text)
 }
 
-async function sendMessage() {
-  if (!newMessage.value.trim() || !providerId.value || sending.value) return
+async function onSendMessage(text) {
+  if (!text.trim() || !providerId.value || sending.value) return
 
-  const userMsg = newMessage.value.trim()
+  const userMsg = text.trim()
   messages.value.push({ role: 'user', content: userMsg })
-  newMessage.value = ''
   sending.value = true
   error.value = ''
-  scrollToBottom()
 
   try {
     const response = await fetch(`/api/chat/${props.venueId}`, {
@@ -187,7 +159,6 @@ async function sendMessage() {
     messages.value.pop()
   } finally {
     sending.value = false
-    scrollToBottom()
   }
 }
 
@@ -216,53 +187,51 @@ function goNext() {
   border-radius: 10px;
 }
 
-.chat-area {
+.chat-wrapper {
   max-height: 320px;
   min-height: 160px;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
   margin-bottom: 12px;
-  padding: 12px;
   border-radius: 12px;
   background: rgba(0, 0, 0, 0.25);
   border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
 }
 
-.chat-empty-icon {
-  font-size: 32px;
+.chat-wrapper :deep(.chat-messages) {
+  flex: 1;
+  min-height: 0;
 }
 
-.chat-msg {
-  display: flex;
-  margin-bottom: 8px;
+.chat-wrapper :deep(.chat-empty) {
+  color: #94a3b8;
 }
 
-.chat-msg--user {
-  justify-content: flex-end;
-}
-
-.chat-msg--bot {
-  justify-content: flex-start;
-}
-
-.chat-bubble {
-  max-width: 85%;
-  padding: 8px 14px;
-  border-radius: 14px;
-  font-size: 0.9rem;
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-.chat-bubble--user {
-  background: linear-gradient(135deg, #10b981, #0ea5e9);
-  color: #fff;
-  border-bottom-right-radius: 4px;
-}
-
-.chat-bubble--bot {
+.chat-wrapper :deep(.bubble-bot) {
   background: rgba(255, 255, 255, 0.08);
   color: #e2e8f0;
-  border-bottom-left-radius: 4px;
+  border-color: rgba(255, 255, 255, 0.06);
+}
+
+.chat-input-wrapper {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.chat-input-wrapper :deep(.chat-input-bar) {
+  border-top: none;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 0;
+}
+
+.chat-input-wrapper :deep(.chat-input-field) {
+  color: #e2e8f0;
+}
+
+.chat-input-wrapper :deep(.chat-input-field::placeholder) {
+  color: #64748b;
 }
 
 .suggestion-chips {
@@ -285,18 +254,5 @@ function goNext() {
 .chip:hover {
   background: rgba(16, 185, 129, 0.25);
   border-color: #10b981;
-}
-
-.chat-input {
-  display: flex;
-  gap: 8px;
-}
-
-.chat-send-btn {
-  background: linear-gradient(135deg, #10b981, #0ea5e9);
-  border: none;
-  border-radius: 10px;
-  padding: 0 16px;
-  font-size: 1.1rem;
 }
 </style>
