@@ -1,25 +1,29 @@
 <template>
   <div class="onboarding-wrapper">
+    <ThemeToggle />
+
+    <!-- Background glow orbs -->
+    <div class="onboarding-glow" aria-hidden="true">
+      <div class="onboarding-orb onboarding-orb--emerald"></div>
+      <div class="onboarding-orb onboarding-orb--sky"></div>
+      <div class="onboarding-orb onboarding-orb--emerald-bottom"></div>
+    </div>
+
     <div class="onboarding-container">
       <!-- Logo -->
       <div class="text-center mb-4">
         <div class="onboarding-logo">
-          <svg viewBox="0 0 24 24" width="40" height="40" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M3 10.5L12 3l9 7.5V21a1 1 0 01-1 1H4a1 1 0 01-1-1V10.5z" fill="url(#og)" stroke="rgba(255,255,255,0.2)" stroke-width="0.5"/>
-            <rect x="9" y="14" width="6" height="8" rx="1" fill="rgba(255,255,255,0.25)"/>
-            <defs><linearGradient id="og" x1="3" y1="3" x2="21" y2="22" gradientUnits="userSpaceOnUse">
-              <stop stop-color="#10b981"/><stop offset="1" stop-color="#0ea5e9"/>
-            </linearGradient></defs>
-          </svg>
+          <img src="/logo-inverted.svg" alt="CabanIA" class="onboarding-logo-icon" />
+          <img src="/logo-wordmark.svg" alt="CabanIA" class="onboarding-logo-wordmark" />
         </div>
         <h2 class="onboarding-title">Bienvenido a CabanIA</h2>
-        <p class="onboarding-subtitle" v-if="currentStep <= 5">Configura tu propiedad paso a paso</p>
+        <p class="onboarding-subtitle" v-if="currentStep <= 6">Configura tu propiedad paso a paso</p>
       </div>
 
       <!-- Progress Bar -->
-      <div class="step-progress mb-4" v-if="currentStep <= 6">
+      <div class="step-progress mb-4" v-if="currentStep <= 7">
         <div
-          v-for="s in 6"
+          v-for="s in 7"
           :key="s"
           class="step-dot"
           :class="{
@@ -60,28 +64,34 @@
           @completed="onStepCompleted"
           @back="goBack"
         />
-        <AmenitiesStep
+        <ChatPreviewStep
           v-if="currentStep === 3"
           :venue-id="venueId"
-          :saved-data="getStepData(3)"
           @completed="onStepCompleted"
           @back="goBack"
         />
-        <CreatePlanStep
+        <AmenitiesStep
           v-if="currentStep === 4"
           :venue-id="venueId"
           :saved-data="getStepData(4)"
           @completed="onStepCompleted"
           @back="goBack"
         />
-        <AvailabilityStep
+        <CreatePlanStep
           v-if="currentStep === 5"
+          :venue-id="venueId"
+          :saved-data="getStepData(5)"
+          @completed="onStepCompleted"
+          @back="goBack"
+        />
+        <AvailabilityStep
+          v-if="currentStep === 6"
           :venue-id="venueId"
           @completed="onStepCompleted"
           @back="goBack"
         />
         <TourStep
-          v-if="currentStep === 6"
+          v-if="currentStep === 7"
           @completed="finishOnboarding"
         />
       </template>
@@ -92,10 +102,12 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import ThemeToggle from '@/components/ThemeToggle.vue'
 import CreateAccountStep from './steps/CreateAccountStep.vue'
 import PropertyInfoStep from './steps/PropertyInfoStep.vue'
 import AmenitiesStep from './steps/AmenitiesStep.vue'
 import CreatePlanStep from './steps/CreatePlanStep.vue'
+import ChatPreviewStep from './steps/ChatPreviewStep.vue'
 import AvailabilityStep from './steps/AvailabilityStep.vue'
 import TourStep from './steps/TourStep.vue'
 
@@ -110,7 +122,7 @@ const tokenError = ref('')
 const initialLoading = ref(true)
 const venueId = ref(null)
 
-const stepLabels = ['Cuenta', 'Propiedad', 'Amenidades', 'Plan', 'Disponibilidad', 'Tour']
+const stepLabels = ['Cuenta', 'Propiedad', 'Prueba IA', 'Amenidades', 'Plan', 'Disponibilidad', 'Tour']
 
 function getStepData(step) {
   return progressData.value[`step${step}`] || null
@@ -215,23 +227,73 @@ onMounted(async () => {
   align-items: flex-start;
   justify-content: center;
   padding: 40px 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.onboarding-glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.onboarding-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(96px);
+}
+
+.onboarding-orb--emerald {
+  top: -10rem;
+  left: -10%;
+  width: 520px;
+  height: 520px;
+  background: rgba(16, 185, 129, 0.2);
+}
+
+.onboarding-orb--sky {
+  top: -10rem;
+  right: -10%;
+  width: 520px;
+  height: 520px;
+  background: rgba(14, 165, 233, 0.2);
+}
+
+.onboarding-orb--emerald-bottom {
+  bottom: -14rem;
+  left: 25%;
+  width: 620px;
+  height: 620px;
+  background: rgba(16, 185, 129, 0.1);
 }
 
 .onboarding-container {
   width: 100%;
   max-width: 640px;
+  position: relative;
+  z-index: 10;
 }
 
 .onboarding-logo {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
-  background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(14, 165, 233, 0.15));
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  gap: 0.75rem;
   margin-bottom: 12px;
+}
+
+.onboarding-logo-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.75rem;
+  object-fit: contain;
+}
+
+.onboarding-logo-wordmark {
+  height: 1.4rem;
+  width: auto;
+  object-fit: contain;
 }
 
 .onboarding-title {

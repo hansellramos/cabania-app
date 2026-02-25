@@ -593,6 +593,10 @@ const routes = [
     component: () => import('@/views/payments/BoldPaymentResultView.vue'),
   },
   {
+    path: '/login',
+    redirect: '/pages/login',
+  },
+  {
     path: '/onboarding',
     name: 'Onboarding',
     component: () => import('@/views/onboarding/OnboardingView.vue'),

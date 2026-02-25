@@ -7010,7 +7010,7 @@ REGLAS:
           email: email || null,
           phone: phone || null,
           channel,
-          invited_by: req.user.id,
+          invited_by: String(req.user.claims?.sub),
           organization_id: organization_id || null,
           role: role || 'user',
           message: message || null,
@@ -7284,14 +7284,15 @@ REGLAS:
   // Get onboarding progress (authenticated)
   app.get('/api/onboarding/progress', isAuthenticated, async (req, res) => {
     try {
+      const userId = String(req.user.claims?.sub);
       let progress = await prisma.onboarding_progress.findUnique({
-        where: { user_id: req.user.id }
+        where: { user_id: userId }
       });
 
       if (!progress) {
         // Create initial progress if doesn't exist
         progress = await prisma.onboarding_progress.create({
-          data: { user_id: req.user.id, current_step: 2, data: {} }
+          data: { user_id: userId, current_step: 2, data: {} }
         });
       }
 
@@ -7304,6 +7305,7 @@ REGLAS:
   // Save onboarding step data and advance
   app.put('/api/onboarding/step', isAuthenticated, async (req, res) => {
     try {
+      const userId = String(req.user.claims?.sub);
       const { step, data: stepData } = req.body;
 
       if (!step || !stepData) {
@@ -7311,7 +7313,7 @@ REGLAS:
       }
 
       const progress = await prisma.onboarding_progress.findUnique({
-        where: { user_id: req.user.id }
+        where: { user_id: userId }
       });
 
       if (!progress) {
@@ -7323,7 +7325,7 @@ REGLAS:
       existingData[`step${step}`] = stepData;
 
       const updated = await prisma.onboarding_progress.update({
-        where: { user_id: req.user.id },
+        where: { user_id: userId },
         data: {
           current_step: step + 1,
           data: existingData,
@@ -7339,8 +7341,9 @@ REGLAS:
   // Mark onboarding as completed
   app.post('/api/onboarding/complete', isAuthenticated, async (req, res) => {
     try {
+      const userId = String(req.user.claims?.sub);
       const updated = await prisma.onboarding_progress.update({
-        where: { user_id: req.user.id },
+        where: { user_id: userId },
         data: { completed_at: new Date() }
       });
       res.json(updated);
