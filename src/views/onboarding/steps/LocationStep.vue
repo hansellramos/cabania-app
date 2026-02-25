@@ -2,7 +2,7 @@
   <CCard class="onboarding-card">
     <CCardBody class="p-4">
       <h4 class="card-title mb-1">Donde esta tu propiedad?</h4>
-      <p class="text-body-secondary mb-4">Ubica tu propiedad en el mapa o usa tu GPS</p>
+      <p class="text-body-secondary mb-4">Mueve el mapa para ubicar el pin o usa tu GPS</p>
 
       <!-- GPS button -->
       <div class="mb-3">
@@ -18,39 +18,27 @@
         </CButton>
       </div>
 
-      <!-- Map container (always visible) -->
+      <!-- Map container with centered pin -->
       <div class="map-wrapper mb-3">
         <div ref="mapContainer" class="map-container"></div>
+        <!-- Fixed center pin overlay -->
+        <div class="center-pin" aria-hidden="true">
+          <svg width="32" height="44" viewBox="0 0 32 44" fill="none">
+            <path d="M16 0C7.163 0 0 7.163 0 16c0 12 16 28 16 28s16-16 16-28C32 7.163 24.837 0 16 0z" fill="#10b981"/>
+            <circle cx="16" cy="16" r="6" fill="#fff"/>
+          </svg>
+          <div class="pin-shadow"></div>
+        </div>
       </div>
 
-      <!-- Auto-filled fields -->
-      <div class="mb-3">
-        <CFormLabel>Direccion</CFormLabel>
-        <CFormInput
-          v-model="form.address"
-          placeholder="Ej: Vereda El Carmen"
-          @input="form.location_source = 'manual'"
-        />
+      <!-- Location summary (shows after geocoding) -->
+      <div v-if="form.address || form.city" class="location-summary mb-3">
+        <div class="summary-icon">&#128205;</div>
+        <div class="summary-text">
+          <strong>{{ form.address || form.city }}</strong>
+          <span v-if="form.city || form.department">{{ [form.city, form.department].filter(Boolean).join(', ') }}</span>
+        </div>
       </div>
-
-      <CRow class="mb-3">
-        <CCol :md="6">
-          <CFormLabel>Ciudad</CFormLabel>
-          <CFormInput
-            v-model="form.city"
-            placeholder="Ej: Carmen de Apicala"
-            @input="form.location_source = 'manual'"
-          />
-        </CCol>
-        <CCol :md="6">
-          <CFormLabel>Departamento</CFormLabel>
-          <CFormInput
-            v-model="form.department"
-            placeholder="Ej: Tolima"
-            @input="form.location_source = 'manual'"
-          />
-        </CCol>
-      </CRow>
 
       <!-- Nearby zones -->
       <div v-if="nearbyZones.length" class="mb-3">
@@ -69,6 +57,74 @@
           </button>
         </div>
       </div>
+
+      <!-- Direccion field (outside accordion) -->
+      <div class="mb-3">
+        <CFormLabel>Direccion</CFormLabel>
+        <CFormInput
+          v-model="form.address"
+          placeholder="Ej: Vereda El Carmen, Carmen de Apicala"
+          @input="form.location_source = 'manual'"
+        />
+      </div>
+
+      <div class="mb-3">
+        <CFormLabel>Referencia de direccion</CFormLabel>
+        <CFormInput
+          v-model="form.address_reference"
+          placeholder="Ej: 50 metros despues de la ferreteria, entrada a la izquierda"
+        />
+        <div class="form-text">Ayuda a tus huespedes a encontrar la propiedad</div>
+      </div>
+
+      <!-- Accordion: Ver mas detalles -->
+      <CAccordion class="mb-3 details-accordion">
+        <CAccordionItem>
+          <CAccordionHeader>Ver mas detalles</CAccordionHeader>
+          <CAccordionBody>
+            <CRow class="mb-2">
+              <CCol :xs="6">
+                <CFormLabel class="mb-1"><small>Latitud</small></CFormLabel>
+                <CFormInput
+                  :model-value="form.latitude != null ? form.latitude.toFixed(6) : ''"
+                  size="sm"
+                  readonly
+                  placeholder="—"
+                />
+              </CCol>
+              <CCol :xs="6">
+                <CFormLabel class="mb-1"><small>Longitud</small></CFormLabel>
+                <CFormInput
+                  :model-value="form.longitude != null ? form.longitude.toFixed(6) : ''"
+                  size="sm"
+                  readonly
+                  placeholder="—"
+                />
+              </CCol>
+            </CRow>
+            <CRow class="mb-2">
+              <CCol :xs="6">
+                <CFormLabel class="mb-1"><small>Ciudad</small></CFormLabel>
+                <CFormInput
+                  v-model="form.city"
+                  size="sm"
+                  placeholder="Ej: Carmen de Apicala"
+                  @input="form.location_source = 'manual'"
+                />
+              </CCol>
+              <CCol :xs="6">
+                <CFormLabel class="mb-1"><small>Departamento</small></CFormLabel>
+                <CFormInput
+                  v-model="form.department"
+                  size="sm"
+                  placeholder="Ej: Tolima"
+                  @input="form.location_source = 'manual'"
+                />
+              </CCol>
+            </CRow>
+          </CAccordionBody>
+        </CAccordionItem>
+      </CAccordion>
 
       <CAlert v-if="gpsError" color="warning" class="mb-3" dismissible @close="gpsError = ''">
         {{ gpsError }}
@@ -109,9 +165,9 @@ const emit = defineEmits(['completed', 'back'])
 const mapContainer = ref(null)
 const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN
 let map = null
-let marker = null
 let geocoderControl = null
 let reverseGeocodeTimeout = null
+let skipReverseGeocode = false
 
 const locating = ref(false)
 const gpsError = ref('')
@@ -121,6 +177,7 @@ const form = ref({
   latitude: null,
   longitude: null,
   address: '',
+  address_reference: '',
   city: '',
   department: '',
   suburb: '',
@@ -213,9 +270,9 @@ async function useMyLocation() {
     form.value.longitude = longitude
     form.value.location_source = 'gps'
 
-    if (map && marker) {
+    if (map) {
+      skipReverseGeocode = true
       map.flyTo({ center: [longitude, latitude], zoom: 14 })
-      marker.setLngLat([longitude, latitude])
     }
     await reverseGeocode(longitude, latitude)
   } catch (err) {
@@ -268,6 +325,7 @@ function next() {
       latitude: form.value.latitude,
       longitude: form.value.longitude,
       address: form.value.address,
+      address_reference: form.value.address_reference,
       city: form.value.city,
       department: form.value.department,
       suburb: form.value.suburb,
@@ -298,6 +356,9 @@ onMounted(() => {
     zoom: initialZoom,
   })
 
+  // Zoom controls
+  map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), 'bottom-right')
+
   // Geocoder
   geocoderControl = new MapboxGeocoder({
     accessToken: token,
@@ -308,42 +369,32 @@ onMounted(() => {
   })
   map.addControl(geocoderControl)
 
-  // Draggable marker
-  marker = new mapboxgl.Marker({ draggable: true, color: '#10b981' })
-    .setLngLat(initialCenter)
-    .addTo(map)
+  // Pin stays at center — on moveend update lat/lng and reverse geocode
+  map.on('moveend', () => {
+    if (skipReverseGeocode) {
+      skipReverseGeocode = false
+      return
+    }
 
-  let skipReverseGeocode = false
-
-  marker.on('dragend', () => {
-    const lngLat = marker.getLngLat()
-    form.value.latitude = lngLat.lat
-    form.value.longitude = lngLat.lng
+    const center = map.getCenter()
+    form.value.latitude = center.lat
+    form.value.longitude = center.lng
     if (!form.value.location_source) form.value.location_source = 'manual'
 
     if (reverseGeocodeTimeout) clearTimeout(reverseGeocodeTimeout)
     reverseGeocodeTimeout = setTimeout(() => {
-      reverseGeocode(lngLat.lng, lngLat.lat)
+      reverseGeocode(center.lng, center.lat)
     }, 800)
   })
 
-  // Geocoder result → fill fields
+  // Geocoder result → fill fields, skip reverse geocode
   geocoderControl.on('result', (ev) => {
     const [lng, lat] = ev.result.center
     skipReverseGeocode = true
     form.value.latitude = lat
     form.value.longitude = lng
     if (!form.value.location_source) form.value.location_source = 'manual'
-    marker.setLngLat([lng, lat])
     parseGeocoderResult(ev.result)
-  })
-
-  // Map moveend for pan/zoom adjustments
-  map.on('moveend', () => {
-    if (skipReverseGeocode) {
-      skipReverseGeocode = false
-      return
-    }
   })
 
   // Fetch zones if we already have a department
@@ -402,6 +453,7 @@ onUnmounted(() => {
 }
 
 .map-wrapper {
+  position: relative;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -410,6 +462,62 @@ onUnmounted(() => {
 .map-container {
   width: 100%;
   height: 280px;
+}
+
+/* Fixed center pin - always in the middle of the map */
+.center-pin {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -100%);
+  z-index: 10;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.pin-shadow {
+  width: 12px;
+  height: 4px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 50%;
+  margin-top: -2px;
+}
+
+/* Location summary card */
+.location-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: 10px;
+}
+
+.summary-icon {
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.summary-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.summary-text strong {
+  font-size: 0.85rem;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-text span {
+  font-size: 0.75rem;
+  opacity: 0.7;
 }
 
 .zone-chips {

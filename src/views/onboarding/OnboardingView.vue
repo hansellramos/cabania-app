@@ -794,4 +794,58 @@ onMounted(async () => {
   background: linear-gradient(135deg, #10b981, #059669) !important;
   color: #fff !important;
 }
+
+/* Location summary */
+.onboarding-wrapper .location-summary {
+  background: rgba(16, 185, 129, 0.06) !important;
+  border-color: rgba(16, 185, 129, 0.15) !important;
+}
+.onboarding-wrapper .location-summary strong {
+  color: #0f172a !important;
+}
+.onboarding-wrapper .location-summary span {
+  color: #64748b !important;
+}
+.onboarding-wrapper[data-theme="dark"] .location-summary {
+  background: rgba(16, 185, 129, 0.1) !important;
+  border-color: rgba(16, 185, 129, 0.25) !important;
+}
+.onboarding-wrapper[data-theme="dark"] .location-summary strong {
+  color: #f1f5f9 !important;
+}
+.onboarding-wrapper[data-theme="dark"] .location-summary span {
+  color: #94a3b8 !important;
+}
+
+/* Details accordion - light */
+.onboarding-wrapper .details-accordion .accordion-item {
+  background: transparent !important;
+  border-color: rgba(0, 0, 0, 0.08) !important;
+}
+.onboarding-wrapper .details-accordion .accordion-button {
+  background: rgba(0, 0, 0, 0.03) !important;
+  color: #475569 !important;
+  font-size: 0.85rem;
+  padding: 8px 14px;
+  box-shadow: none !important;
+}
+.onboarding-wrapper .details-accordion .accordion-button::after {
+  filter: none;
+}
+.onboarding-wrapper .details-accordion .accordion-body {
+  background: transparent !important;
+  padding: 12px 14px;
+}
+
+/* Details accordion - dark */
+.onboarding-wrapper[data-theme="dark"] .details-accordion .accordion-item {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+.onboarding-wrapper[data-theme="dark"] .details-accordion .accordion-button {
+  background: rgba(255, 255, 255, 0.04) !important;
+  color: #94a3b8 !important;
+}
+.onboarding-wrapper[data-theme="dark"] .details-accordion .accordion-button::after {
+  filter: invert(1) brightness(0.7);
+}
 </style>

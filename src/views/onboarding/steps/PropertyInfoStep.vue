@@ -169,6 +169,7 @@ async function saveProperty() {
         latitude: props.locationData?.latitude || null,
         longitude: props.locationData?.longitude || null,
         location_source: props.locationData?.location_source || null,
+        address_reference: props.locationData?.address_reference || '',
         whatsapp: form.value.whatsapp ? parseFloat(form.value.whatsapp.replace(/\D/g, '')) : null,
       }),
     })
