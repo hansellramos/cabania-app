@@ -7365,6 +7365,164 @@ REGLAS:
     }
   });
 
+  // Get nearby zones for onboarding location step
+  app.get('/api/onboarding/nearby-zones', isAuthenticated, async (req, res) => {
+    try {
+      const { department } = req.query;
+      if (!department) {
+        return res.status(400).json({ error: 'department es requerido' });
+      }
+
+      const zones = await prisma.venues.groupBy({
+        by: ['city'],
+        where: { department, city: { not: null } },
+        _count: { id: true },
+        orderBy: { _count: { id: 'desc' } },
+        take: 8,
+      });
+
+      res.json({
+        zones: zones
+          .filter(z => z.city)
+          .map(z => ({ city: z.city, venue_count: z._count.id })),
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get plan suggestions based on nearby venues
+  app.get('/api/onboarding/suggestions', isAuthenticated, async (req, res) => {
+    try {
+      const { city, department } = req.query;
+
+      const where = { is_active: true };
+      if (department) {
+        where.venue = { department };
+      }
+
+      const plans = await prisma.venue_plans.findMany({
+        where,
+        select: {
+          name: true,
+          adult_price: true,
+          child_price: true,
+          max_capacity: true,
+          check_in_time: true,
+          check_out_time: true,
+          plan_type: true,
+        },
+        take: 100,
+      });
+
+      if (plans.length < 3) {
+        // Fallback defaults for Colombia
+        return res.json({
+          source: 'defaults',
+          plan_count: plans.length,
+          suggestions: {
+            name: [
+              { value: 'Pasadía Familiar', count: 0 },
+              { value: 'Plan Fin de Semana', count: 0 },
+              { value: 'Noche Romántica', count: 0 },
+              { value: 'Plan Todo Incluido', count: 0 },
+            ],
+            adult_price: [
+              { value: 60000, label: '$60.000' },
+              { value: 80000, label: '$80.000' },
+              { value: 120000, label: '$120.000' },
+              { value: 150000, label: '$150.000' },
+            ],
+            child_price: [
+              { value: 30000, label: '$30.000' },
+              { value: 50000, label: '$50.000' },
+              { value: 70000, label: '$70.000' },
+            ],
+            max_capacity: [
+              { value: 6, label: '6 personas' },
+              { value: 10, label: '10 personas' },
+              { value: 15, label: '15 personas' },
+              { value: 20, label: '20 personas' },
+            ],
+            check_in_time: [
+              { value: '10:00', label: '10:00 AM' },
+              { value: '14:00', label: '2:00 PM' },
+              { value: '15:00', label: '3:00 PM' },
+            ],
+            check_out_time: [
+              { value: '12:00', label: '12:00 PM' },
+              { value: '17:00', label: '5:00 PM' },
+              { value: '18:00', label: '6:00 PM' },
+            ],
+          },
+        });
+      }
+
+      // Helper: get most common values for a field
+      function getMostCommon(arr, field, limit) {
+        const counts = {};
+        arr.forEach(item => {
+          const val = item[field];
+          if (val != null && val !== '') {
+            const key = String(val);
+            counts[key] = (counts[key] || 0) + 1;
+          }
+        });
+        return Object.entries(counts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, limit)
+          .map(([value, count]) => ({ value, count }));
+      }
+
+      // Helper: get representative numeric values (quartiles)
+      function getRepresentativeValues(arr, field, limit) {
+        const values = arr
+          .map(item => parseFloat(item[field]))
+          .filter(v => !isNaN(v) && v > 0)
+          .sort((a, b) => a - b);
+        if (values.length === 0) return [];
+        const step = Math.max(1, Math.floor(values.length / limit));
+        const result = [];
+        const seen = new Set();
+        for (let i = 0; i < values.length && result.length < limit; i += step) {
+          const v = values[i];
+          if (!seen.has(v)) {
+            seen.add(v);
+            result.push({ value: v, label: `$${v.toLocaleString('es-CO')}` });
+          }
+        }
+        return result;
+      }
+
+      res.json({
+        source: 'nearby',
+        plan_count: plans.length,
+        suggestions: {
+          name: getMostCommon(plans, 'name', 5),
+          adult_price: getRepresentativeValues(plans, 'adult_price', 4),
+          child_price: getRepresentativeValues(plans, 'child_price', 3),
+          max_capacity: getMostCommon(plans, 'max_capacity', 4).map(s => ({
+            value: parseInt(s.value),
+            label: `${s.value} personas`,
+            count: s.count,
+          })),
+          check_in_time: getMostCommon(plans, 'check_in_time', 3).map(s => ({
+            value: s.value,
+            label: s.value,
+            count: s.count,
+          })),
+          check_out_time: getMostCommon(plans, 'check_out_time', 3).map(s => ({
+            value: s.value,
+            label: s.value,
+            count: s.count,
+          })),
+        },
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ==================== End Onboarding API ====================
 
   // Serve static files from Vue build in production

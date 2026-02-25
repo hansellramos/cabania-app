@@ -244,6 +244,7 @@ model venues {
   deposit_per_extra_person      Decimal?  @db.Decimal
   deposit_refund_hours          Int?
   deposit_policy                String?
+  location_source      String?   @db.VarChar(20)
   venue_plans          venue_plans[]
 }
 

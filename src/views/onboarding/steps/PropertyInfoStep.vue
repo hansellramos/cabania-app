@@ -40,25 +40,6 @@
         </CRow>
 
         <div class="mb-3">
-          <CFormLabel>Dirección / Ubicación</CFormLabel>
-          <CFormInput
-            v-model="form.address"
-            placeholder="Ej: Vereda El Carmen, Carmen de Apicalá, Tolima"
-          />
-        </div>
-
-        <CRow class="mb-3">
-          <CCol :md="6">
-            <CFormLabel>Ciudad</CFormLabel>
-            <CFormInput v-model="form.city" placeholder="Ej: Carmen de Apicalá" />
-          </CCol>
-          <CCol :md="6">
-            <CFormLabel>Departamento</CFormLabel>
-            <CFormInput v-model="form.department" placeholder="Ej: Tolima" />
-          </CCol>
-        </CRow>
-
-        <div class="mb-3">
           <CFormLabel>WhatsApp de la propiedad</CFormLabel>
           <CFormInput
             v-model="form.whatsapp"
@@ -113,6 +94,7 @@ import { ref, onMounted } from 'vue'
 
 const props = defineProps({
   savedData: { type: Object, default: null },
+  locationData: { type: Object, default: null },
 })
 
 const emit = defineEmits(['completed', 'back'])
@@ -121,9 +103,6 @@ const form = ref({
   name: '',
   type: '',
   max_capacity: null,
-  address: '',
-  city: '',
-  department: '',
   whatsapp: '',
 })
 
@@ -184,9 +163,12 @@ async function saveProperty() {
       credentials: 'include',
       body: JSON.stringify({
         name: form.value.name,
-        address: form.value.address,
-        city: form.value.city,
-        department: form.value.department,
+        address: props.locationData?.address || '',
+        city: props.locationData?.city || '',
+        department: props.locationData?.department || '',
+        latitude: props.locationData?.latitude || null,
+        longitude: props.locationData?.longitude || null,
+        location_source: props.locationData?.location_source || null,
         whatsapp: form.value.whatsapp ? parseFloat(form.value.whatsapp.replace(/\D/g, '')) : null,
       }),
     })

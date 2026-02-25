@@ -2,15 +2,22 @@
   <CCard class="onboarding-card">
     <CCardBody class="p-4">
       <h4 class="card-title mb-1">Crea tu primer plan</h4>
-      <p class="text-body-secondary mb-4">Define un plan de alojamiento para tus huéspedes</p>
+      <p class="text-body-secondary mb-4">Define un plan de alojamiento para tus huespedes</p>
 
       <CForm @submit.prevent="savePlan">
-        <div class="mb-3">
+        <div class="mb-3" style="position: relative">
           <CFormLabel>Nombre del plan *</CFormLabel>
           <CFormInput
             v-model="form.name"
             placeholder="Ej: Plan Fin de Semana"
             required
+            @focus="focusedField = 'name'"
+            @blur="onBlur"
+          />
+          <AiFieldSuggestions
+            :visible="focusedField === 'name'"
+            :suggestions="suggestions?.name"
+            @select="(val) => { form.name = val; focusedField = null }"
           />
         </div>
 
@@ -19,26 +26,33 @@
             <CFormLabel>Tipo de plan *</CFormLabel>
             <CFormSelect v-model="form.plan_type" required>
               <option value="">Seleccionar...</option>
-              <option value="day">Pasadía</option>
+              <option value="day">Pasadia</option>
               <option value="overnight">Noche</option>
               <option value="weekend">Fin de semana</option>
               <option value="week">Semana</option>
               <option value="custom">Personalizado</option>
             </CFormSelect>
           </CCol>
-          <CCol :md="6">
-            <CFormLabel>Capacidad máxima</CFormLabel>
+          <CCol :md="6" style="position: relative">
+            <CFormLabel>Capacidad maxima</CFormLabel>
             <CFormInput
               v-model.number="form.max_capacity"
               type="number"
               min="1"
               placeholder="Ej: 10"
+              @focus="focusedField = 'max_capacity'"
+              @blur="onBlur"
+            />
+            <AiFieldSuggestions
+              :visible="focusedField === 'max_capacity'"
+              :suggestions="suggestions?.max_capacity"
+              @select="(val) => { form.max_capacity = val; focusedField = null }"
             />
           </CCol>
         </CRow>
 
         <CRow class="mb-3">
-          <CCol :md="6">
+          <CCol :md="6" style="position: relative">
             <CFormLabel>Precio por adulto *</CFormLabel>
             <CFormInput
               v-model.number="form.adult_price"
@@ -46,49 +60,77 @@
               min="0"
               placeholder="Ej: 80000"
               required
+              @focus="focusedField = 'adult_price'"
+              @blur="onBlur"
+            />
+            <AiFieldSuggestions
+              :visible="focusedField === 'adult_price'"
+              :suggestions="suggestions?.adult_price"
+              @select="(val) => { form.adult_price = val; focusedField = null }"
             />
           </CCol>
-          <CCol :md="6">
-            <CFormLabel>Precio por niño</CFormLabel>
+          <CCol :md="6" style="position: relative">
+            <CFormLabel>Precio por nino</CFormLabel>
             <CFormInput
               v-model.number="form.child_price"
               type="number"
               min="0"
               placeholder="Ej: 50000"
+              @focus="focusedField = 'child_price'"
+              @blur="onBlur"
+            />
+            <AiFieldSuggestions
+              :visible="focusedField === 'child_price'"
+              :suggestions="suggestions?.child_price"
+              @select="(val) => { form.child_price = val; focusedField = null }"
             />
           </CCol>
         </CRow>
 
         <CRow class="mb-3">
-          <CCol :md="6">
+          <CCol :md="6" style="position: relative">
             <CFormLabel>Hora check-in</CFormLabel>
             <CFormInput
               v-model="form.check_in_time"
               type="time"
+              @focus="focusedField = 'check_in_time'"
+              @blur="onBlur"
+            />
+            <AiFieldSuggestions
+              :visible="focusedField === 'check_in_time'"
+              :suggestions="suggestions?.check_in_time"
+              @select="(val) => { form.check_in_time = val; focusedField = null }"
             />
           </CCol>
-          <CCol :md="6">
+          <CCol :md="6" style="position: relative">
             <CFormLabel>Hora check-out</CFormLabel>
             <CFormInput
               v-model="form.check_out_time"
               type="time"
+              @focus="focusedField = 'check_out_time'"
+              @blur="onBlur"
+            />
+            <AiFieldSuggestions
+              :visible="focusedField === 'check_out_time'"
+              :suggestions="suggestions?.check_out_time"
+              @select="(val) => { form.check_out_time = val; focusedField = null }"
             />
           </CCol>
         </CRow>
 
         <div class="mb-3">
-          <CFormLabel>Descripción</CFormLabel>
+          <CFormLabel>Descripcion</CFormLabel>
           <CFormTextarea
             v-model="form.description"
             rows="2"
-            placeholder="¿Qué incluye este plan?"
+            placeholder="Que incluye este plan?"
           />
         </div>
 
         <div class="mb-3 d-flex gap-3">
           <CFormCheck
             v-model="form.includes_food"
-            label="Incluye alimentación"
+            label="Incluye alimentacion"
           />
           <CFormCheck
             v-model="form.includes_overnight"
@@ -114,13 +156,24 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import AiFieldSuggestions from '@/components/onboarding/AiFieldSuggestions.vue'
 
 const props = defineProps({
   venueId: { type: String, required: true },
   savedData: { type: Object, default: null },
+  suggestions: { type: Object, default: null },
 })
 
 const emit = defineEmits(['completed', 'back'])
+
+const focusedField = ref(null)
+
+function onBlur() {
+  // Delay to allow mousedown on chip to fire first
+  setTimeout(() => {
+    focusedField.value = null
+  }, 200)
+}
 
 const form = ref({
   name: '',

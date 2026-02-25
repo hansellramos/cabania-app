@@ -17,13 +17,13 @@
           <img src="/logo-wordmark.svg" alt="CabanIA" class="onboarding-logo-wordmark" />
         </div>
         <h2 class="onboarding-title">Bienvenido a CabanIA</h2>
-        <p class="onboarding-subtitle" v-if="currentStep <= 5">Configura tu propiedad paso a paso</p>
+        <p class="onboarding-subtitle" v-if="currentStep <= 6">Configura tu propiedad paso a paso</p>
       </div>
 
       <!-- Progress Bar -->
-      <div class="step-progress mb-4" v-if="currentStep <= 6">
+      <div class="step-progress mb-4" v-if="currentStep <= 7">
         <div
-          v-for="s in 6"
+          v-for="s in 7"
           :key="s"
           class="step-dot"
           :class="{
@@ -58,34 +58,42 @@
           :invitation-data="invitationData"
           @completed="onStepCompleted"
         />
-        <PropertyInfoStep
+        <LocationStep
           v-if="currentStep === 2"
           :saved-data="getStepData(2)"
           @completed="onStepCompleted"
           @back="goBack"
         />
-        <AmenitiesStep
+        <PropertyInfoStep
           v-if="currentStep === 3"
-          :venue-id="venueId"
           :saved-data="getStepData(3)"
+          :location-data="locationData"
           @completed="onStepCompleted"
           @back="goBack"
         />
-        <CreatePlanStep
+        <AmenitiesStep
           v-if="currentStep === 4"
           :venue-id="venueId"
           :saved-data="getStepData(4)"
           @completed="onStepCompleted"
           @back="goBack"
         />
-        <AvailabilityStep
+        <CreatePlanStep
           v-if="currentStep === 5"
+          :venue-id="venueId"
+          :saved-data="getStepData(5)"
+          :suggestions="planSuggestions"
+          @completed="onStepCompleted"
+          @back="goBack"
+        />
+        <AvailabilityStep
+          v-if="currentStep === 6"
           :venue-id="venueId"
           @completed="onStepCompleted"
           @back="goBack"
         />
         <TourStep
-          v-if="currentStep === 6"
+          v-if="currentStep === 7"
           @completed="finishOnboarding"
         />
       </template>
@@ -122,6 +130,7 @@ import { useRoute, useRouter } from 'vue-router'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import ChatBubbleWidget from '@/components/chat/ChatBubbleWidget.vue'
 import CreateAccountStep from './steps/CreateAccountStep.vue'
+import LocationStep from './steps/LocationStep.vue'
 import PropertyInfoStep from './steps/PropertyInfoStep.vue'
 import AmenitiesStep from './steps/AmenitiesStep.vue'
 import CreatePlanStep from './steps/CreatePlanStep.vue'
@@ -154,8 +163,10 @@ const venueId = ref(null)
 const venueData = ref(null)
 const chatRef = ref(null)
 const showEngageBanner = ref(false)
+const locationData = ref(null)
+const planSuggestions = ref(null)
 
-const stepLabels = ['Cuenta', 'Propiedad', 'Amenidades', 'Plan', 'Disponibilidad', 'Tour']
+const stepLabels = ['Cuenta', 'Ubicacion', 'Propiedad', 'Amenidades', 'Plan', 'Disponibilidad', 'Tour']
 
 const chatSuggestions = [
   '¿Dónde queda la cabaña?',
@@ -169,13 +180,21 @@ function getStepData(step) {
 }
 
 async function onStepCompleted(data) {
-  // Save step data to progress
+  const step = currentStep.value
+
+  // Step 2 (Location): save location data and fetch suggestions in background
+  if (step === 2 && data?.location) {
+    locationData.value = data.location
+    // Fetch plan suggestions non-blocking
+    fetchPlanSuggestions(data.location.city, data.location.department)
+  }
+
+  // Step 3 (Property): save venue info
   if (data?.venueId) {
     venueId.value = data.venueId
     venueData.value = { name: data.form?.name || 'tu propiedad' }
   }
 
-  const step = currentStep.value
   progressData.value[`step${step}`] = data
 
   // Save progress to backend
@@ -192,11 +211,26 @@ async function onStepCompleted(data) {
 
   currentStep.value = step + 1
 
-  // After venue creation (step 2), show engagement banner
-  if (step === 2 && venueId.value) {
+  // After venue creation (step 3), show engagement banner
+  if (step === 3 && venueId.value) {
     setTimeout(() => {
       showEngageBanner.value = true
     }, 800)
+  }
+}
+
+async function fetchPlanSuggestions(city, department) {
+  try {
+    const params = new URLSearchParams()
+    if (city) params.set('city', city)
+    if (department) params.set('department', department)
+    const res = await fetch(`/api/onboarding/suggestions?${params}`, { credentials: 'include' })
+    if (res.ok) {
+      const data = await res.json()
+      planSuggestions.value = data.suggestions || null
+    }
+  } catch (e) {
+    console.error('Error fetching suggestions:', e)
   }
 }
 
@@ -259,10 +293,16 @@ onMounted(async () => {
       const progress = await response.json()
       progressData.value = progress.data || {}
       currentStep.value = progress.current_step || 2
-      // Recover venueId and venue name from saved data
-      if (progressData.value.step2?.venueId) {
-        venueId.value = progressData.value.step2.venueId
-        venueData.value = { name: progressData.value.step2.form?.name || 'tu propiedad' }
+      // Recover location data from step 2
+      if (progressData.value.step2?.location) {
+        locationData.value = progressData.value.step2.location
+        // Re-fetch suggestions if we have location
+        fetchPlanSuggestions(locationData.value.city, locationData.value.department)
+      }
+      // Recover venueId and venue name from step 3
+      if (progressData.value.step3?.venueId) {
+        venueId.value = progressData.value.step3.venueId
+        venueData.value = { name: progressData.value.step3.form?.name || 'tu propiedad' }
       }
       if (progress.completed_at) {
         router.push('/dashboard')
@@ -697,5 +737,61 @@ onMounted(async () => {
 .onboarding-wrapper[data-theme="dark"] .tour-feature {
   background: rgba(255, 255, 255, 0.03) !important;
   border-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* AI Field Suggestions - light */
+.onboarding-wrapper .ai-suggestions {
+  background: rgba(255, 255, 255, 0.9) !important;
+  border-color: rgba(16, 185, 129, 0.2) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1) !important;
+}
+
+.onboarding-wrapper .ai-chip {
+  background: rgba(16, 185, 129, 0.08) !important;
+  border-color: rgba(16, 185, 129, 0.2) !important;
+  color: #059669 !important;
+}
+
+/* AI Field Suggestions - dark */
+.onboarding-wrapper[data-theme="dark"] .ai-suggestions {
+  background: rgba(2, 6, 23, 0.9) !important;
+  border-color: rgba(16, 185, 129, 0.25) !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+}
+
+.onboarding-wrapper[data-theme="dark"] .ai-suggestions-header {
+  color: #34d399 !important;
+}
+
+.onboarding-wrapper[data-theme="dark"] .ai-chip {
+  background: rgba(16, 185, 129, 0.15) !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+  color: #34d399 !important;
+}
+
+/* Location step - map border */
+.onboarding-wrapper .map-wrapper {
+  border-color: rgba(0, 0, 0, 0.1) !important;
+}
+.onboarding-wrapper[data-theme="dark"] .map-wrapper {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Location step - zone chips */
+.onboarding-wrapper .zone-chip {
+  background: rgba(16, 185, 129, 0.08) !important;
+  border-color: rgba(16, 185, 129, 0.2) !important;
+  color: #059669 !important;
+}
+.onboarding-wrapper[data-theme="dark"] .zone-chip {
+  background: rgba(16, 185, 129, 0.15) !important;
+  border-color: rgba(16, 185, 129, 0.3) !important;
+  color: #34d399 !important;
+}
+
+/* GPS button light theme */
+.onboarding-wrapper .gps-btn {
+  background: linear-gradient(135deg, #10b981, #059669) !important;
+  color: #fff !important;
 }
 </style>
