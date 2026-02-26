@@ -299,10 +299,15 @@ onMounted(async () => {
         // Re-fetch suggestions if we have location
         fetchPlanSuggestions(locationData.value.city, locationData.value.department)
       }
-      // Recover venueId and venue name from step 3
-      if (progressData.value.step3?.venueId) {
-        venueId.value = progressData.value.step3.venueId
-        venueData.value = { name: progressData.value.step3.form?.name || 'tu propiedad' }
+      // Recover venueId and venue name from step 3 (or step 2 for old progress data)
+      const venueStep = progressData.value.step3?.venueId
+        ? progressData.value.step3
+        : progressData.value.step2?.venueId
+          ? progressData.value.step2
+          : null
+      if (venueStep) {
+        venueId.value = venueStep.venueId
+        venueData.value = { name: venueStep.form?.name || 'tu propiedad' }
       }
       if (progress.completed_at) {
         router.push('/dashboard')

@@ -1,5 +1,6 @@
 <template>
   <!-- Floating bubble button -->
+  <div :class="['chat-bubble-float', { 'is-open': isOpen }]">
   <button :class="['chat-bubble-btn', { 'is-open': isOpen }]" @click="togglePanel">
     <svg v-if="!isOpen" viewBox="0 0 24 24" fill="none" width="48" height="48" style="margin-top: 4px">
       <!-- Chat bubble outline -->
@@ -14,6 +15,7 @@
       <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
     </svg>
   </button>
+  </div>
 
   <!-- Panel -->
   <Transition name="chat-panel">
@@ -372,10 +374,21 @@ onUnmounted(() => {
 
 <style scoped>
 /* Bubble button */
-.chat-bubble-btn {
+/* Wrapper: fixed position + vertical float */
+.chat-bubble-float {
   position: fixed;
   bottom: 1.5rem;
   right: 1.5rem;
+  z-index: 10003;
+  animation: bubbleFloatY 4s ease-in-out infinite;
+}
+
+.chat-bubble-float.is-open {
+  animation: none;
+}
+
+/* Button: horizontal float */
+.chat-bubble-btn {
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -385,21 +398,33 @@ onUnmounted(() => {
   font-size: 1.5rem;
   cursor: pointer;
   box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
-  z-index: 10003;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: transform 0.2s, box-shadow 0.2s;
+  animation: bubbleFloatX 5s ease-in-out infinite;
 }
 
 .chat-bubble-btn:hover {
   transform: scale(1.08);
   box-shadow: 0 6px 20px rgba(16, 185, 129, 0.45);
+  animation: none;
 }
 
 .chat-bubble-btn.is-open {
   background: #64748b;
   box-shadow: 0 4px 12px rgba(100, 116, 139, 0.3);
+  animation: none;
+}
+
+@keyframes bubbleFloatY {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+
+@keyframes bubbleFloatX {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(3px); }
 }
 
 /* Panel */
