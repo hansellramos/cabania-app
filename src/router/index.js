@@ -597,7 +597,7 @@ const routes = [
     redirect: '/pages/login',
   },
   {
-    path: '/onboarding',
+    path: '/onboarding/:step?',
     name: 'Onboarding',
     component: () => import('@/views/onboarding/OnboardingView.vue'),
   },

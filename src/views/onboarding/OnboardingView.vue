@@ -21,20 +21,13 @@
       </div>
 
       <!-- Progress Bar -->
-      <div class="step-progress mb-4" v-if="currentStep <= 7">
-        <div
-          v-for="s in 7"
-          :key="s"
-          class="step-dot"
-          :class="{
-            active: s === currentStep,
-            completed: s < currentStep,
-          }"
-        >
-          <span class="step-number">{{ s }}</span>
-          <span class="step-label">{{ stepLabels[s - 1] }}</span>
-        </div>
-      </div>
+      <VenueWizardStepper
+        v-if="currentStep <= 7"
+        class="mb-4"
+        :current-step="currentStep"
+        :total-steps="7"
+        :labels="stepLabels"
+      />
 
       <!-- Error state -->
       <CAlert v-if="tokenError" color="danger" class="text-center">
@@ -125,9 +118,10 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, watch, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ThemeToggle from '@/components/ThemeToggle.vue'
+import VenueWizardStepper from '@/components/VenueWizardStepper.vue'
 import ChatBubbleWidget from '@/components/chat/ChatBubbleWidget.vue'
 import CreateAccountStep from './steps/CreateAccountStep.vue'
 import LocationStep from './steps/LocationStep.vue'
@@ -167,6 +161,14 @@ const locationData = ref(null)
 const planSuggestions = ref(null)
 
 const stepLabels = ['Cuenta', 'Ubicacion', 'Propiedad', 'Amenidades', 'Plan', 'Disponibilidad', 'Tour']
+
+// Sync currentStep → URL
+watch(currentStep, (step) => {
+  const current = parseInt(route.params.step) || null
+  if (current !== step) {
+    router.replace({ name: 'Onboarding', params: { step } })
+  }
+})
 
 const chatSuggestions = [
   '¿Dónde queda la cabaña?',
@@ -320,6 +322,12 @@ onMounted(async () => {
   } catch (e) {
     tokenError.value = 'Error cargando progreso'
   }
+  // If URL has a step param and it's within completed range, use it
+  const urlStep = parseInt(route.params.step)
+  if (urlStep && urlStep >= 2 && urlStep <= currentStep.value) {
+    currentStep.value = urlStep
+  }
+
   initialLoading.value = false
 })
 </script>
@@ -451,62 +459,6 @@ onMounted(async () => {
   margin: 4px 0 0;
 }
 
-.step-progress {
-  display: flex;
-  justify-content: center;
-  gap: 8px;
-}
-
-.step-dot {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  max-width: 80px;
-}
-
-.step-number {
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.8rem;
-  font-weight: 600;
-  background: var(--ob-step-bg);
-  color: var(--ob-step-text);
-  border: 1px solid var(--ob-step-border);
-  transition: all 0.3s;
-}
-
-.step-dot.active .step-number {
-  background: linear-gradient(135deg, #10b981, #0ea5e9);
-  color: #fff;
-  border-color: transparent;
-}
-
-.step-dot.completed .step-number {
-  background: rgba(16, 185, 129, 0.2);
-  color: #10b981;
-  border-color: rgba(16, 185, 129, 0.3);
-}
-
-.step-label {
-  font-size: 0.65rem;
-  color: var(--ob-step-text);
-  text-align: center;
-}
-
-.step-dot.active .step-label {
-  color: var(--ob-text);
-}
-
-.step-dot.completed .step-label {
-  color: #10b981;
-}
-
 /* Engagement banner */
 .engage-banner {
   position: fixed;
@@ -612,6 +564,14 @@ onMounted(async () => {
 
 <!-- Unscoped: override step card styles based on theme -->
 <style>
+/* Wizard stepper theme integration */
+.onboarding-wrapper .wizard-stepper {
+  --wizard-step-bg: var(--ob-step-bg);
+  --wizard-step-border: var(--ob-step-border);
+  --wizard-step-text: var(--ob-step-text);
+  --wizard-active-text: var(--ob-text);
+}
+
 /* Light theme cards */
 .onboarding-wrapper .onboarding-card {
   background: rgba(255, 255, 255, 0.65) !important;
