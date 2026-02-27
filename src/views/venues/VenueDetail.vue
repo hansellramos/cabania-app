@@ -1,120 +1,150 @@
 <template>
   <CRow>
-    <CCol :xs="12" md="8" lg="6" class="mx-auto">
+    <CCol :xs="12">
       <CCard class="mb-4">
-        <CCardHeader>
+        <CCardHeader class="d-flex justify-content-between align-items-center">
           <strong>Detalle de la Cabaña</strong>
+          <div v-if="venue" class="d-flex gap-2 flex-wrap">
+            <RouterLink :to="`/business/venues/${venue.id}/edit`">
+              <CButton color="primary" size="sm">Editar</CButton>
+            </RouterLink>
+            <RouterLink :to="`/business/venues/${venue.id}/plans`">
+              <CButton color="success" size="sm">Planes</CButton>
+            </RouterLink>
+            <RouterLink :to="{ path: '/business/expenses', query: { venue_id: venue.id } }">
+              <CButton color="warning" size="sm">Egresos</CButton>
+            </RouterLink>
+            <RouterLink :to="{ path: '/business/expenses/create', query: { venue_id: venue.id } }">
+              <CButton color="warning" size="sm" variant="outline">+ Egreso</CButton>
+            </RouterLink>
+            <RouterLink :to="{ path: '/next', query: { venues: venue.id } }">
+              <CButton color="info" size="sm">Próximos</CButton>
+            </RouterLink>
+            <RouterLink :to="`/venues/${venue.id}/chat`">
+              <CButton color="dark" size="sm">Chat IA</CButton>
+            </RouterLink>
+            <CButton color="danger" size="sm" @click="onDelete">Eliminar</CButton>
+            <RouterLink to="/business/venues">
+              <CButton color="secondary" size="sm" variant="outline">Volver</CButton>
+            </RouterLink>
+          </div>
         </CCardHeader>
         <CCardBody>
           <template v-if="venue">
-            <p class="d-none"><strong>ID:</strong> <span class="text-body-secondary">{{ venue.id }}</span></p>
-            <p><strong>Nombre:</strong> <span class="text-body-secondary">{{ venue.name }}</span></p>
-            <p><strong>WhatsApp:</strong> <span class="text-body-secondary">{{ venue.whatsapp }}</span></p>
-            <p><strong>Instagram:</strong> <span class="text-body-secondary"><a :href="instagramUrl" target="_blank" rel="noopener noreferrer">{{ instagramDisplay }} <CIcon icon="cil-external-link" size="sm" class="ms-1" /></a></span></p>
-            <p><strong>Dirección:</strong> <span class="text-body-secondary">{{ venue.address }}</span></p>
-            <p><strong>Código Postal:</strong> <span class="text-body-secondary">{{ venue.zip_code }}</span></p>
-            <p><strong>Latitud:</strong> <span class="text-body-secondary">{{ venue.latitude }}</span></p>
-            <p><strong>Longitud:</strong> <span class="text-body-secondary">{{ venue.longitude }}</span></p>
-            <div class="mb-3">
-              <div ref="mapContainer" class="map-container"></div>
-            </div>
-            <p><strong>Ciudad:</strong> <span class="text-body-secondary">{{ venue.city }}</span></p>
-            <p><strong>País:</strong> <span class="text-body-secondary">{{ venue.country }}</span></p>
-            <p><strong>Departamento:</strong> <span class="text-body-secondary">{{ venue.department }}</span></p>
-            <p><strong>Barrio:</strong> <span class="text-body-secondary">{{ venue.suburb }}</span></p>
-            <p><strong>Referencia:</strong> <span class="text-body-secondary">{{ venue.address_reference }}</span></p>
-            
-            <!-- Navigation Links Preview -->
-            <div v-if="venue.waze_link || venue.google_maps_link" class="mb-4">
-              <strong>Navegación:</strong>
-              <CRow class="mt-2 g-3">
-                <CCol :xs="12" :sm="6" v-if="venue.waze_link">
-                  <CCard class="h-100 navigation-card">
-                    <CCardBody class="d-flex align-items-center p-3">
-                      <div class="nav-icon-wrapper bg-primary-subtle me-3">
-                        <img src="https://www.waze.com/favicon.ico" alt="Waze" width="24" height="24" />
-                      </div>
-                      <div class="flex-grow-1">
-                        <div class="fw-semibold">Waze</div>
-                        <small class="text-muted">Navegación en tiempo real</small>
-                      </div>
-                      <a :href="venue.waze_link" target="_blank" rel="noopener noreferrer" class="stretched-link">
-                        <CIcon icon="cil-external-link" />
-                      </a>
-                    </CCardBody>
-                  </CCard>
-                </CCol>
-                <CCol :xs="12" :sm="6" v-if="venue.google_maps_link">
-                  <CCard class="h-100 navigation-card">
-                    <CCardBody class="d-flex align-items-center p-3">
-                      <div class="nav-icon-wrapper bg-success-subtle me-3">
-                        <img src="https://maps.google.com/favicon.ico" alt="Google Maps" width="24" height="24" />
-                      </div>
-                      <div class="flex-grow-1">
-                        <div class="fw-semibold">Google Maps</div>
-                        <small class="text-muted">Ver en el mapa</small>
-                      </div>
-                      <a :href="googleMapsUrl" target="_blank" rel="noopener noreferrer" class="stretched-link">
-                        <CIcon icon="cil-external-link" />
-                      </a>
-                    </CCardBody>
-                  </CCard>
-                </CCol>
-              </CRow>
-            </div>
-            
-            <!-- Galería de imágenes -->
-            <div v-if="venueImages.length > 0" class="mb-4">
-              <strong>Fotos:</strong>
-              <div class="mt-2">
-                <div v-if="coverImage" class="cover-image-wrapper mb-3">
-                  <img :src="coverImage.image_url" class="img-fluid rounded" alt="Portada" />
-                </div>
-                <div v-if="thumbnailImages.length > 0" class="venue-thumbnails">
-                  <img
-                    v-for="image in thumbnailImages"
-                    :key="image.id"
-                    :src="image.image_url"
-                    class="img-thumbnail venue-thumb"
-                    alt="Foto de la cabaña"
-                  />
-                </div>
-              </div>
-            </div>
+            <CNav variant="tabs" class="mb-3">
+              <CNavItem>
+                <CNavLink href="javascript:void(0)" :active="activeTab === 0" @click="activeTab = 0">
+                  Información
+                </CNavLink>
+              </CNavItem>
+              <CNavItem>
+                <CNavLink href="javascript:void(0)" :active="activeTab === 1" @click="activeTab = 1">
+                  Ubicación
+                </CNavLink>
+              </CNavItem>
+              <CNavItem>
+                <CNavLink href="javascript:void(0)" :active="activeTab === 2" @click="activeTab = 2">
+                  Galería
+                </CNavLink>
+              </CNavItem>
+            </CNav>
 
-            <div v-if="venueAmenities.length > 0" class="mb-4">
-              <strong>Amenidades:</strong>
-              <div class="d-flex flex-wrap gap-1 mt-2">
-                <CBadge v-for="amenity in venueAmenities" :key="amenity.id" color="info" class="me-1">
-                  {{ amenity.name }}
-                </CBadge>
-              </div>
-            </div>
-            
-            <div class="mt-4 d-flex flex-wrap gap-2">
-              <RouterLink :to="`/business/venues/${venue.id}/edit`">
-                <CButton color="primary" size="sm">Editar</CButton>
-              </RouterLink>
-              <RouterLink :to="`/business/venues/${venue.id}/plans`">
-                <CButton color="success" size="sm">Planes</CButton>
-              </RouterLink>
-              <RouterLink :to="{ path: '/business/expenses', query: { venue_id: venue.id } }">
-                <CButton color="warning" size="sm">Egresos</CButton>
-              </RouterLink>
-              <RouterLink :to="{ path: '/business/expenses/create', query: { venue_id: venue.id } }">
-                <CButton color="warning" size="sm" variant="outline">+ Egreso</CButton>
-              </RouterLink>
-              <RouterLink :to="{ path: '/next', query: { venues: venue.id } }">
-                <CButton color="info" size="sm">Próximos</CButton>
-              </RouterLink>
-              <RouterLink :to="`/venues/${venue.id}/chat`">
-                <CButton color="dark" size="sm">Chat IA</CButton>
-              </RouterLink>
-              <CButton color="danger" size="sm" @click="onDelete">Eliminar</CButton>
-              <RouterLink to="/business/venues">
-                <CButton color="secondary" size="sm" variant="outline">Volver a la Lista</CButton>
-              </RouterLink>
-            </div>
+            <CTabContent>
+              <!-- Tab Información -->
+              <CTabPane :visible="activeTab === 0">
+                <p class="d-none"><strong>ID:</strong> <span class="text-body-secondary">{{ venue.id }}</span></p>
+                <p><strong>Nombre:</strong> <span class="text-body-secondary">{{ venue.name }}</span></p>
+                <p><strong>WhatsApp:</strong> <span class="text-body-secondary">{{ venue.whatsapp }}</span></p>
+                <p><strong>Instagram:</strong> <span class="text-body-secondary"><a :href="instagramUrl" target="_blank" rel="noopener noreferrer">{{ instagramDisplay }} <CIcon icon="cil-external-link" size="sm" class="ms-1" /></a></span></p>
+                <p><strong>Dirección:</strong> <span class="text-body-secondary">{{ venue.address }}</span></p>
+                <p><strong>Código Postal:</strong> <span class="text-body-secondary">{{ venue.zip_code }}</span></p>
+                <p><strong>Latitud:</strong> <span class="text-body-secondary">{{ venue.latitude }}</span></p>
+                <p><strong>Longitud:</strong> <span class="text-body-secondary">{{ venue.longitude }}</span></p>
+                <p><strong>Ciudad:</strong> <span class="text-body-secondary">{{ venue.city }}</span></p>
+                <p><strong>País:</strong> <span class="text-body-secondary">{{ venue.country }}</span></p>
+                <p><strong>Departamento:</strong> <span class="text-body-secondary">{{ venue.department }}</span></p>
+                <p><strong>Barrio:</strong> <span class="text-body-secondary">{{ venue.suburb }}</span></p>
+                <p><strong>Referencia:</strong> <span class="text-body-secondary">{{ venue.address_reference }}</span></p>
+              </CTabPane>
+
+              <!-- Tab Ubicación -->
+              <CTabPane :visible="activeTab === 1">
+                <div class="mb-3">
+                  <div ref="mapContainer" class="map-container"></div>
+                </div>
+
+                <div v-if="venue.waze_link || venue.google_maps_link" class="mb-4">
+                  <strong>Navegación:</strong>
+                  <CRow class="mt-2 g-3">
+                    <CCol :xs="12" :sm="6" v-if="venue.waze_link">
+                      <CCard class="h-100 navigation-card">
+                        <CCardBody class="d-flex align-items-center p-3">
+                          <div class="nav-icon-wrapper bg-primary-subtle me-3">
+                            <img src="https://www.waze.com/favicon.ico" alt="Waze" width="24" height="24" />
+                          </div>
+                          <div class="flex-grow-1">
+                            <div class="fw-semibold">Waze</div>
+                            <small class="text-muted">Navegación en tiempo real</small>
+                          </div>
+                          <a :href="venue.waze_link" target="_blank" rel="noopener noreferrer" class="stretched-link">
+                            <CIcon icon="cil-external-link" />
+                          </a>
+                        </CCardBody>
+                      </CCard>
+                    </CCol>
+                    <CCol :xs="12" :sm="6" v-if="venue.google_maps_link">
+                      <CCard class="h-100 navigation-card">
+                        <CCardBody class="d-flex align-items-center p-3">
+                          <div class="nav-icon-wrapper bg-success-subtle me-3">
+                            <img src="https://maps.google.com/favicon.ico" alt="Google Maps" width="24" height="24" />
+                          </div>
+                          <div class="flex-grow-1">
+                            <div class="fw-semibold">Google Maps</div>
+                            <small class="text-muted">Ver en el mapa</small>
+                          </div>
+                          <a :href="googleMapsUrl" target="_blank" rel="noopener noreferrer" class="stretched-link">
+                            <CIcon icon="cil-external-link" />
+                          </a>
+                        </CCardBody>
+                      </CCard>
+                    </CCol>
+                  </CRow>
+                </div>
+              </CTabPane>
+
+              <!-- Tab Galería -->
+              <CTabPane :visible="activeTab === 2">
+                <div v-if="venueImages.length > 0" class="mb-4">
+                  <strong>Fotos:</strong>
+                  <div class="mt-2">
+                    <div v-if="coverImage" class="cover-image-wrapper mb-3">
+                      <img :src="coverImage.image_url" class="img-fluid rounded" alt="Portada" />
+                    </div>
+                    <div v-if="thumbnailImages.length > 0" class="venue-thumbnails">
+                      <img
+                        v-for="image in thumbnailImages"
+                        :key="image.id"
+                        :src="image.image_url"
+                        class="img-thumbnail venue-thumb"
+                        alt="Foto de la cabaña"
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div v-else class="text-muted text-center py-3">
+                  No hay fotos cargadas
+                </div>
+
+                <div v-if="venueAmenities.length > 0" class="mb-4">
+                  <strong>Amenidades:</strong>
+                  <div class="d-flex flex-wrap gap-1 mt-2">
+                    <CBadge v-for="amenity in venueAmenities" :key="amenity.id" color="info" class="me-1">
+                      {{ amenity.name }}
+                    </CBadge>
+                  </div>
+                </div>
+              </CTabPane>
+            </CTabContent>
           </template>
           <template v-else>
             <CSpinner color="primary" /> Cargando...
@@ -128,7 +158,7 @@
 <script setup>
 import { ref, onMounted, watch, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CSpinner, CBadge } from '@coreui/vue'
+import { CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CSpinner, CBadge, CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 import { getVenueById, deleteVenue } from '@/services/venueService'
 import { useBreadcrumbStore } from '@/stores/breadcrumb.js'
@@ -143,6 +173,8 @@ const venueAmenities = ref([])
 const venueImages = ref([])
 const mapContainer = ref(null)
 const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN
+const activeTab = ref(0)
+const mapInitialized = ref(false)
 
 const instagramUrl = computed(() => {
   const ig = venue.value?.instagram || ''
@@ -210,20 +242,33 @@ const onDelete = async () => {
   }
 }
 
-watch(venue, async (val) => {
+function initMap() {
+  if (mapInitialized.value || !venue.value || !venue.value.latitude || !venue.value.longitude) return
+  if (!mapContainer.value) return
+  mapboxgl.accessToken = token
+  const map = new mapboxgl.Map({
+    style: 'mapbox://styles/mapbox/streets-v11',
+    container: mapContainer.value,
+    center: [venue.value.longitude, venue.value.latitude],
+    zoom: 12
+  })
+  new mapboxgl.Marker().setLngLat([venue.value.longitude, venue.value.latitude]).addTo(map)
+  mapInitialized.value = true
+}
+
+watch(venue, (val) => {
   if (val) {
     breadcrumbStore.setTitle(`Detalle ${val.name}`)
-    if (val.latitude && val.longitude) {
-      await nextTick()
-      mapboxgl.accessToken = token
-      const map = new mapboxgl.Map({
-        style: 'mapbox://styles/mapbox/streets-v11',
-        container: mapContainer.value,
-        center: [val.longitude, val.latitude],
-        zoom: 12
-      })
-      new mapboxgl.Marker().setLngLat([val.longitude, val.latitude]).addTo(map)
+    if (activeTab.value === 1) {
+      nextTick(() => initMap())
     }
+  }
+})
+
+watch(activeTab, async (tab) => {
+  if (tab === 1 && venue.value) {
+    await nextTick()
+    initMap()
   }
 })
 </script>
