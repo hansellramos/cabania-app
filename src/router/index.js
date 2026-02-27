@@ -447,6 +447,12 @@ const routes = [
       ...commissionRoutes,
       ...pendingTaskRoutes,
       {
+        path: '/invitations',
+        name: 'Invitations',
+        component: () => import('@/views/invitations/InvitationsView.vue'),
+        meta: { breadcrumb: 'Invitaciones' },
+      },
+      {
         path: '/admin/amenities',
         name: 'AmenityList',
         component: () => import('@/views/amenities/AmenityListView.vue'),
@@ -588,6 +594,20 @@ const routes = [
     ],
   },
   {
+    path: '/payment-result',
+    name: 'BoldPaymentResult',
+    component: () => import('@/views/payments/BoldPaymentResultView.vue'),
+  },
+  {
+    path: '/login',
+    redirect: '/pages/login',
+  },
+  {
+    path: '/onboarding/:step?',
+    name: 'Onboarding',
+    component: () => import('@/views/onboarding/OnboardingView.vue'),
+  },
+  {
     path: '/p/:slug',
     name: 'PublicVenue',
     component: () => import('@/layouts/PublicLayout.vue'),
@@ -645,7 +665,7 @@ const router = createRouter({
 const { posthog } = usePostHog()
 
 // Public routes that don't require authentication
-const publicRoutes = ['/availability', '/p/', '/pages/login', '/pages/register', '/pages/404', '/pages/500']
+const publicRoutes = ['/availability', '/p/', '/pages/login', '/pages/register', '/pages/404', '/pages/500', '/payment-result', '/onboarding']
 
 // Routes that don't require subscription
 const noSubscriptionRoutes = ['/no-subscription', '/profile']

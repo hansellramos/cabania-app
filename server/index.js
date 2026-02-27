@@ -7894,6 +7894,586 @@ REGLAS:
 
   // ==================== End Commissions API ====================
 
+  // ==================== Invitations API ====================
+  const { getEmailProvider } = require('./services/email');
+  const { invitationEmail, invitationWhatsAppMessage } = require('./services/email/templates');
+  const { sendWhatsApp } = require('./services/twilio/twilioService');
+  const bcryptInv = require('bcryptjs');
+  const crypto = require('crypto');
+
+  // List invitations
+  app.get('/api/invitations', isAuthenticated, async (req, res) => {
+    try {
+      if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:view')) {
+        return res.status(403).json({ error: 'No tiene permiso para ver invitaciones' });
+      }
+      const { status, organization_id } = req.query;
+      const where = {};
+      if (status) where.status = status;
+      if (organization_id) where.organization_id = organization_id;
+
+      const invitations = await prisma.invitations.findMany({
+        where,
+        include: {
+          inviter: { select: { id: true, display_name: true, email: true } },
+          organization: { select: { id: true, name: true } }
+        },
+        orderBy: { created_at: 'desc' }
+      });
+      res.json(invitations);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Create and send invitation
+  app.post('/api/invitations', isAuthenticated, async (req, res) => {
+    try {
+      if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:send')) {
+        return res.status(403).json({ error: 'No tiene permiso para enviar invitaciones' });
+      }
+      const { email, phone, channel, organization_id, role, message } = req.body;
+
+      if (!channel || !['email', 'whatsapp'].includes(channel)) {
+        return res.status(400).json({ error: 'Canal inválido. Use "email" o "whatsapp"' });
+      }
+      if (channel === 'email' && !email) {
+        return res.status(400).json({ error: 'Email requerido para invitación por correo' });
+      }
+      if (channel === 'whatsapp' && !phone) {
+        return res.status(400).json({ error: 'Teléfono requerido para invitación por WhatsApp' });
+      }
+
+      // Check for existing pending invitation
+      const existingWhere = { status: 'pending' };
+      if (channel === 'email') existingWhere.email = email;
+      else existingWhere.phone = phone;
+
+      const existing = await prisma.invitations.findFirst({ where: existingWhere });
+      if (existing) {
+        return res.status(409).json({ error: 'Ya existe una invitación pendiente para este destinatario' });
+      }
+
+      const invitation = await prisma.invitations.create({
+        data: {
+          email: email || null,
+          phone: phone || null,
+          channel,
+          invited_by: String(req.user.claims?.sub),
+          organization_id: organization_id || null,
+          role: role || 'user',
+          message: message || null,
+          expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        },
+        include: {
+          inviter: { select: { id: true, display_name: true, email: true } },
+          organization: { select: { id: true, name: true } }
+        }
+      });
+
+      // Send notification
+      const inviterName = invitation.inviter.display_name || invitation.inviter.email || 'Un administrador';
+      const orgName = invitation.organization?.name || null;
+
+      if (channel === 'email') {
+        const emailProvider = getEmailProvider();
+        const template = invitationEmail({
+          inviterName,
+          organizationName: orgName,
+          token: invitation.token,
+          message: invitation.message,
+          expiresAt: invitation.expires_at,
+        });
+        const result = await emailProvider.send({
+          to: email,
+          subject: template.subject,
+          html: template.html,
+          text: template.text,
+        });
+        if (!result.success) {
+          console.error('Failed to send invitation email:', result.error);
+        }
+      } else {
+        const body = invitationWhatsAppMessage({
+          inviterName,
+          organizationName: orgName,
+          token: invitation.token,
+        });
+        const result = await sendWhatsApp({ to: phone, body });
+        if (!result.success) {
+          console.error('Failed to send WhatsApp invitation:', result.error);
+        }
+      }
+
+      res.json(invitation);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Resend invitation
+  app.post('/api/invitations/:id/resend', isAuthenticated, async (req, res) => {
+    try {
+      if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:manage')) {
+        return res.status(403).json({ error: 'No tiene permiso para gestionar invitaciones' });
+      }
+      const invitation = await prisma.invitations.findUnique({
+        where: { id: req.params.id },
+        include: {
+          inviter: { select: { id: true, display_name: true, email: true } },
+          organization: { select: { id: true, name: true } }
+        }
+      });
+      if (!invitation) return res.status(404).json({ error: 'Invitación no encontrada' });
+      if (invitation.status !== 'pending') {
+        return res.status(400).json({ error: 'Solo se pueden reenviar invitaciones pendientes' });
+      }
+
+      // Extend expiration
+      const updated = await prisma.invitations.update({
+        where: { id: req.params.id },
+        data: { expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) }
+      });
+
+      const inviterName = invitation.inviter.display_name || invitation.inviter.email || 'Un administrador';
+      const orgName = invitation.organization?.name || null;
+
+      if (invitation.channel === 'email') {
+        const emailProvider = getEmailProvider();
+        const template = invitationEmail({
+          inviterName,
+          organizationName: orgName,
+          token: invitation.token,
+          message: invitation.message,
+          expiresAt: updated.expires_at,
+        });
+        await emailProvider.send({
+          to: invitation.email,
+          subject: template.subject,
+          html: template.html,
+          text: template.text,
+        });
+      } else {
+        const body = invitationWhatsAppMessage({
+          inviterName,
+          organizationName: orgName,
+          token: invitation.token,
+        });
+        await sendWhatsApp({ to: invitation.phone, body });
+      }
+
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Cancel invitation
+  app.delete('/api/invitations/:id', isAuthenticated, async (req, res) => {
+    try {
+      if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:manage')) {
+        return res.status(403).json({ error: 'No tiene permiso para gestionar invitaciones' });
+      }
+      const invitation = await prisma.invitations.findUnique({ where: { id: req.params.id } });
+      if (!invitation) return res.status(404).json({ error: 'Invitación no encontrada' });
+
+      await prisma.invitations.update({
+        where: { id: req.params.id },
+        data: { status: 'cancelled' }
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Validate invitation token (PUBLIC - no auth required)
+  app.get('/api/invitations/validate/:token', async (req, res) => {
+    try {
+      const invitation = await prisma.invitations.findUnique({
+        where: { token: req.params.token },
+        include: { organization: { select: { id: true, name: true } } }
+      });
+
+      if (!invitation) {
+        return res.status(404).json({ valid: false, error: 'Invitación no encontrada' });
+      }
+      if (invitation.status !== 'pending') {
+        return res.status(400).json({ valid: false, error: 'Esta invitación ya fue utilizada o cancelada', status: invitation.status });
+      }
+      if (new Date(invitation.expires_at) < new Date()) {
+        await prisma.invitations.update({ where: { id: invitation.id }, data: { status: 'expired' } });
+        return res.status(400).json({ valid: false, error: 'Esta invitación ha expirado' });
+      }
+
+      res.json({
+        valid: true,
+        email: invitation.email,
+        phone: invitation.phone,
+        channel: invitation.channel,
+        organization: invitation.organization,
+        role: invitation.role,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Accept invitation + create account (PUBLIC - no auth required)
+  app.post('/api/invitations/:token/accept', async (req, res) => {
+    try {
+      const { display_name, email, password } = req.body;
+
+      if (!display_name || !email || !password) {
+        return res.status(400).json({ error: 'Nombre, email y contraseña son requeridos' });
+      }
+      if (password.length < 6) {
+        return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres' });
+      }
+
+      const invitation = await prisma.invitations.findUnique({
+        where: { token: req.params.token },
+        include: { organization: true }
+      });
+
+      if (!invitation) return res.status(404).json({ error: 'Invitación no encontrada' });
+      if (invitation.status !== 'pending') {
+        return res.status(400).json({ error: 'Esta invitación ya fue utilizada o cancelada' });
+      }
+      if (new Date(invitation.expires_at) < new Date()) {
+        await prisma.invitations.update({ where: { id: invitation.id }, data: { status: 'expired' } });
+        return res.status(400).json({ error: 'Esta invitación ha expirado' });
+      }
+
+      // Check if email already taken
+      const existingUser = await prisma.users.findFirst({ where: { email } });
+      if (existingUser) {
+        return res.status(409).json({ error: 'Ya existe una cuenta con este correo electrónico' });
+      }
+
+      // Get default profile
+      const defaultProfileCode = process.env.DEFAULT_PROFILE_CODE || 'owner';
+      const profile = await prisma.profiles.findUnique({ where: { code: defaultProfileCode } });
+
+      const password_hash = await bcryptInv.hash(password, 10);
+      const userId = `inv_${crypto.randomUUID().split('-')[0]}_${Date.now()}`;
+
+      // Create user + mark invitation accepted + create onboarding progress + referral reward
+      const transactionOps = [
+        prisma.users.create({
+          data: {
+            id: userId,
+            email,
+            display_name,
+            password_hash,
+            role: invitation.role || 'user',
+            profile_id: profile?.id || null,
+            referred_by: invitation.invited_by,
+          }
+        }),
+        prisma.invitations.update({
+          where: { id: invitation.id },
+          data: { status: 'accepted', accepted_at: new Date() }
+        }),
+        prisma.onboarding_progress.create({
+          data: { user_id: userId, current_step: 2, data: {} }
+        }),
+        prisma.referral_rewards.create({
+          data: {
+            referrer_id: invitation.invited_by,
+            referred_id: userId,
+            invitation_id: invitation.id,
+            reward_type: 'signup',
+            status: 'pending',
+            description: `Registro de ${display_name} (${email}) por invitación`,
+          }
+        }),
+      ];
+      const [user] = await prisma.$transaction(transactionOps);
+
+      // Assign to organization if specified
+      if (invitation.organization_id) {
+        await prisma.user_organizations.create({
+          data: { user_id: userId, organization_id: invitation.organization_id }
+        });
+      }
+
+      // Assign to default subscription if configured
+      const defaultSubId = process.env.DEFAULT_SUBSCRIPTION_ID;
+      if (defaultSubId) {
+        await prisma.subscription_users.create({
+          data: {
+            subscription_id: defaultSubId,
+            user_id: userId,
+            role: 'member',
+            is_owner: false,
+          }
+        }).catch(() => {}); // Ignore if already exists
+      }
+
+      // Auto-login: create session
+      const loginUser = { id: userId, email, display_name };
+      req.login(loginUser, (err) => {
+        if (err) {
+          console.error('Auto-login error:', err);
+          return res.json({ success: true, user: { id: userId, email, display_name }, autoLogin: false });
+        }
+        res.json({ success: true, user: { id: userId, email, display_name }, autoLogin: true });
+      });
+    } catch (error) {
+      console.error('Accept invitation error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== End Invitations API ====================
+
+  // ==================== Onboarding API ====================
+
+  // Get onboarding progress (authenticated)
+  app.get('/api/onboarding/progress', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      let progress = await prisma.onboarding_progress.findUnique({
+        where: { user_id: userId }
+      });
+
+      if (!progress) {
+        // Create initial progress if doesn't exist
+        progress = await prisma.onboarding_progress.create({
+          data: { user_id: userId, current_step: 2, data: {} }
+        });
+      }
+
+      res.json(progress);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Save onboarding step data and advance
+  app.put('/api/onboarding/step', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { step, data: stepData } = req.body;
+
+      if (!step || !stepData) {
+        return res.status(400).json({ error: 'step y data son requeridos' });
+      }
+
+      const progress = await prisma.onboarding_progress.findUnique({
+        where: { user_id: userId }
+      });
+
+      if (!progress) {
+        return res.status(404).json({ error: 'Progreso de onboarding no encontrado' });
+      }
+
+      // Merge step data into existing data
+      const existingData = progress.data || {};
+      existingData[`step${step}`] = stepData;
+
+      const updated = await prisma.onboarding_progress.update({
+        where: { user_id: userId },
+        data: {
+          current_step: step + 1,
+          data: existingData,
+        }
+      });
+
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Mark onboarding as completed
+  app.post('/api/onboarding/complete', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const updated = await prisma.onboarding_progress.update({
+        where: { user_id: userId },
+        data: { completed_at: new Date() }
+      });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get amenities for onboarding (authenticated)
+  app.get('/api/onboarding/amenities', isAuthenticated, async (req, res) => {
+    try {
+      const amenities = await prisma.amenities.findMany({
+        where: { is_active: true },
+        orderBy: [{ category: 'asc' }, { name: 'asc' }]
+      });
+      res.json(amenities);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get nearby zones for onboarding location step
+  app.get('/api/onboarding/nearby-zones', isAuthenticated, async (req, res) => {
+    try {
+      const { department } = req.query;
+      if (!department) {
+        return res.status(400).json({ error: 'department es requerido' });
+      }
+
+      const zones = await prisma.venues.groupBy({
+        by: ['city'],
+        where: { department, city: { not: null } },
+        _count: { id: true },
+        orderBy: { _count: { id: 'desc' } },
+        take: 8,
+      });
+
+      res.json({
+        zones: zones
+          .filter(z => z.city)
+          .map(z => ({ city: z.city, venue_count: z._count.id })),
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Get plan suggestions based on nearby venues
+  app.get('/api/onboarding/suggestions', isAuthenticated, async (req, res) => {
+    try {
+      const { city, department } = req.query;
+
+      const where = { is_active: true };
+      if (department) {
+        where.venue = { department };
+      }
+
+      const plans = await prisma.venue_plans.findMany({
+        where,
+        select: {
+          name: true,
+          adult_price: true,
+          child_price: true,
+          max_capacity: true,
+          check_in_time: true,
+          check_out_time: true,
+          plan_type: true,
+        },
+        take: 100,
+      });
+
+      if (plans.length < 3) {
+        // Fallback defaults for Colombia
+        return res.json({
+          source: 'defaults',
+          plan_count: plans.length,
+          suggestions: {
+            name: [
+              { value: 'Pasadía Familiar', count: 0 },
+              { value: 'Plan Fin de Semana', count: 0 },
+              { value: 'Noche Romántica', count: 0 },
+              { value: 'Plan Todo Incluido', count: 0 },
+            ],
+            adult_price: [
+              { value: 60000, label: '$60.000' },
+              { value: 80000, label: '$80.000' },
+              { value: 120000, label: '$120.000' },
+              { value: 150000, label: '$150.000' },
+            ],
+            child_price: [
+              { value: 30000, label: '$30.000' },
+              { value: 50000, label: '$50.000' },
+              { value: 70000, label: '$70.000' },
+            ],
+            max_capacity: [
+              { value: 6, label: '6 personas' },
+              { value: 10, label: '10 personas' },
+              { value: 15, label: '15 personas' },
+              { value: 20, label: '20 personas' },
+            ],
+            check_in_time: [
+              { value: '10:00', label: '10:00 AM' },
+              { value: '14:00', label: '2:00 PM' },
+              { value: '15:00', label: '3:00 PM' },
+            ],
+            check_out_time: [
+              { value: '12:00', label: '12:00 PM' },
+              { value: '17:00', label: '5:00 PM' },
+              { value: '18:00', label: '6:00 PM' },
+            ],
+          },
+        });
+      }
+
+      // Helper: get most common values for a field
+      function getMostCommon(arr, field, limit) {
+        const counts = {};
+        arr.forEach(item => {
+          const val = item[field];
+          if (val != null && val !== '') {
+            const key = String(val);
+            counts[key] = (counts[key] || 0) + 1;
+          }
+        });
+        return Object.entries(counts)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, limit)
+          .map(([value, count]) => ({ value, count }));
+      }
+
+      // Helper: get representative numeric values (quartiles)
+      function getRepresentativeValues(arr, field, limit) {
+        const values = arr
+          .map(item => parseFloat(item[field]))
+          .filter(v => !isNaN(v) && v > 0)
+          .sort((a, b) => a - b);
+        if (values.length === 0) return [];
+        const step = Math.max(1, Math.floor(values.length / limit));
+        const result = [];
+        const seen = new Set();
+        for (let i = 0; i < values.length && result.length < limit; i += step) {
+          const v = values[i];
+          if (!seen.has(v)) {
+            seen.add(v);
+            result.push({ value: v, label: `$${v.toLocaleString('es-CO')}` });
+          }
+        }
+        return result;
+      }
+
+      res.json({
+        source: 'nearby',
+        plan_count: plans.length,
+        suggestions: {
+          name: getMostCommon(plans, 'name', 5),
+          adult_price: getRepresentativeValues(plans, 'adult_price', 4),
+          child_price: getRepresentativeValues(plans, 'child_price', 3),
+          max_capacity: getMostCommon(plans, 'max_capacity', 4).map(s => ({
+            value: parseInt(s.value),
+            label: `${s.value} personas`,
+            count: s.count,
+          })),
+          check_in_time: getMostCommon(plans, 'check_in_time', 3).map(s => ({
+            value: s.value,
+            label: s.value,
+            count: s.count,
+          })),
+          check_out_time: getMostCommon(plans, 'check_out_time', 3).map(s => ({
+            value: s.value,
+            label: s.value,
+            count: s.count,
+          })),
+        },
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== End Onboarding API ====================
+
   // Serve static files from Vue build in production
   const distPath = path.join(__dirname, '..', 'dist');
   app.use(express.static(distPath));
