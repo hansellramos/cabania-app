@@ -21,12 +21,19 @@
         </CCardHeader>
         <CCardBody class="p-0">
           <div class="contact-input-bar">
-            <div class="d-flex align-items-center gap-2">
+            <div v-if="activeConvSource && activeConvSource !== 'web'" class="d-flex align-items-center gap-2">
+              <CBadge :color="getSourceColor(activeConvSource)">{{ getSourceLabel(activeConvSource) }}</CBadge>
+              <strong class="small">
+                {{ activeConvPhone ? '+' + activeConvPhone : '' }}
+                <span v-if="activeConvName" class="text-muted">({{ activeConvName }})</span>
+              </strong>
+            </div>
+            <div v-else class="d-flex align-items-center gap-2">
               <CFormSelect v-model="contactType" size="sm" style="width: auto; min-width: 130px;">
                 <option value="whatsapp">WhatsApp</option>
                 <option value="instagram">Instagram</option>
               </CFormSelect>
-              <CFormInput 
+              <CFormInput
                 v-model="contactValue"
                 :placeholder="contactType === 'whatsapp' ? 'Ej: 3101234567' : 'Ej: @usuario'"
                 size="sm"
@@ -111,6 +118,7 @@
               <CTableRow>
                 <CTableHeaderCell>Fecha</CTableHeaderCell>
                 <CTableHeaderCell>Fuente</CTableHeaderCell>
+                <CTableHeaderCell>Estado</CTableHeaderCell>
                 <CTableHeaderCell>Teléfono</CTableHeaderCell>
                 <CTableHeaderCell>Contacto</CTableHeaderCell>
                 <CTableHeaderCell></CTableHeaderCell>
@@ -120,17 +128,35 @@
               <CTableRow
                 v-for="conv in conversations"
                 :key="conv.id"
-                :class="{ 'table-active': conversationId === conv.id }"
+                :class="{ 'table-active': conversationId === conv.id, 'table-warning': conv.status === 'human_attention' }"
               >
                 <CTableDataCell>{{ formatDate(conv.updated_at || conv.created_at) }}</CTableDataCell>
                 <CTableDataCell>
-                  <CBadge :color="getSourceColor(conv.source)">{{ conv.source }}</CBadge>
+                  <CBadge :color="getSourceColor(conv.source)">{{ getSourceLabel(conv.source) }}</CBadge>
+                </CTableDataCell>
+                <CTableDataCell>
+                  <CBadge v-if="conv.status === 'human_attention'" color="warning" class="text-dark">
+                    Atención humana
+                  </CBadge>
+                  <CBadge v-else color="success">Activa</CBadge>
                 </CTableDataCell>
                 <CTableDataCell>{{ conv.phone || '-' }}</CTableDataCell>
                 <CTableDataCell>{{ conv.name || '-' }}</CTableDataCell>
                 <CTableDataCell class="text-end">
+                  <CButton
+                    v-if="conv.status === 'human_attention'"
+                    size="sm"
+                    color="warning"
+                    variant="ghost"
+                    @click="resumeBotForConversation(conv)"
+                    :disabled="resumingConvId === conv.id"
+                    class="me-1"
+                  >
+                    <CSpinner v-if="resumingConvId === conv.id" size="sm" />
+                    <template v-else>Reanudar bot</template>
+                  </CButton>
                   <CButton size="sm" color="primary" variant="ghost" @click="resumeConversation(conv)">
-                    Reanudar
+                    Ver chat
                   </CButton>
                 </CTableDataCell>
               </CTableRow>
@@ -149,7 +175,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CSpinner,
@@ -181,6 +207,10 @@ const conversations = ref([])
 const loadingConversations = ref(false)
 const estimateId = ref(null)
 const arrivedWithConversation = ref(false)
+const resumingConvId = ref(null)
+const activeConvSource = ref(null) // source of the active conversation (baileys, web, etc.)
+const activeConvPhone = ref(null)
+const activeConvName = ref(null)
 
 const toast = ref({
   visible: false,
@@ -292,6 +322,9 @@ const sendMessage = async () => {
 const clearConversation = () => {
   messages.value = []
   conversationId.value = null
+  activeConvSource.value = null
+  activeConvPhone.value = null
+  activeConvName.value = null
   showToast('Conversación reiniciada')
   loadConversations()
 }
@@ -316,15 +349,41 @@ const resumeConversation = async (conv) => {
     if (response.ok) {
       const data = await response.json()
       conversationId.value = data.id
+      activeConvSource.value = data.source || null
+      activeConvPhone.value = data.phone || null
+      activeConvName.value = data.name || null
       messages.value = data.messages.map(m => ({
         role: m.role,
-        content: m.content,
+        content: (m.content || '').replace(/\n?<!-- \{.*?\} -->/g, ''),
         meta: m.role === 'assistant' ? { model: m.model, tokens: m.tokens_used } : undefined
       }))
     }
   } catch (error) {
     console.error('Error resuming conversation:', error)
     showToast('Error al cargar la conversación', 'danger')
+  }
+}
+
+const resumeBotForConversation = async (conv) => {
+  resumingConvId.value = conv.id
+  try {
+    const venueId = route.params.id
+    const response = await fetch(`/api/chat/${venueId}/conversations/${conv.id}/resume`, {
+      method: 'POST',
+      credentials: 'include'
+    })
+    if (response.ok) {
+      conv.status = 'active'
+      showToast('Bot reanudado para esta conversación', 'success')
+    } else {
+      const data = await response.json()
+      showToast(data.error || 'Error al reanudar', 'danger')
+    }
+  } catch (error) {
+    console.error('Error resuming bot:', error)
+    showToast('Error al reanudar el bot', 'danger')
+  } finally {
+    resumingConvId.value = null
   }
 }
 
@@ -335,14 +394,44 @@ const formatDate = (dateStr) => {
   })
 }
 
+// Alias para nombres de servicios (cambiar aquí si se quiere renombrar)
+const SOURCE_ALIASES = { baileys: 'Ave', twilio: 'Twilio', web: 'Web', whatsapp: 'WhatsApp', meta: 'Meta' }
+
+const getSourceLabel = (source) => SOURCE_ALIASES[source] || source
+
 const getSourceColor = (source) => {
-  const colors = { web: 'primary', whatsapp: 'success', twilio: 'info', meta: 'dark' }
+  const colors = { web: 'primary', whatsapp: 'success', baileys: 'success', twilio: 'info', meta: 'dark' }
   return colors[source] || 'secondary'
 }
 
 watch(messages, () => {
   scrollToBottom()
 }, { deep: true })
+
+// Auto-refresh: poll conversations list and active conversation every 5 seconds
+let pollInterval = null
+
+const pollConversations = async () => {
+  loadConversations()
+  // If viewing a conversation, refresh its messages
+  if (conversationId.value && !sending.value) {
+    try {
+      const response = await fetch(`/api/chat/conversation/${conversationId.value}`, { credentials: 'include' })
+      if (response.ok) {
+        const data = await response.json()
+        const newMessages = data.messages.map(m => ({
+          role: m.role,
+          content: (m.content || '').replace(/\n?<!-- \{.*?\} -->/g, ''),
+          meta: m.role === 'assistant' ? { model: m.model, tokens: m.tokens_used } : undefined
+        }))
+        // Only update if message count changed (avoid flicker)
+        if (newMessages.length !== messages.value.length) {
+          messages.value = newMessages
+        }
+      }
+    } catch (e) { /* ignore polling errors */ }
+  }
+}
 
 onMounted(async () => {
   loadVenue()
@@ -358,6 +447,12 @@ onMounted(async () => {
     arrivedWithConversation.value = true
     await resumeConversation({ id: qConversationId })
   }
+
+  pollInterval = setInterval(pollConversations, 5000)
+})
+
+onUnmounted(() => {
+  if (pollInterval) clearInterval(pollInterval)
 })
 </script>
 

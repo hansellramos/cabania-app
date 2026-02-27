@@ -482,16 +482,20 @@ model message_templates {
 }
 
 model chat_conversations {
-  id          String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  venue_id    String          @db.Uuid
-  external_id String?         @db.VarChar(255)
-  source      String          @db.VarChar(50)
-  phone       String?         @db.VarChar(50)
-  name        String?         @db.VarChar(255)
-  metadata    Json?           @db.Json
-  created_at  DateTime        @default(now()) @db.Timestamptz(6)
-  updated_at  DateTime?       @db.Timestamptz(6)
-  messages    chat_messages[]
+  id               String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id         String          @db.Uuid
+  external_id      String?         @db.VarChar(255)
+  source           String          @db.VarChar(50)
+  phone            String?         @db.VarChar(50)
+  name             String?         @db.VarChar(255)
+  metadata         Json?           @db.Json
+  status           String          @default("active") @db.VarChar(30)
+  escalated_at     DateTime?       @db.Timestamptz(6)
+  escalated_reason String?         @db.VarChar(50)
+  resume_at        DateTime?       @db.Timestamptz(6)
+  created_at       DateTime        @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime?       @db.Timestamptz(6)
+  messages         chat_messages[]
 }
 
 model chat_messages {
@@ -903,6 +907,40 @@ model app_settings {
   description   String?
   created_at    DateTime  @default(now()) @db.Timestamptz(6)
   updated_at    DateTime? @db.Timestamptz(6)
+}
+
+// ========================================
+// WHATSAPP BAILEYS MODULE
+// ========================================
+
+model whatsapp_connections {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id           String    @unique @db.Uuid
+  phone_number       String?   @db.VarChar(50)
+  status             String    @default("disconnected") @db.VarChar(30) // disconnected | qr_pending | connected | banned
+  session_data       Json?     @db.Json
+  qr_code            String?   @db.Text
+  excluded_phones    Json      @default("[]") @db.Json // Array of {phone, label} objects
+  notification_phone String?   @db.VarChar(50)
+  escalation_config  Json      @default("{}") @db.Json
+  last_connected     DateTime? @db.Timestamptz(6)
+  created_at         DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime? @db.Timestamptz(6)
+}
+
+model system_whatsapp_connection {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channel           String    @default("baileys") @db.VarChar(30)
+  phone_number      String?   @db.VarChar(50)
+  status            String    @default("disconnected") @db.VarChar(30)
+  session_data      Json?     @db.Json
+  qr_code           String?   @db.Text
+  twilio_sid        String?   @db.VarChar(255)
+  twilio_auth_token String?   @db.VarChar(255)
+  twilio_from       String?   @db.VarChar(50)
+  last_connected    DateTime? @db.Timestamptz(6)
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime? @db.Timestamptz(6)
 }
 
 model public_chat_verifications {

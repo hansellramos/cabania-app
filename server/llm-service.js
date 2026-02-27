@@ -330,6 +330,7 @@ HERRAMIENTAS DISPONIBLES:
 - "get_plans": Para consultar planes disponibles con precios y lo que incluyen
 - "check_availability": Para verificar disponibilidad en fechas específicas
 - "create_estimate": Para crear una cotización cuando el cliente quiera reservar
+- "escalate_to_human": Para escalar la conversación a un humano real
 
 FLUJO DE CONVERSACIÓN:
 1. Si el cliente NO ha dado su nombre, pregúntalo amablemente al inicio
@@ -371,6 +372,12 @@ CONFIRMACIÓN DE RESERVA:
   5. Número de niños (puede ser 0)
 - Si falta información, pregunta específicamente por lo que falta.
 - Una vez creada la cotización, confirma los detalles al cliente.
+
+ESCALAMIENTO A HUMANO:
+- Si el cliente pide hablar con un humano, una persona real, un encargado, el dueño, o similar → usa escalate_to_human con reason "client_requested"
+- Si no puedes resolver la consulta del cliente (quejas, situaciones complejas, negociaciones de precio, problemas técnicos) → usa escalate_to_human con reason "ai_decided"
+- SIEMPRE incluye un resumen detallado en el campo summary: nombre del cliente, plan de interés, fechas, personas, y todo lo discutido
+- Después de escalar, responde al cliente que un humano lo contactará pronto
 
 ${context}`;
 }
@@ -531,6 +538,28 @@ const CHAT_TOOLS = [
           }
         },
         required: ['customer_name', 'plan_name', 'check_in', 'adults']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'escalate_to_human',
+      description: 'Escala la conversación a un humano cuando el cliente lo solicita explícitamente o cuando la consulta requiere atención personalizada que no puedes resolver. Usar cuando el cliente pide hablar con una persona real o cuando la situación requiere intervención humana.',
+      parameters: {
+        type: 'object',
+        properties: {
+          reason: {
+            type: 'string',
+            enum: ['client_requested', 'ai_decided'],
+            description: 'Motivo del escalamiento: client_requested si el cliente pidió hablar con un humano, ai_decided si la IA decide que necesita intervención humana'
+          },
+          summary: {
+            type: 'string',
+            description: 'Resumen detallado de la conversación: nombre del cliente, plan de interés, fechas, cantidad de personas, y lo discutido hasta ahora'
+          }
+        },
+        required: ['reason', 'summary']
       }
     }
   }

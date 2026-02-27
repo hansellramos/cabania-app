@@ -197,6 +197,12 @@ export default [
   },
   {
     component: 'CNavItem',
+    name: 'WhatsApp Sistema',
+    to: '/admin/system-whatsapp',
+    icon: 'cil-phone',
+  },
+  {
+    component: 'CNavItem',
     name: 'Configuración',
     to: '/settings',
     icon: 'cil-settings',

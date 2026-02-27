@@ -8,8 +8,10 @@
     "dev": "node --watch index.js"
   },
   "dependencies": {
+    "@hapi/boom": "^10.0.1",
     "@prisma/adapter-pg": "^6.0.0",
     "@prisma/client": "^6.0.0",
+    "baileys": "^7.0.0-rc.9",
     "cloudinary": "^2.9.0",
     "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
