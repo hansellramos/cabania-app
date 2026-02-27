@@ -7,6 +7,7 @@
             <div class="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-2">
               <h4 class="mb-0">Análisis de Hospedajes</h4>
               <div class="d-flex align-items-center gap-3 flex-wrap">
+                <ToggleButtonGroup v-model="selectedBasis" :options="basisOptions" @update:modelValue="loadAllAnalytics" />
                 <div class="position-relative" style="min-width: 200px; max-width: 300px;">
                   <CFormInput
                     v-model="orgSearch"
@@ -281,13 +282,20 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
+import ToggleButtonGroup from '@/components/ToggleButtonGroup.vue'
 
 const settingsStore = useSettingsStore()
+
+const basisOptions = [
+  { value: 'cash', label: 'Base caja' },
+  { value: 'accrual', label: 'Base devengo' },
+]
 const { user } = useAuth()
 
 const loading = ref(false)
 const organizations = ref([])
 const selectedOrganizations = ref([])
+const selectedBasis = ref('cash')
 const orgSearch = ref('')
 const showOrgDropdown = ref(false)
 
@@ -536,6 +544,7 @@ function getAnalyticsParams() {
   if (selectedOrganizations.value.length > 0) {
     params.append('organizations', selectedOrganizations.value.map(o => o.id).join(','))
   }
+  params.append('basis', selectedBasis.value)
   return params.toString()
 }
 

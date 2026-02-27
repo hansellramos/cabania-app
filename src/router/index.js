@@ -560,6 +560,12 @@ const routes = [
         meta: { breadcrumb: 'Análisis Financiero' },
       },
       {
+        path: '/admin/ai-usage',
+        name: 'AIUsage',
+        component: () => import('@/views/analytics/AIUsageView.vue'),
+        meta: { breadcrumb: 'Uso de IA' },
+      },
+      {
         path: '/business/estimates',
         name: 'EstimatesList',
         component: () => import('@/views/estimates/EstimatesListView.vue'),
@@ -600,6 +606,17 @@ const routes = [
     path: '/onboarding/:step?',
     name: 'Onboarding',
     component: () => import('@/views/onboarding/OnboardingView.vue'),
+  },
+  {
+    path: '/p/:slug',
+    name: 'PublicVenue',
+    component: () => import('@/layouts/PublicLayout.vue'),
+    children: [{
+      path: '',
+      name: 'PublicVenueDetail',
+      component: () => import('@/views/public/PublicVenueView.vue'),
+      props: true
+    }]
   },
   {
     path: '/pages',
@@ -648,7 +665,7 @@ const router = createRouter({
 const { posthog } = usePostHog()
 
 // Public routes that don't require authentication
-const publicRoutes = ['/availability', '/pages/login', '/pages/register', '/pages/404', '/pages/500', '/payment-result', '/onboarding']
+const publicRoutes = ['/availability', '/p/', '/pages/login', '/pages/register', '/pages/404', '/pages/500', '/payment-result', '/onboarding']
 
 // Routes that don't require subscription
 const noSubscriptionRoutes = ['/no-subscription', '/profile']

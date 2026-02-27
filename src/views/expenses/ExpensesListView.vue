@@ -37,20 +37,48 @@
               <CFormInput type="date" v-model="filters.to_date" size="sm" @change="loadExpenses" />
             </CCol>
           </CRow>
+          <div class="mb-3">
+            <CFormInput
+              v-model="searchQuery"
+              placeholder="Buscar por descripción, referencia o proveedor..."
+              size="sm"
+            />
+          </div>
 
           <CTable hover responsive>
             <CTableHead>
               <CTableRow>
-                <CTableHeaderCell>Fecha</CTableHeaderCell>
-                <CTableHeaderCell>Categoría</CTableHeaderCell>
-                <CTableHeaderCell class="d-mobile-none">Sede</CTableHeaderCell>
-                <CTableHeaderCell>Monto</CTableHeaderCell>
+                <CTableHeaderCell
+                  style="cursor: pointer; user-select: none;"
+                  @click="toggleSort('expense_date')"
+                >
+                  Fecha {{ sortIcon('expense_date') }}
+                </CTableHeaderCell>
+                <CTableHeaderCell
+                  style="cursor: pointer; user-select: none;"
+                  @click="toggleSort('category')"
+                >
+                  Categoría {{ sortIcon('category') }}
+                </CTableHeaderCell>
+                <CTableHeaderCell
+                  class="d-mobile-none"
+                  style="cursor: pointer; user-select: none;"
+                  @click="toggleSort('venue')"
+                >
+                  Sede {{ sortIcon('venue') }}
+                </CTableHeaderCell>
+                <CTableHeaderCell
+                  style="cursor: pointer; user-select: none;"
+                  @click="toggleSort('amount')"
+                >
+                  Monto {{ sortIcon('amount') }}
+                </CTableHeaderCell>
                 <CTableHeaderCell class="d-mobile-none">Descripción</CTableHeaderCell>
                 <CTableHeaderCell>Acciones</CTableHeaderCell>
               </CTableRow>
             </CTableHead>
             <CTableBody>
-              <CTableRow v-for="expense in expenses" :key="expense.id">
+              <CTableRow v-for="expense in paginatedExpenses" :key="expense.id">
                 <CTableDataCell>{{ formatDate(expense.expense_date) }}</CTableDataCell>
                 <CTableDataCell>
                   <CBadge v-if="expense.category" :color="expense.category.color || 'primary'">
@@ -89,24 +117,44 @@
                   </div>
                 </CTableDataCell>
               </CTableRow>
-              <CTableRow v-if="expenses.length === 0">
+              <CTableRow v-if="filteredExpenses.length === 0">
                 <CTableDataCell colspan="6" class="text-center text-muted py-4">
                   No hay gastos registrados
                 </CTableDataCell>
               </CTableRow>
             </CTableBody>
-            <CTableFoot v-if="expenses.length > 0">
+            <CTableFoot v-if="filteredExpenses.length > 0">
               <CTableRow>
                 <CTableDataCell colspan="3" class="text-end">
                   <strong>Total:</strong>
                 </CTableDataCell>
                 <CTableDataCell>
-                  <strong>{{ formatCurrency(totalAmount) }}</strong>
+                  <strong>{{ formatCurrency(filteredTotal) }}</strong>
                 </CTableDataCell>
                 <CTableDataCell colspan="2"></CTableDataCell>
               </CTableRow>
             </CTableFoot>
           </CTable>
+
+          <div v-if="totalPages > 1" class="d-flex flex-wrap align-items-center justify-content-between mt-3 gap-2">
+            <div class="small text-muted">
+              Mostrando {{ pageStart }}-{{ pageEnd }} de {{ filteredExpenses.length }} registros
+            </div>
+            <CPagination size="sm" class="mb-0">
+              <CPaginationItem :disabled="currentPage === 1" @click="currentPage = 1">&laquo;</CPaginationItem>
+              <CPaginationItem :disabled="currentPage === 1" @click="currentPage--">&lsaquo;</CPaginationItem>
+              <CPaginationItem
+                v-for="page in visiblePages"
+                :key="page"
+                :active="page === currentPage"
+                @click="currentPage = page"
+              >
+                {{ page }}
+              </CPaginationItem>
+              <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage++">&rsaquo;</CPaginationItem>
+              <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage = totalPages">&raquo;</CPaginationItem>
+            </CPagination>
+          </div>
         </CCardBody>
       </CCard>
     </CCol>
@@ -129,7 +177,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton,
@@ -146,6 +194,7 @@ const loading = ref(false)
 const deleting = ref(false)
 const showDeleteModal = ref(false)
 const expenseToDelete = ref(null)
+const searchQuery = ref('')
 
 const filters = ref({
   venue_id: '',
@@ -154,9 +203,102 @@ const filters = ref({
   to_date: ''
 })
 
-const totalAmount = computed(() => {
-  return expenses.value.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
+const sortKey = ref('expense_date')
+const sortOrder = ref('desc')
+const perPage = ref(20)
+const currentPage = ref(1)
+
+function toggleSort(key) {
+  if (sortKey.value === key) {
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortOrder.value = 'asc'
+  }
+}
+
+function sortIcon(key) {
+  if (sortKey.value !== key) return ''
+  return sortOrder.value === 'asc' ? '▲' : '▼'
+}
+
+const filteredExpenses = computed(() => {
+  let result = expenses.value
+
+  if (searchQuery.value) {
+    const q = searchQuery.value.toLowerCase()
+    result = result.filter(e =>
+      (e.description && e.description.toLowerCase().includes(q)) ||
+      (e.reference && e.reference.toLowerCase().includes(q)) ||
+      (e.supplier && e.supplier.toLowerCase().includes(q))
+    )
+  }
+
+  if (sortKey.value) {
+    const key = sortKey.value
+    const dir = sortOrder.value === 'asc' ? 1 : -1
+    result = [...result].sort((a, b) => {
+      let va, vb
+      if (key === 'amount') {
+        va = parseFloat(a.amount) || 0
+        vb = parseFloat(b.amount) || 0
+      } else if (key === 'expense_date') {
+        va = a.expense_date ? new Date(a.expense_date).getTime() : 0
+        vb = b.expense_date ? new Date(b.expense_date).getTime() : 0
+      } else if (key === 'category') {
+        va = (a.category?.name || '').toLowerCase()
+        vb = (b.category?.name || '').toLowerCase()
+      } else if (key === 'venue') {
+        va = (a.venue_data?.name || '').toLowerCase()
+        vb = (b.venue_data?.name || '').toLowerCase()
+      } else {
+        va = (a[key] || '').toString().toLowerCase()
+        vb = (b[key] || '').toString().toLowerCase()
+      }
+      if (va < vb) return -1 * dir
+      if (va > vb) return 1 * dir
+      return 0
+    })
+  }
+
+  return result
 })
+
+const filteredTotal = computed(() => {
+  return filteredExpenses.value.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
+})
+
+const totalPages = computed(() => Math.ceil(filteredExpenses.value.length / perPage.value))
+
+const paginatedExpenses = computed(() => {
+  const start = (currentPage.value - 1) * perPage.value
+  return filteredExpenses.value.slice(start, start + perPage.value)
+})
+
+const pageStart = computed(() => {
+  if (filteredExpenses.value.length === 0) return 0
+  return (currentPage.value - 1) * perPage.value + 1
+})
+
+const pageEnd = computed(() => {
+  return Math.min(currentPage.value * perPage.value, filteredExpenses.value.length)
+})
+
+const visiblePages = computed(() => {
+  const pages = []
+  const total = totalPages.value
+  const current = currentPage.value
+  let start = Math.max(1, current - 2)
+  let end = Math.min(total, current + 2)
+  if (end - start < 4) {
+    if (start === 1) end = Math.min(total, start + 4)
+    else start = Math.max(1, end - 4)
+  }
+  for (let i = start; i <= end; i++) pages.push(i)
+  return pages
+})
+
+watch(searchQuery, () => { currentPage.value = 1 })
 
 const newExpenseLink = computed(() => {
   if (filters.value.venue_id) {
@@ -167,13 +309,14 @@ const newExpenseLink = computed(() => {
 
 const loadExpenses = async () => {
   loading.value = true
+  currentPage.value = 1
   try {
     const params = new URLSearchParams()
     if (filters.value.venue_id) params.append('venue_id', filters.value.venue_id)
     if (filters.value.category_id) params.append('category_id', filters.value.category_id)
     if (filters.value.from_date) params.append('from_date', filters.value.from_date)
     if (filters.value.to_date) params.append('to_date', filters.value.to_date)
-    
+
     const url = `/api/expenses${params.toString() ? '?' + params.toString() : ''}`
     const response = await fetch(url, { credentials: 'include' })
     if (response.ok) {
@@ -210,7 +353,7 @@ const loadCategories = async () => {
 
 const formatDate = (date) => {
   if (!date) return '—'
-  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
+  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
 const formatCurrency = (amount) => {

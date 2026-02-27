@@ -166,7 +166,7 @@
                   </CTableRow>
                 </CTableHead>
                 <CTableBody>
-                  <CTableRow v-for="payment in payments" :key="payment.id">
+                  <CTableRow v-for="payment in payments" :key="payment.id" style="cursor: pointer" @click="openPaymentDetail(payment)">
                     <CTableDataCell>{{ formatPaymentDate(payment.payment_date) }}</CTableDataCell>
                     <CTableDataCell>{{ formatCurrency(payment.amount) }}</CTableDataCell>
                     <CTableDataCell class="d-mobile-none">{{ payment.payment_method || '—' }}</CTableDataCell>
@@ -177,7 +177,7 @@
                       </CBadge>
                     </CTableDataCell>
                     <CTableDataCell>
-                      <CButton v-if="payment.receipt_url" color="info" size="sm" variant="outline" @click="openReceipt(payment)">
+                      <CButton v-if="payment.receipt_url" color="info" size="sm" variant="outline" @click.stop="openPaymentDetail(payment)">
                         Ver
                       </CButton>
                       <span v-else class="text-muted">—</span>
@@ -537,7 +537,7 @@
     backdrop="true"
   >
     <CModalHeader close-button>
-      <CModalTitle>Comprobante de Pago</CModalTitle>
+      <CModalTitle>Detalle del Pago</CModalTitle>
     </CModalHeader>
     <CModalBody class="p-4">
       <div v-if="selectedPayment" class="mb-3 p-3 border rounded">
@@ -572,11 +572,11 @@
           </CCol>
         </CRow>
       </div>
-      <div class="text-center">
-        <img 
+      <div v-if="selectedReceiptUrl" class="text-center">
+        <img
           v-if="!receiptLoadError"
-          :src="selectedReceiptUrl" 
-          class="img-fluid rounded" 
+          :src="selectedReceiptUrl"
+          class="img-fluid rounded"
           style="max-height: 60vh;"
           @error="receiptLoadError = true"
         />
@@ -584,6 +584,9 @@
           <CIcon name="cil-image" size="3xl" class="mb-3" />
           <p>No se pudo cargar la imagen</p>
         </div>
+      </div>
+      <div v-else class="text-muted text-center py-4">
+        Este pago no tiene comprobante adjunto
       </div>
     </CModalBody>
     <CModalFooter class="justify-content-between">
@@ -671,6 +674,13 @@ async function onDelete() {
 function openReceipt(payment) {
   selectedPayment.value = payment
   selectedReceiptUrl.value = payment.receipt_url
+  receiptLoadError.value = false
+  showReceiptModal.value = true
+}
+
+function openPaymentDetail(payment) {
+  selectedPayment.value = payment
+  selectedReceiptUrl.value = payment.receipt_url || null
   receiptLoadError.value = false
   showReceiptModal.value = true
 }
@@ -818,7 +828,7 @@ async function loadPayments() {
 
 function formatPaymentDate(date) {
   if (!date) return '—'
-  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
+  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
 function formatCurrency(amount) {
@@ -882,7 +892,7 @@ function calcCheckout(timeStr, duration, dateStr) {
   const endMs = startMs + Number(duration) * 1000
   const end = new Date(endMs)
   
-  return end.toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric' }) + 
+  return end.toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }) +
     ' ' + String(end.getUTCHours()).padStart(2, '0') + ':' + String(end.getUTCMinutes()).padStart(2, '0')
 }
 

@@ -10,6 +10,89 @@ const { setupAuth, isAuthenticated } = require('./auth/replitAuth');
 const { loadUserPermissions, hasPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
 const llmService = require('./llm-service');
 
+// AI audit logging helper — price cache for cost calculation
+const _providerPriceCache = { data: null, expires: 0 };
+const PRICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function getProviderPrices() {
+  const now = Date.now();
+  if (_providerPriceCache.data && now < _providerPriceCache.expires) {
+    return _providerPriceCache.data;
+  }
+  try {
+    const providers = await prisma.llm_providers.findMany({
+      where: { is_active: true },
+      select: { code: true, input_price_per_mtok: true, output_price_per_mtok: true }
+    });
+    const map = {};
+    for (const p of providers) {
+      map[p.code] = {
+        input: parseFloat(p.input_price_per_mtok || 0),
+        output: parseFloat(p.output_price_per_mtok || 0)
+      };
+    }
+    _providerPriceCache.data = map;
+    _providerPriceCache.expires = now + PRICE_CACHE_TTL;
+    return map;
+  } catch (err) {
+    console.error('[ai-audit] Error loading provider prices:', err.message);
+    return _providerPriceCache.data || {};
+  }
+}
+
+function invalidateProviderPriceCache() {
+  _providerPriceCache.data = null;
+  _providerPriceCache.expires = 0;
+}
+
+async function logAICall(data) {
+  try {
+    const systemPrompt = data.system_prompt || '';
+    const userPrompt = data.user_prompt || '';
+    const responseContent = data.response_content || '';
+
+    // Calculate cost if not provided
+    let costEstimate = data.cost_estimate || null;
+    if (costEstimate === null && (data.input_tokens || data.output_tokens)) {
+      try {
+        const prices = await getProviderPrices();
+        const providerPrices = prices[data.provider_code];
+        if (providerPrices) {
+          costEstimate = (
+            (data.input_tokens || 0) * providerPrices.input / 1000000 +
+            (data.output_tokens || 0) * providerPrices.output / 1000000
+          );
+        }
+      } catch (_) { /* ignore pricing errors */ }
+    }
+
+    await prisma.ai_audit_logs.create({
+      data: {
+        venue_id: data.venue_id || null,
+        feature: data.feature,
+        provider_code: data.provider_code,
+        model: data.model,
+        system_prompt: systemPrompt.substring(0, 50000),
+        user_prompt: userPrompt.substring(0, 50000),
+        response_content: responseContent.substring(0, 50000),
+        input_tokens: data.input_tokens || null,
+        output_tokens: data.output_tokens || null,
+        response_time_ms: data.response_time_ms || null,
+        request_size_bytes: Buffer.byteLength(systemPrompt + userPrompt, 'utf8'),
+        response_size_bytes: Buffer.byteLength(responseContent, 'utf8'),
+        cost_estimate: costEstimate,
+        user_id: data.user_id || null,
+        accommodation_id: data.accommodation_id || null,
+        conversation_id: data.conversation_id || null,
+        error: data.error || null,
+        metadata: data.metadata || null
+      }
+    });
+  } catch (err) {
+    console.error('[ai-audit] Error logging AI call:', err.message);
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -386,6 +469,373 @@ async function startServer() {
     }
   });
 
+  // Public venue page endpoint (no auth)
+  app.get('/api/public/venues/:slug', async (req, res) => {
+    try {
+      const venue = await prisma.venues.findUnique({
+        where: { slug: req.params.slug }
+      });
+      if (!venue || !venue.is_public) {
+        return res.status(404).json({ error: 'Venue not found' });
+      }
+
+      // Load images, amenities, and plans in parallel
+      const [images, venueAmenityLinks, plans] = await Promise.all([
+        prisma.venue_images.findMany({
+          where: { venue_id: venue.id },
+          orderBy: { sort_order: 'asc' }
+        }),
+        prisma.venue_amenities.findMany({
+          where: { venue_id: venue.id }
+        }),
+        prisma.venue_plans.findMany({
+          where: { venue_id: venue.id, is_active: true },
+          orderBy: { name: 'asc' }
+        })
+      ]);
+
+      // Resolve amenity details
+      const amenityIds = venueAmenityLinks.map(va => va.amenity_id);
+      const amenities = amenityIds.length > 0
+        ? await prisma.amenities.findMany({ where: { id: { in: amenityIds }, is_active: true } })
+        : [];
+
+      // Load plan amenities
+      const planIds = plans.map(p => p.id);
+      const planAmenityLinks = planIds.length > 0
+        ? await prisma.plan_amenities.findMany({ where: { plan_id: { in: planIds } } })
+        : [];
+      const planAmenityIds = [...new Set(planAmenityLinks.map(pa => pa.amenity_id))];
+      const planAmenities = planAmenityIds.length > 0
+        ? await prisma.amenities.findMany({ where: { id: { in: planAmenityIds } } })
+        : [];
+      const amenityMap = {};
+      for (const a of planAmenities) amenityMap[a.id] = a;
+
+      const plansWithAmenities = plans.map(p => {
+        const pAmenities = planAmenityLinks
+          .filter(pa => pa.plan_id === p.id)
+          .map(pa => ({ ...amenityMap[pa.amenity_id], quantity: pa.quantity, notes: pa.notes }))
+          .filter(Boolean);
+        return { ...p, amenities: pAmenities };
+      });
+
+      // Return only public-safe fields
+      res.json({
+        venue: {
+          id: venue.id, name: venue.name, slug: venue.slug,
+          whatsapp: venue.whatsapp, instagram: venue.instagram,
+          address: venue.address, city: venue.city, department: venue.department,
+          suburb: venue.suburb, country: venue.country, address_reference: venue.address_reference,
+          latitude: venue.latitude, longitude: venue.longitude,
+          waze_link: venue.waze_link, google_maps_link: venue.google_maps_link,
+          venue_info: venue.venue_info, delivery_info: venue.delivery_info,
+          brand_color_primary: venue.brand_color_primary,
+          brand_color_secondary: venue.brand_color_secondary,
+          logo_url: venue.logo_url
+        },
+        images,
+        amenities,
+        plans: plansWithAmenities
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Public availability check (no auth, no LLM) — used by booking widget
+  const availabilityRateLimit = new Map(); // IP -> { count, resetAt }
+  app.post('/api/public/venues/:id/availability', async (req, res) => {
+    try {
+      // Rate limit: 10 requests per minute per IP
+      const ip = req.ip || req.connection.remoteAddress;
+      const now = Date.now();
+      const rl = availabilityRateLimit.get(ip);
+      if (rl && rl.resetAt > now) {
+        if (rl.count >= 10) {
+          return res.status(429).json({ error: 'Demasiadas consultas. Intenta en un momento.' });
+        }
+        rl.count++;
+      } else {
+        availabilityRateLimit.set(ip, { count: 1, resetAt: now + 60000 });
+      }
+      // Cleanup stale entries every 100 requests
+      if (availabilityRateLimit.size > 500) {
+        for (const [k, v] of availabilityRateLimit) {
+          if (v.resetAt <= now) availabilityRateLimit.delete(k);
+        }
+      }
+
+      const venueId = req.params.id;
+      const { check_in, check_out, adults, children, plan_id } = req.body;
+
+      if (!check_in) {
+        return res.status(400).json({ error: 'check_in es requerido' });
+      }
+
+      const venue = await prisma.venues.findUnique({ where: { id: venueId } });
+      if (!venue || !venue.is_public) {
+        return res.status(404).json({ error: 'Venue not found' });
+      }
+
+      // Parse and validate dates
+      const checkInDate = new Date(check_in);
+      const checkOutDate = check_out ? new Date(check_out) : checkInDate;
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
+      const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
+
+      if (checkInDay < today) {
+        return res.status(400).json({ error: 'La fecha de llegada está en el pasado.' });
+      }
+      if (checkOutDay < checkInDay) {
+        return res.status(400).json({ error: 'La fecha de salida debe ser igual o posterior a la de llegada.' });
+      }
+
+      const numAdults = parseInt(adults) || 1;
+      const numChildren = parseInt(children) || 0;
+      const totalGuests = numAdults + numChildren;
+
+      // Check overlapping accommodations
+      const existingAccommodations = await prisma.accommodations.findMany({
+        where: { venue: venueId }
+      });
+
+      let isAvailable = true;
+      for (const acc of existingAccommodations) {
+        const accDate = new Date(acc.date);
+        const durationSeconds = parseInt(acc.duration) || 43200;
+        const accEndDate = new Date(accDate.getTime() + durationSeconds * 1000);
+        const accStartDay = new Date(accDate.getUTCFullYear(), accDate.getUTCMonth(), accDate.getUTCDate());
+        const accEndDay = new Date(accEndDate.getUTCFullYear(), accEndDate.getUTCMonth(), accEndDate.getUTCDate());
+
+        if (accStartDay <= checkOutDay && accEndDay >= checkInDay) {
+          isAvailable = false;
+          break;
+        }
+      }
+
+      // Load active plans for this venue
+      const plans = await prisma.venue_plans.findMany({
+        where: { venue_id: venueId, is_active: true },
+        orderBy: { name: 'asc' }
+      });
+
+      // Filter suitable plans by guest count (and optionally by plan_id)
+      const suitablePlans = plans.filter(p => {
+        const planMin = p.min_guests || 1;
+        const planMax = p.max_capacity || 999;
+        const fits = totalGuests >= planMin && totalGuests <= planMax;
+        return plan_id ? (fits && p.id === plan_id) : fits;
+      }).map(p => {
+        const adultTotal = numAdults * parseFloat(p.adult_price);
+        const childTotal = numChildren * parseFloat(p.child_price);
+        return {
+          id: p.id,
+          name: p.name,
+          plan_type: p.plan_type,
+          adult_price: parseFloat(p.adult_price),
+          child_price: parseFloat(p.child_price),
+          estimated_total: adultTotal + childTotal,
+          check_in_time: p.check_in_time,
+          check_out_time: p.check_out_time,
+          includes_overnight: p.includes_overnight
+        };
+      });
+
+      // Get next available dates if not available
+      let nextAvailableDates = [];
+      if (!isAvailable) {
+        const checkInDayOfWeek = checkInDate.getDay();
+        const preferWeekends = checkInDayOfWeek === 0 || checkInDayOfWeek === 6;
+        const stayLength = Math.max(1, Math.ceil((checkOutDay - checkInDay) / (1000 * 60 * 60 * 24)) + 1);
+        nextAvailableDates = llmService.getNextAvailableDates(existingAccommodations, checkInDate, {
+          preferWeekends,
+          stayLength,
+          numDays: 30
+        });
+      }
+
+      res.json({
+        is_available: isAvailable,
+        check_in: check_in,
+        check_out: check_out || check_in,
+        adults: numAdults,
+        children: numChildren,
+        total_guests: totalGuests,
+        suitable_plans: suitablePlans,
+        next_available_dates: nextAvailableDates
+      });
+    } catch (error) {
+      console.error('Availability check error:', error);
+      res.status(500).json({ error: 'Error checking availability' });
+    }
+  });
+
+  // Public conversation loader (no auth) — restores chat for returning visitors
+  app.get('/api/public/chat/conversation/:id', async (req, res) => {
+    try {
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(req.params.id)) {
+        return res.status(400).json({ error: 'Invalid conversation ID' });
+      }
+
+      const conversation = await prisma.chat_conversations.findUnique({
+        where: { id: req.params.id },
+        include: {
+          messages: {
+            orderBy: { created_at: 'asc' },
+            select: { role: true, content: true, created_at: true }
+          }
+        }
+      });
+
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      const messages = conversation.messages.map(m => ({
+        role: m.role,
+        content: m.content.replace(/\n<!-- \{.*?\} -->/g, ''),
+        created_at: m.created_at
+      }));
+
+      const messageCount = messages.filter(m => m.role === 'user').length;
+      const limitSetting = await prisma.app_settings.findUnique({
+        where: { setting_key: 'public_chat_free_limit' }
+      });
+      const freeLimit = parseInt(limitSetting?.setting_value) || 20;
+      const isVerified = conversation.metadata?.verified === true;
+
+      res.json({
+        id: conversation.id,
+        venue_id: conversation.venue_id,
+        name: conversation.name,
+        phone: conversation.phone,
+        messages,
+        message_count: messageCount,
+        free_limit: freeLimit,
+        is_verified: isVerified
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Request verification code for public chat
+  app.post('/api/public/chat/verify/request', async (req, res) => {
+    try {
+      const { conversation_id, phone } = req.body;
+      if (!conversation_id || !phone) {
+        return res.status(400).json({ error: 'conversation_id and phone are required' });
+      }
+
+      const conversation = await prisma.chat_conversations.findUnique({
+        where: { id: conversation_id }
+      });
+      if (!conversation) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Rate limit: max 3 requests per hour
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const recentRequests = await prisma.public_chat_verifications.count({
+        where: { conversation_id, created_at: { gte: oneHourAgo } }
+      });
+      if (recentRequests >= 3) {
+        return res.status(429).json({ error: 'Demasiadas solicitudes. Intenta de nuevo en una hora.' });
+      }
+
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+
+      await prisma.public_chat_verifications.create({
+        data: {
+          conversation_id,
+          phone,
+          code,
+          expires_at: new Date(Date.now() + 10 * 60 * 1000)
+        }
+      });
+
+      // TODO: Send code via WhatsApp (future integration)
+      const response = { success: true, message: 'Código de verificación generado' };
+      if (process.env.NODE_ENV !== 'production') {
+        response.code = code; // Dev only
+      }
+      res.json(response);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Confirm verification code for public chat
+  app.post('/api/public/chat/verify/confirm', async (req, res) => {
+    try {
+      const { conversation_id, code } = req.body;
+      if (!conversation_id || !code) {
+        return res.status(400).json({ error: 'conversation_id and code are required' });
+      }
+
+      const verification = await prisma.public_chat_verifications.findFirst({
+        where: {
+          conversation_id,
+          status: 'pending',
+          expires_at: { gte: new Date() }
+        },
+        orderBy: { created_at: 'desc' }
+      });
+
+      if (!verification) {
+        return res.status(404).json({ error: 'No hay código pendiente o ya expiró' });
+      }
+
+      if (verification.attempts >= 5) {
+        await prisma.public_chat_verifications.update({
+          where: { id: verification.id },
+          data: { status: 'expired' }
+        });
+        return res.status(429).json({ error: 'Demasiados intentos. Solicita un nuevo código.' });
+      }
+
+      await prisma.public_chat_verifications.update({
+        where: { id: verification.id },
+        data: { attempts: verification.attempts + 1 }
+      });
+
+      if (verification.code !== code.trim()) {
+        return res.status(400).json({
+          error: 'Código incorrecto',
+          attempts_remaining: 5 - (verification.attempts + 1)
+        });
+      }
+
+      // Mark verified
+      await prisma.public_chat_verifications.update({
+        where: { id: verification.id },
+        data: { status: 'verified', verified_at: new Date() }
+      });
+
+      // Update conversation metadata
+      const conversation = await prisma.chat_conversations.findUnique({
+        where: { id: conversation_id }
+      });
+      const metadata = conversation.metadata || {};
+      metadata.verified = true;
+      metadata.verified_at = new Date().toISOString();
+      metadata.verified_phone = verification.phone;
+
+      await prisma.chat_conversations.update({
+        where: { id: conversation_id },
+        data: { metadata, phone: verification.phone, updated_at: new Date() }
+      });
+
+      res.json({ success: true, verified: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get('/api/venues/:id', async (req, res) => {
     try {
       const venue = await prisma.venues.findUnique({
@@ -417,6 +867,26 @@ async function startServer() {
       if (data.deposit_refund_hours !== undefined) {
         data.deposit_refund_hours = data.deposit_refund_hours ? parseInt(data.deposit_refund_hours, 10) : null;
       }
+
+      // Auto-generate slug when is_public=true and slug is empty
+      if (data.is_public && !data.slug && data.name) {
+        let baseSlug = data.name
+          .toLowerCase()
+          .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove accents
+          .replace(/[^a-z0-9\s-]/g, '')
+          .replace(/\s+/g, '-')
+          .replace(/-+/g, '-')
+          .replace(/^-|-$/g, '');
+        let slug = baseSlug;
+        let suffix = 1;
+        while (true) {
+          const existing = await prisma.venues.findUnique({ where: { slug } });
+          if (!existing || existing.id === req.params.id) break;
+          slug = `${baseSlug}-${suffix++}`;
+        }
+        data.slug = slug;
+      }
+
       const venue = await prisma.venues.update({
         where: { id: req.params.id },
         data
@@ -1131,7 +1601,8 @@ async function startServer() {
           venue_id: accommodation?.venue || null,
           amount: currentPayment.amount,
           type: 'accommodation',
-          date: currentPayment.payment_date || accommodation?.date || new Date()
+          date: currentPayment.payment_date || accommodation?.date || new Date(),
+          accrual_date: accommodation?.date || null
         };
         
         await prisma.incomes.upsert({
@@ -1211,8 +1682,10 @@ async function startServer() {
   // Income summary for current month with comparison to previous month
   app.get('/api/analytics/income-summary', isAuthenticated, async (req, res) => {
     try {
+      const { basis } = req.query;
+      const dateField = basis === 'accrual' ? 'accrual_date' : 'date';
       const orgIds = await getAnalyticsOrgIds(req);
-      
+
       if (orgIds !== null && orgIds.length === 0) {
         return res.json({
           currentMonth: { total: 0, count: 0 },
@@ -1220,27 +1693,27 @@ async function startServer() {
           percentChange: 0
         });
       }
-      
+
       const now = new Date();
       const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
       const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const previousMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-      
+
       const whereClause = orgIds !== null ? { organization_id: { in: orgIds } } : {};
-      
+
       // Current month incomes
       const currentMonthIncomes = await prisma.incomes.findMany({
         where: {
           ...whereClause,
-          date: { gte: currentMonthStart }
+          [dateField]: { gte: currentMonthStart }
         }
       });
-      
+
       // Previous month incomes
       const previousMonthIncomes = await prisma.incomes.findMany({
         where: {
           ...whereClause,
-          date: { gte: previousMonthStart, lte: previousMonthEnd }
+          [dateField]: { gte: previousMonthStart, lte: previousMonthEnd }
         }
       });
       
@@ -1264,7 +1737,8 @@ async function startServer() {
   // Income breakdown by venue for pie chart
   app.get('/api/analytics/income-by-venue', isAuthenticated, async (req, res) => {
     try {
-      const { period } = req.query;
+      const { period, basis } = req.query;
+      const dateField = basis === 'accrual' ? 'accrual_date' : 'date';
       const orgIds = await getAnalyticsOrgIds(req);
 
       if (orgIds !== null && orgIds.length === 0) {
@@ -1276,7 +1750,7 @@ async function startServer() {
       // Add date filter if period is specified
       if (period) {
         const { startDate, endDate } = calculateDateRange(period);
-        whereClause.date = {
+        whereClause[dateField] = {
           gte: startDate,
           lte: endDate
         };
@@ -3283,7 +3757,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Se requiere la URL de la imagen' });
       }
 
-      const { model, generateObject, z } = await getAIModelForReceipt('[analyze-receipt]');
+      const { model, generateObject, z, modelConfig: expModelConfig, providerCode: expProviderCode } = await getAIModelForReceipt('[analyze-receipt]');
       const { base64Image, mediaType } = await fetchReceiptImage(imageUrl, '[analyze-receipt]');
 
       // Fetch existing providers for matching
@@ -3383,7 +3857,22 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         }
       }
 
-      console.log(`[analyze-receipt] Done in ${Date.now() - startTime}ms (AI: ${Date.now() - aiStartTime}ms)`, JSON.stringify(data));
+      const expAiTime = Date.now() - aiStartTime;
+
+      logAICall({
+        feature: 'expense_receipt_analysis',
+        provider_code: expProviderCode,
+        model: expModelConfig?.model || expProviderCode,
+        user_prompt: prompt,
+        response_content: JSON.stringify(data),
+        input_tokens: result.usage?.promptTokens || result.usage?.prompt_tokens,
+        output_tokens: result.usage?.completionTokens || result.usage?.completion_tokens,
+        response_time_ms: expAiTime,
+        user_id: req.user?.id,
+        metadata: { organization_id }
+      });
+
+      console.log(`[analyze-receipt] Done in ${Date.now() - startTime}ms (AI: ${expAiTime}ms)`, JSON.stringify(data));
       res.json({ success: true, data });
     } catch (error) {
       console.error(`[analyze-receipt] Error after ${Date.now() - startTime}ms:`, error);
@@ -4154,7 +4643,8 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
   // Analytics API
   app.get('/api/analytics/summary', async (req, res) => {
     try {
-      const { venue_id, organization_id, from_date, to_date, period, viewAll } = req.query;
+      const { venue_id, organization_id, from_date, to_date, period, viewAll, basis } = req.query;
+      const incomeDateField = basis === 'accrual' ? 'accrual_date' : 'date';
       const viewAllFlag = viewAll === 'true';
       
       let accessibleOrgIds = null;
@@ -4198,7 +4688,7 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       const orgFilter = accessibleOrgIds !== null ? { in: accessibleOrgIds } : undefined;
       
       const incomeWhere = {
-        date: { gte: startDate, lte: endDate }
+        [incomeDateField]: { gte: startDate, lte: endDate }
       };
       if (orgFilter) incomeWhere.organization_id = orgFilter;
       if (venue_id) incomeWhere.venue_id = venue_id;
@@ -4336,7 +4826,8 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
 
   app.get('/api/analytics/monthly-trend', async (req, res) => {
     try {
-      const { venue_id, organization_id, period, viewAll } = req.query;
+      const { venue_id, organization_id, period, viewAll, basis } = req.query;
+      const incomeDateField = basis === 'accrual' ? 'accrual_date' : 'date';
       const viewAllFlag = viewAll === 'true';
 
       // Calculate number of months based on period
@@ -4412,10 +4903,10 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         if (organization_id) baseWhere.organization_id = organization_id;
         
         const incomeResult = await prisma.incomes.aggregate({
-          where: { ...baseWhere, date: { gte: startDate, lte: endDate } },
+          where: { ...baseWhere, [incomeDateField]: { gte: startDate, lte: endDate } },
           _sum: { amount: true }
         });
-        
+
         const expenseResult = await prisma.expenses.aggregate({
           where: { ...baseWhere, expense_date: { gte: startDate, lte: endDate } },
           _sum: { amount: true }
@@ -4435,6 +4926,323 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       
       res.json(result);
     } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==========================================
+  // AI Usage Analytics Endpoints
+  // ==========================================
+
+  app.get('/api/analytics/ai-usage', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, period, viewAll } = req.query;
+      const viewAllFlag = viewAll === 'true';
+
+      // Determine accessible venue IDs via org filter
+      let venueFilter = undefined;
+      if (venue_id) {
+        venueFilter = venue_id;
+      } else {
+        let accessibleOrgIds = null;
+        if (req.user) {
+          const userId = String(req.user.claims?.sub);
+          const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+          if (viewAllFlag && currentUser?.is_super_admin) {
+            accessibleOrgIds = null;
+          } else if (currentUser?.is_super_admin) {
+            const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+            accessibleOrgIds = userOrgs.map(uo => uo.organization_id);
+          } else {
+            accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+          }
+        }
+        if (accessibleOrgIds !== null && accessibleOrgIds.length > 0) {
+          const accessibleVenues = await prisma.venues.findMany({
+            where: { organization: { in: accessibleOrgIds } },
+            select: { id: true }
+          });
+          venueFilter = { in: accessibleVenues.map(v => v.id) };
+        }
+      }
+
+      // Date range
+      const range = calculateDateRange(period || 'last_6_months');
+      const dateWhere = { created_at: { gte: range.startDate, lte: range.endDate } };
+
+      const where = { ...dateWhere };
+      if (venueFilter) {
+        if (typeof venueFilter === 'string') {
+          where.venue_id = venueFilter;
+        } else {
+          // Include system logs (venue_id = null) along with accessible venues
+          where.OR = [{ venue_id: venueFilter }, { venue_id: null }];
+        }
+      }
+
+      // Aggregates
+      const agg = await prisma.ai_audit_logs.aggregate({
+        where,
+        _sum: { input_tokens: true, output_tokens: true, cost_estimate: true },
+        _avg: { response_time_ms: true },
+        _count: true
+      });
+
+      // Group by feature + provider
+      const allLogs = await prisma.ai_audit_logs.findMany({
+        where,
+        select: { feature: true, provider_code: true, input_tokens: true, output_tokens: true, cost_estimate: true }
+      });
+      const featureMap = {};
+      // Also track tokens by provider for client-side recalc
+      const tokensByProvider = {};
+      for (const log of allLogs) {
+        if (!featureMap[log.feature]) {
+          featureMap[log.feature] = { feature: log.feature, count: 0, tokens: 0, cost: 0, input_tokens: 0, output_tokens: 0, byProvider: {} };
+        }
+        const f = featureMap[log.feature];
+        f.count++;
+        const inTok = log.input_tokens || 0;
+        const outTok = log.output_tokens || 0;
+        f.tokens += inTok + outTok;
+        f.input_tokens += inTok;
+        f.output_tokens += outTok;
+        f.cost += parseFloat(log.cost_estimate || 0);
+        // Per-provider breakdown within feature
+        const pc = log.provider_code;
+        if (!f.byProvider[pc]) f.byProvider[pc] = { input_tokens: 0, output_tokens: 0 };
+        f.byProvider[pc].input_tokens += inTok;
+        f.byProvider[pc].output_tokens += outTok;
+        // Global per-provider
+        if (!tokensByProvider[pc]) tokensByProvider[pc] = { input_tokens: 0, output_tokens: 0 };
+        tokensByProvider[pc].input_tokens += inTok;
+        tokensByProvider[pc].output_tokens += outTok;
+      }
+
+      res.json({
+        totalCalls: agg._count,
+        totalTokens: (agg._sum.input_tokens || 0) + (agg._sum.output_tokens || 0),
+        totalInputTokens: agg._sum.input_tokens || 0,
+        totalOutputTokens: agg._sum.output_tokens || 0,
+        totalCost: parseFloat(agg._sum.cost_estimate || 0),
+        avgResponseTime: Math.round(agg._avg.response_time_ms || 0),
+        byFeature: Object.values(featureMap),
+        tokensByProvider
+      });
+    } catch (error) {
+      console.error('[ai-usage] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/analytics/ai-usage-by-venue', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, period, viewAll } = req.query;
+      const viewAllFlag = viewAll === 'true';
+
+      // Determine accessible venue IDs
+      let venueFilter = undefined;
+      if (venue_id) {
+        venueFilter = venue_id;
+      } else {
+        let accessibleOrgIds = null;
+        if (req.user) {
+          const userId = String(req.user.claims?.sub);
+          const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+          if (viewAllFlag && currentUser?.is_super_admin) {
+            accessibleOrgIds = null;
+          } else if (currentUser?.is_super_admin) {
+            const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+            accessibleOrgIds = userOrgs.map(uo => uo.organization_id);
+          } else {
+            accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+          }
+        }
+        if (accessibleOrgIds !== null && accessibleOrgIds.length > 0) {
+          const accessibleVenues = await prisma.venues.findMany({
+            where: { organization: { in: accessibleOrgIds } },
+            select: { id: true }
+          });
+          venueFilter = { in: accessibleVenues.map(v => v.id) };
+        }
+      }
+
+      // Calculate months
+      const now = new Date();
+      let numMonths = 6;
+      switch (period) {
+        case 'last_12_months': numMonths = 12; break;
+        case 'last_6_months': numMonths = 6; break;
+        case 'last_3_months': numMonths = 3; break;
+        case 'this_month': numMonths = 1; break;
+        case 'this_quarter': numMonths = Math.min(now.getMonth() - Math.floor(now.getMonth() / 3) * 3 + 1, 3); break;
+        case 'this_year': numMonths = now.getMonth() + 1; break;
+        default: numMonths = 6;
+      }
+
+      const result = [];
+      const allVenueIds = new Set();
+
+      for (let i = numMonths - 1; i >= 0; i--) {
+        const startDate = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const endDate = new Date(now.getFullYear(), now.getMonth() - i + 1, 0, 23, 59, 59, 999);
+
+        const where = { created_at: { gte: startDate, lte: endDate } };
+        if (venueFilter) {
+          if (typeof venueFilter === 'string') {
+            where.venue_id = venueFilter;
+          } else {
+            where.OR = [{ venue_id: venueFilter }, { venue_id: null }];
+          }
+        }
+
+        const logs = await prisma.ai_audit_logs.findMany({
+          where,
+          select: { venue_id: true, provider_code: true, input_tokens: true, output_tokens: true, cost_estimate: true }
+        });
+
+        const venueMap = {};
+        for (const log of logs) {
+          const vid = log.venue_id || '__system__';
+          if (vid !== '__system__') allVenueIds.add(vid);
+          if (!venueMap[vid]) {
+            venueMap[vid] = { venue_id: vid, calls: 0, tokens: 0, cost: 0, input_tokens: 0, output_tokens: 0, byProvider: {} };
+          }
+          const v = venueMap[vid];
+          const inTok = log.input_tokens || 0;
+          const outTok = log.output_tokens || 0;
+          v.calls++;
+          v.tokens += inTok + outTok;
+          v.input_tokens += inTok;
+          v.output_tokens += outTok;
+          v.cost += parseFloat(log.cost_estimate || 0);
+          const pc = log.provider_code;
+          if (!v.byProvider[pc]) v.byProvider[pc] = { input_tokens: 0, output_tokens: 0 };
+          v.byProvider[pc].input_tokens += inTok;
+          v.byProvider[pc].output_tokens += outTok;
+        }
+
+        result.push({
+          month: startDate.toISOString().slice(0, 7),
+          monthName: startDate.toLocaleString('es-CO', { month: 'short', year: 'numeric' }),
+          venues: Object.values(venueMap)
+        });
+      }
+
+      // Lookup venue names
+      const venueNames = {};
+      if (allVenueIds.size > 0) {
+        const venueRecords = await prisma.venues.findMany({
+          where: { id: { in: [...allVenueIds] } },
+          select: { id: true, name: true }
+        });
+        for (const v of venueRecords) {
+          venueNames[v.id] = v.name;
+        }
+      }
+
+      // Enrich with names
+      for (const month of result) {
+        for (const v of month.venues) {
+          v.venue_name = v.venue_id === '__system__' ? 'Sistema' : (venueNames[v.venue_id] || 'Desconocido');
+        }
+      }
+
+      res.json(result);
+    } catch (error) {
+      console.error('[ai-usage-by-venue] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/analytics/ai-usage-detail', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, period, viewAll, page: pageStr, limit: limitStr } = req.query;
+      const viewAllFlag = viewAll === 'true';
+      const page = Math.max(1, parseInt(pageStr) || 1);
+      const limit = Math.min(100, Math.max(1, parseInt(limitStr) || 50));
+
+      // Determine accessible venue IDs
+      let venueFilter = undefined;
+      if (venue_id) {
+        venueFilter = venue_id;
+      } else {
+        let accessibleOrgIds = null;
+        if (req.user) {
+          const userId = String(req.user.claims?.sub);
+          const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+          if (viewAllFlag && currentUser?.is_super_admin) {
+            accessibleOrgIds = null;
+          } else if (currentUser?.is_super_admin) {
+            const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+            accessibleOrgIds = userOrgs.map(uo => uo.organization_id);
+          } else {
+            accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+          }
+        }
+        if (accessibleOrgIds !== null && accessibleOrgIds.length > 0) {
+          const accessibleVenues = await prisma.venues.findMany({
+            where: { organization: { in: accessibleOrgIds } },
+            select: { id: true }
+          });
+          venueFilter = { in: accessibleVenues.map(v => v.id) };
+        }
+      }
+
+      // Date range
+      const range = calculateDateRange(period || 'last_6_months');
+      const where = { created_at: { gte: range.startDate, lte: range.endDate } };
+      if (venueFilter) {
+        if (typeof venueFilter === 'string') {
+          where.venue_id = venueFilter;
+        } else {
+          where.OR = [{ venue_id: venueFilter }, { venue_id: null }];
+        }
+      }
+
+      const total = await prisma.ai_audit_logs.count({ where });
+      const logs = await prisma.ai_audit_logs.findMany({
+        where,
+        select: {
+          id: true, created_at: true, feature: true, venue_id: true,
+          provider_code: true, model: true, input_tokens: true, output_tokens: true,
+          response_time_ms: true, cost_estimate: true, error: true
+        },
+        orderBy: { created_at: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit
+      });
+
+      // Lookup venue names
+      const venueIds = [...new Set(logs.map(l => l.venue_id).filter(Boolean))];
+      const venueNames = {};
+      if (venueIds.length > 0) {
+        const venueRecords = await prisma.venues.findMany({
+          where: { id: { in: venueIds } },
+          select: { id: true, name: true }
+        });
+        for (const v of venueRecords) {
+          venueNames[v.id] = v.name;
+        }
+      }
+
+      const data = logs.map(l => ({
+        ...l,
+        cost_estimate: parseFloat(l.cost_estimate || 0),
+        venue_name: l.venue_id ? (venueNames[l.venue_id] || 'Desconocido') : 'Sistema'
+      }));
+
+      res.json({
+        data,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages: Math.ceil(total / limit)
+        }
+      });
+    } catch (error) {
+      console.error('[ai-usage-detail] Error:', error.message);
       res.status(500).json({ error: error.message });
     }
   });
@@ -4502,8 +5310,17 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         return res.status(400).json({ error: 'Se requiere la URL de la imagen' });
       }
 
-      const { model, generateObject, z, modelConfig } = await getAIModelForReceipt();
+      const { model, generateObject, z, modelConfig, providerCode: receiptProviderCode } = await getAIModelForReceipt();
       const { base64Image, mediaType } = await fetchReceiptImage(imageUrl);
+
+      const receiptPrompt = `Analiza esta imagen de un comprobante de pago o transferencia bancaria y extrae la siguiente información:
+
+1. Monto/valor de la transferencia (solo el número, sin símbolos de moneda)
+2. Número de referencia o transacción (puede estar etiquetado como "Referencia", "No. Transacción", "ID", "Comprobante", etc.)
+3. Fecha de la transferencia (en formato YYYY-MM-DD si es posible)
+
+Si algún dato no está visible o no se puede determinar, devuelve null para ese campo.
+Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otras entidades colombianas.`;
 
       const aiStartTime = Date.now();
       const result = await generateObject({
@@ -4512,14 +5329,7 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
           role: 'user',
           content: [
             { type: 'image', image: `data:${mediaType};base64,${base64Image}` },
-            { type: 'text', text: `Analiza esta imagen de un comprobante de pago o transferencia bancaria y extrae la siguiente información:
-
-1. Monto/valor de la transferencia (solo el número, sin símbolos de moneda)
-2. Número de referencia o transacción (puede estar etiquetado como "Referencia", "No. Transacción", "ID", "Comprobante", etc.)
-3. Fecha de la transferencia (en formato YYYY-MM-DD si es posible)
-
-Si algún dato no está visible o no se puede determinar, devuelve null para ese campo.
-Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otras entidades colombianas.` }
+            { type: 'text', text: receiptPrompt }
           ]
         }],
         schema: z.object({
@@ -4528,8 +5338,21 @@ Presta especial atención a comprobantes de Nequi, Daviplata, Bancolombia, y otr
           payment_date: z.string().nullable().describe('Fecha de la transferencia en formato YYYY-MM-DD')
         })
       });
+      const aiTime = Date.now() - aiStartTime;
 
-      console.log(`[extract-receipt] Done in ${Date.now() - startTime}ms (AI: ${Date.now() - aiStartTime}ms)`, JSON.stringify(result.object));
+      logAICall({
+        feature: 'payment_receipt_extraction',
+        provider_code: receiptProviderCode,
+        model: modelConfig?.model || receiptProviderCode,
+        user_prompt: receiptPrompt,
+        response_content: JSON.stringify(result.object),
+        input_tokens: result.usage?.promptTokens || result.usage?.prompt_tokens,
+        output_tokens: result.usage?.completionTokens || result.usage?.completion_tokens,
+        response_time_ms: aiTime,
+        user_id: req.user?.id
+      });
+
+      console.log(`[extract-receipt] Done in ${Date.now() - startTime}ms (AI: ${aiTime}ms)`, JSON.stringify(result.object));
       res.json({ success: true, data: result.object });
     } catch (error) {
       console.error(`[extract-receipt] Error after ${Date.now() - startTime}ms:`, error);
@@ -4759,6 +5582,22 @@ REGLAS:
       });
       const llmTime = Date.now() - llmStart;
 
+      logAICall({
+        venue_id: venue?.id,
+        feature: 'message_generation',
+        provider_code: providerCode,
+        model: result.model || modelOverride || providerCode,
+        system_prompt: systemPrompt,
+        user_prompt: 'Genera el mensaje.',
+        response_content: result.content,
+        input_tokens: result.usage?.prompt_tokens,
+        output_tokens: result.usage?.completion_tokens,
+        response_time_ms: llmTime,
+        user_id: req.user?.id,
+        accommodation_id,
+        metadata: { template_id, template_code: template.code }
+      });
+
       res.json({
         message: result.content,
         model: result.model,
@@ -4803,6 +5642,49 @@ REGLAS:
   // LLM Providers API
   // ==========================================
   
+  // GET /api/llm-providers/pricing - Get pricing for all active providers
+  app.get('/api/llm-providers/pricing', isAuthenticated, async (req, res) => {
+    try {
+      const providers = await prisma.llm_providers.findMany({
+        where: { is_active: true },
+        select: { id: true, code: true, name: true, model: true, input_price_per_mtok: true, output_price_per_mtok: true },
+        orderBy: { name: 'asc' }
+      });
+      res.json(providers.map(p => ({
+        ...p,
+        input_price_per_mtok: parseFloat(p.input_price_per_mtok || 0),
+        output_price_per_mtok: parseFloat(p.output_price_per_mtok || 0)
+      })));
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PUT /api/llm-providers/:id/pricing - Update provider pricing (super_admin only)
+  app.put('/api/llm-providers/:id/pricing', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user?.claims?.sub);
+      const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+      if (!currentUser?.is_super_admin) {
+        return res.status(403).json({ error: 'Acceso denegado' });
+      }
+      const { input_price_per_mtok, output_price_per_mtok } = req.body;
+      const provider = await prisma.llm_providers.update({
+        where: { id: req.params.id },
+        data: {
+          input_price_per_mtok: input_price_per_mtok != null ? input_price_per_mtok : undefined,
+          output_price_per_mtok: output_price_per_mtok != null ? output_price_per_mtok : undefined,
+          updated_at: new Date()
+        }
+      });
+      invalidateProviderPriceCache();
+      const { api_key, ...safeProvider } = provider;
+      res.json(safeProvider);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // GET /api/llm-providers - List active providers
   app.get('/api/llm-providers', isAuthenticated, async (req, res) => {
     try {
@@ -5200,13 +6082,47 @@ REGLAS:
             venue_id,
             source,
             external_id: externalId,
-            phone,
-            name: userName
+            phone: phone || req.body.visitor_phone || null,
+            name: userName || req.body.visitor_name || null
           }
         });
         conversation.messages = [];
       }
-      
+
+      // Update visitor info if provided
+      if (req.body.visitor_name || req.body.visitor_phone) {
+        const updateData = { updated_at: new Date() };
+        if (req.body.visitor_name && !conversation.name) updateData.name = req.body.visitor_name;
+        if (req.body.visitor_phone && !conversation.phone) updateData.phone = req.body.visitor_phone;
+        if (Object.keys(updateData).length > 1) {
+          await prisma.chat_conversations.update({
+            where: { id: conversation.id },
+            data: updateData
+          });
+        }
+      }
+
+      // Check free tier limit for public (non-authenticated) requests
+      if (!req.user) {
+        const limitSetting = await prisma.app_settings.findUnique({
+          where: { setting_key: 'public_chat_free_limit' }
+        });
+        const freeLimit = parseInt(limitSetting?.setting_value) || 20;
+        const isVerified = conversation.metadata?.verified === true;
+        const userMsgCount = conversation.messages
+          ? conversation.messages.filter(m => m.role === 'user').length
+          : 0;
+
+        if (!isVerified && userMsgCount >= freeLimit) {
+          return res.status(403).json({
+            error: 'free_limit_reached',
+            message_count: userMsgCount,
+            free_limit: freeLimit,
+            requires_verification: true
+          });
+        }
+      }
+
       // Save user message
       await prisma.chat_messages.create({
         data: {
@@ -5234,6 +6150,9 @@ REGLAS:
       llmMessages.push({ role: 'user', content: userMessage });
       
       // Call LLM using configured model with tools
+      const chatLlmStart = Date.now();
+      let chatTotalInputTokens = 0;
+      let chatTotalOutputTokens = 0;
       let llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
         maxTokens: 1024,
         temperature: 0.7,
@@ -5668,13 +6587,43 @@ REGLAS:
         where: { id: conversation.id },
         data: { updated_at: new Date() }
       });
-      
+
+      // Count user messages for limit tracking
+      const updatedMsgCount = await prisma.chat_messages.count({
+        where: { conversation_id: conversation.id, role: 'user' }
+      });
+      const limitSetting2 = await prisma.app_settings.findUnique({
+        where: { setting_key: 'public_chat_free_limit' }
+      });
+
+      // Audit log for chat
+      chatTotalInputTokens += llmResponse.usage?.prompt_tokens || 0;
+      chatTotalOutputTokens += llmResponse.usage?.completion_tokens || 0;
+      logAICall({
+        venue_id,
+        feature: 'chat',
+        provider_code: chatProviderCode,
+        model: llmResponse.model || chatProviderCode,
+        system_prompt: systemPrompt,
+        user_prompt: userMessage,
+        response_content: llmResponse.content,
+        input_tokens: chatTotalInputTokens,
+        output_tokens: chatTotalOutputTokens,
+        response_time_ms: Date.now() - chatLlmStart,
+        user_id: req.user?.id,
+        conversation_id: conversation.id,
+        metadata: { tools_used: toolsUsed, source }
+      });
+
       res.json({
         conversation_id: conversation.id,
         message: llmResponse.content,
         provider: chatProviderCode,
         model: llmResponse.model,
-        tokens_used: llmResponse.usage?.total_tokens
+        tokens_used: llmResponse.usage?.total_tokens,
+        message_count: updatedMsgCount,
+        free_limit: parseInt(limitSetting2?.setting_value) || 20,
+        is_verified: conversation.metadata?.verified === true
       });
     } catch (error) {
       console.error('Chat error:', error);

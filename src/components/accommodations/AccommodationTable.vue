@@ -4,7 +4,7 @@
       <div class="row g-3">
         <div class="col-12 col-md-6">
           <label for="dateFilter" class="form-label">Filtrar por Fecha:</label>
-          <input id="dateFilter" type="date" v-model="dateInput" class="form-control" @change="addDate" />
+          <input id="dateFilter" type="date" v-model="dateInput" class="form-control form-control-sm" @change="addDate" />
           <div v-if="selectedDates.length" class="d-flex align-items-center flex-wrap mt-2">
             <div v-for="date in selectedDates" :key="date" class="filter-chip me-2 mb-2">
               {{ date }}
@@ -15,7 +15,7 @@
         </div>
         <div class="col-12 col-md-6">
           <label for="searchFilter" class="form-label">Buscar (cliente:, organización:, cabaña:):</label>
-          <input id="searchFilter" type="text" v-model="searchQuery" class="form-control" placeholder="ej: cliente:juan, cabaña:casa" />
+          <input id="searchFilter" type="text" v-model="searchQuery" class="form-control form-control-sm" placeholder="ej: cliente:juan, cabaña:casa" />
         </div>
       </div>
     </div>
@@ -23,21 +23,31 @@
     <CTable responsive hover>
       <thead>
         <tr>
-          <th>Cabaña</th>
+          <th style="cursor: pointer; user-select: none;" @click="toggleSort('venue')">
+            Cabaña {{ sortIcon('venue') }}
+          </th>
           <th class="d-mobile-none">Organización</th>
-          <th>Fecha</th>
+          <th style="cursor: pointer; user-select: none;" @click="toggleSort('date')">
+            Fecha {{ sortIcon('date') }}
+          </th>
           <th class="d-mobile-none">Duración</th>
           <th class="d-mobile-none">Check In</th>
           <th class="d-mobile-none">Check Out</th>
-          <th>Cliente</th>
-          <th class="d-mobile-none">Valor</th>
+          <th style="cursor: pointer; user-select: none;" @click="toggleSort('customer')">
+            Cliente {{ sortIcon('customer') }}
+          </th>
+          <th class="d-mobile-none" style="cursor: pointer; user-select: none;" @click="toggleSort('price')">
+            Valor {{ sortIcon('price') }}
+          </th>
           <th class="d-mobile-none">Abonado</th>
-          <th>Saldo</th>
+          <th style="cursor: pointer; user-select: none;" @click="toggleSort('balance')">
+            Saldo {{ sortIcon('balance') }}
+          </th>
           <th>Acciones</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="item in filteredAccommodations" :key="item.id">
+        <tr v-for="item in paginatedAccommodations" :key="item.id">
           <td>
             <router-link v-if="item.venue_data?.id" :to="`/business/venues/${item.venue_data.id}/read`" class="text-decoration-none">
               {{ item.venue_data.name }}
@@ -101,6 +111,26 @@
         </tr>
       </tbody>
     </CTable>
+
+    <div v-if="totalPages > 1" class="d-flex flex-wrap align-items-center justify-content-between mt-3 gap-2">
+      <div class="small text-muted">
+        Mostrando {{ pageStart }}-{{ pageEnd }} de {{ sortedAccommodations.length }} registros
+      </div>
+      <CPagination size="sm" class="mb-0">
+        <CPaginationItem :disabled="currentPage === 1" @click="currentPage = 1">&laquo;</CPaginationItem>
+        <CPaginationItem :disabled="currentPage === 1" @click="currentPage--">&lsaquo;</CPaginationItem>
+        <CPaginationItem
+          v-for="page in visiblePages"
+          :key="page"
+          :active="page === currentPage"
+          @click="currentPage = page"
+        >
+          {{ page }}
+        </CPaginationItem>
+        <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage++">&rsaquo;</CPaginationItem>
+        <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage = totalPages">&raquo;</CPaginationItem>
+      </CPagination>
+    </div>
   </div>
 </template>
 
@@ -121,9 +151,29 @@ const searchQuery = ref('')
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
 
+const sortKey = ref('date')
+const sortOrder = ref('desc')
+const perPage = ref(20)
+const currentPage = ref(1)
+
+function toggleSort(key) {
+  if (sortKey.value === key) {
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortOrder.value = 'asc'
+  }
+}
+
+function sortIcon(key) {
+  if (sortKey.value !== key) return ''
+  return sortOrder.value === 'asc' ? '▲' : '▼'
+}
+
 async function load() {
   const viewAll = user.value?.is_super_admin ? settingsStore.godModeViewAll : false
   accommodations.value = await fetchAccommodations({ viewAll })
+  currentPage.value = 1
 }
 
 watch(() => settingsStore.godModeViewAll, () => {
@@ -132,46 +182,112 @@ watch(() => settingsStore.godModeViewAll, () => {
 
 const filteredAccommodations = computed(() => {
   if (!searchQuery.value.trim()) return accommodations.value
-  
+
   const query = searchQuery.value.trim().toLowerCase()
-  
-  // Parse filter syntax: customer:name, organization:name, venue:name
+
   const customerMatch = query.match(/customer:(\S+)/)
   const orgMatch = query.match(/organization:(\S+)/)
   const venueMatch = query.match(/venue:(\S+)/)
-  
+
   return accommodations.value.filter(item => {
     let matches = true
-    
+
     if (customerMatch) {
       const customerSearch = customerMatch[1].toLowerCase()
       const customerName = (item.customer_data?.fullname || item.customer_data?.user_data?.email || '').toLowerCase()
       matches = matches && customerName.includes(customerSearch)
     }
-    
+
     if (orgMatch) {
       const orgSearch = orgMatch[1].toLowerCase()
       const orgName = (item.venue_data?.organization_data?.name || '').toLowerCase()
       matches = matches && orgName.includes(orgSearch)
     }
-    
+
     if (venueMatch) {
       const venueSearch = venueMatch[1].toLowerCase()
       const venueName = (item.venue_data?.name || '').toLowerCase()
       matches = matches && venueName.includes(venueSearch)
     }
-    
-    // If no specific filter syntax, search all fields
+
     if (!customerMatch && !orgMatch && !venueMatch) {
       const customerName = (item.customer_data?.fullname || item.customer_data?.user_data?.email || '').toLowerCase()
       const venueName = (item.venue_data?.name || '').toLowerCase()
       const orgName = (item.venue_data?.organization_data?.name || '').toLowerCase()
       matches = customerName.includes(query) || venueName.includes(query) || orgName.includes(query)
     }
-    
+
     return matches
   })
 })
+
+const sortedAccommodations = computed(() => {
+  let result = filteredAccommodations.value
+
+  if (sortKey.value) {
+    const key = sortKey.value
+    const dir = sortOrder.value === 'asc' ? 1 : -1
+    result = [...result].sort((a, b) => {
+      let va, vb
+      if (key === 'date') {
+        va = a.date ? new Date(a.date).getTime() : 0
+        vb = b.date ? new Date(b.date).getTime() : 0
+      } else if (key === 'venue') {
+        va = (a.venue_data?.name || '').toLowerCase()
+        vb = (b.venue_data?.name || '').toLowerCase()
+      } else if (key === 'customer') {
+        va = (a.customer_data?.fullname || '').toLowerCase()
+        vb = (b.customer_data?.fullname || '').toLowerCase()
+      } else if (key === 'price') {
+        va = getAgreedPrice(a)
+        vb = getAgreedPrice(b)
+      } else if (key === 'balance') {
+        va = Number(a.pending_balance) || 0
+        vb = Number(b.pending_balance) || 0
+      } else {
+        va = (a[key] || '').toString().toLowerCase()
+        vb = (b[key] || '').toString().toLowerCase()
+      }
+      if (va < vb) return -1 * dir
+      if (va > vb) return 1 * dir
+      return 0
+    })
+  }
+
+  return result
+})
+
+const totalPages = computed(() => Math.ceil(sortedAccommodations.value.length / perPage.value))
+
+const paginatedAccommodations = computed(() => {
+  const start = (currentPage.value - 1) * perPage.value
+  return sortedAccommodations.value.slice(start, start + perPage.value)
+})
+
+const pageStart = computed(() => {
+  if (sortedAccommodations.value.length === 0) return 0
+  return (currentPage.value - 1) * perPage.value + 1
+})
+
+const pageEnd = computed(() => {
+  return Math.min(currentPage.value * perPage.value, sortedAccommodations.value.length)
+})
+
+const visiblePages = computed(() => {
+  const pages = []
+  const total = totalPages.value
+  const current = currentPage.value
+  let start = Math.max(1, current - 2)
+  let end = Math.min(total, current + 2)
+  if (end - start < 4) {
+    if (start === 1) end = Math.min(total, start + 4)
+    else start = Math.max(1, end - 4)
+  }
+  for (let i = start; i <= end; i++) pages.push(i)
+  return pages
+})
+
+watch(searchQuery, () => { currentPage.value = 1 })
 
 function addDate() {
   if (dateInput.value && !selectedDates.value.includes(dateInput.value)) {
@@ -222,7 +338,6 @@ function formatDate(dateStr) {
 
 function formatTime(timeStr) {
   if (!timeStr) return '—'
-  // Handle ISO time format like "1970-01-01T15:00:00.000Z"
   if (timeStr.includes('T')) {
     const d = new Date(timeStr)
     const hours = String(d.getUTCHours()).padStart(2, '0')
@@ -234,14 +349,12 @@ function formatTime(timeStr) {
 
 function calcCheckout(timeStr, duration, dateStr) {
   if (!timeStr || !duration || !dateStr) return '—'
-  
-  // Parse the date in UTC
+
   const dateObj = new Date(dateStr)
   const year = dateObj.getUTCFullYear()
   const month = dateObj.getUTCMonth()
   const day = dateObj.getUTCDate()
-  
-  // Parse time from ISO format (stored as UTC)
+
   let hours = 0, minutes = 0
   if (timeStr.includes('T')) {
     const timeDate = new Date(timeStr)
@@ -252,19 +365,17 @@ function calcCheckout(timeStr, duration, dateStr) {
     hours = h
     minutes = m
   }
-  
-  // Build start timestamp in UTC and add duration
+
   const startMs = Date.UTC(year, month, day, hours, minutes)
   const endMs = startMs + Number(duration) * 1000
   const end = new Date(endMs)
-  
-  // Format in UTC to avoid timezone shifts
+
   const endYear = end.getUTCFullYear()
   const endMonth = String(end.getUTCMonth() + 1).padStart(2, '0')
   const endDay = String(end.getUTCDate()).padStart(2, '0')
   const endHours = String(end.getUTCHours()).padStart(2, '0')
   const endMins = String(end.getUTCMinutes()).padStart(2, '0')
-  
+
   return `${endDay}/${endMonth}/${endYear} ${endHours}:${endMins}`
 }
 

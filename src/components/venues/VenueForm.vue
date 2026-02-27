@@ -253,6 +253,25 @@
       />
       <div class="form-text">Si está activo, esta cabaña aparecerá en la página pública de búsqueda de disponibilidad.</div>
     </div>
+    <div class="mb-3" v-if="form.is_public">
+      <CFormLabel for="venueSlug">URL Pública (slug)</CFormLabel>
+      <CInputGroup>
+        <CInputGroupText class="text-muted" style="font-size: 0.85rem;">cabaneroco.vercel.app/#/p/</CInputGroupText>
+        <CFormInput
+          id="venueSlug"
+          v-model="form.slug"
+          type="text"
+          placeholder="mi-cabana"
+          :pattern="'^[a-z0-9-]+$'"
+        />
+      </CInputGroup>
+      <div class="form-text">Identificador URL-friendly. Déjalo vacío para generarlo automáticamente desde el nombre.</div>
+      <div v-if="form.slug" class="form-text">
+        <a :href="publicVenueUrl" target="_blank">
+          Ver página pública ↗
+        </a>
+      </div>
+    </div>
     <CButton type="submit" color="primary" class="me-2">{{ isEdit ? 'Actualizar' : 'Crear' }}</CButton>
     <CButton color="secondary" variant="outline" @click="onCancel">Cancelar</CButton>
   </CForm>
@@ -293,6 +312,10 @@ const mapInstance = ref(null)
 const markerInstance = ref(null)
 const originalLocation = ref({ latitude: null, longitude: null })
 const skipReverseGeocode = ref(false)
+
+const publicVenueUrl = computed(() => {
+  return `${window.location.origin}/#/p/${form.value.slug || ''}`
+})
 
 const locationChanged = computed(() => {
   if (!props.isEdit || originalLocation.value.latitude === null) return false

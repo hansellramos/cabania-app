@@ -56,22 +56,59 @@
               <CFormInput type="date" v-model="filters.to_date" size="sm" @change="loadLogs" />
             </CCol>
           </CRow>
+          <div class="mb-3">
+            <CFormInput
+              v-model="searchQuery"
+              size="sm"
+              placeholder="Buscar por descripción..."
+            />
+          </div>
 
           <CTable hover responsive>
             <CTableHead>
               <CTableRow>
-                <CTableHeaderCell>Fecha</CTableHeaderCell>
-                <CTableHeaderCell>Zona</CTableHeaderCell>
-                <CTableHeaderCell>Proveedor</CTableHeaderCell>
+                <CTableHeaderCell
+                  style="cursor: pointer; user-select: none;"
+                  @click="toggleSort('maintenance_date')"
+                >
+                  Fecha {{ sortIcon('maintenance_date') }}
+                </CTableHeaderCell>
+                <CTableHeaderCell
+                  style="cursor: pointer; user-select: none;"
+                  @click="toggleSort('zone')"
+                >
+                  Zona {{ sortIcon('zone') }}
+                </CTableHeaderCell>
+                <CTableHeaderCell
+                  style="cursor: pointer; user-select: none;"
+                  @click="toggleSort('provider')"
+                >
+                  Proveedor {{ sortIcon('provider') }}
+                </CTableHeaderCell>
                 <CTableHeaderCell class="d-mobile-none">Descripcion</CTableHeaderCell>
-                <CTableHeaderCell>Estado</CTableHeaderCell>
-                <CTableHeaderCell>Prioridad</CTableHeaderCell>
-                <CTableHeaderCell>Costo</CTableHeaderCell>
+                <CTableHeaderCell
+                  style="cursor: pointer; user-select: none;"
+                  @click="toggleSort('status')"
+                >
+                  Estado {{ sortIcon('status') }}
+                </CTableHeaderCell>
+                <CTableHeaderCell
+                  style="cursor: pointer; user-select: none;"
+                  @click="toggleSort('priority')"
+                >
+                  Prioridad {{ sortIcon('priority') }}
+                </CTableHeaderCell>
+                <CTableHeaderCell
+                  style="cursor: pointer; user-select: none;"
+                  @click="toggleSort('cost')"
+                >
+                  Costo {{ sortIcon('cost') }}
+                </CTableHeaderCell>
                 <CTableHeaderCell>Acciones</CTableHeaderCell>
               </CTableRow>
             </CTableHead>
             <CTableBody>
-              <CTableRow v-for="log in logs" :key="log.id">
+              <CTableRow v-for="log in paginatedLogs" :key="log.id">
                 <CTableDataCell>{{ formatDate(log.maintenance_date) }}</CTableDataCell>
                 <CTableDataCell>{{ log.zone_data?.name || '-' }}</CTableDataCell>
                 <CTableDataCell>{{ log.provider_data?.name || '-' }}</CTableDataCell>
@@ -119,24 +156,44 @@
                   </div>
                 </CTableDataCell>
               </CTableRow>
-              <CTableRow v-if="logs.length === 0">
+              <CTableRow v-if="filteredLogs.length === 0">
                 <CTableDataCell colspan="8" class="text-center text-muted py-4">
                   No hay registros de mantenimiento
                 </CTableDataCell>
               </CTableRow>
             </CTableBody>
-            <CTableFoot v-if="logs.length > 0">
+            <CTableFoot v-if="filteredLogs.length > 0">
               <CTableRow>
                 <CTableDataCell colspan="6" class="text-end">
                   <strong>Total:</strong>
                 </CTableDataCell>
                 <CTableDataCell>
-                  <strong>{{ formatCurrency(totalCost) }}</strong>
+                  <strong>{{ formatCurrency(filteredTotal) }}</strong>
                 </CTableDataCell>
                 <CTableDataCell></CTableDataCell>
               </CTableRow>
             </CTableFoot>
           </CTable>
+
+          <div v-if="totalPages > 1" class="d-flex flex-wrap align-items-center justify-content-between mt-3 gap-2">
+            <div class="small text-muted">
+              Mostrando {{ pageStart }}-{{ pageEnd }} de {{ filteredLogs.length }} registros
+            </div>
+            <CPagination size="sm" class="mb-0">
+              <CPaginationItem :disabled="currentPage === 1" @click="currentPage = 1">&laquo;</CPaginationItem>
+              <CPaginationItem :disabled="currentPage === 1" @click="currentPage--">&lsaquo;</CPaginationItem>
+              <CPaginationItem
+                v-for="page in visiblePages"
+                :key="page"
+                :active="page === currentPage"
+                @click="currentPage = page"
+              >
+                {{ page }}
+              </CPaginationItem>
+              <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage++">&rsaquo;</CPaginationItem>
+              <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage = totalPages">&raquo;</CPaginationItem>
+            </CPagination>
+          </div>
         </CCardBody>
       </CCard>
     </CCol>
@@ -159,7 +216,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton,
@@ -179,6 +236,7 @@ const loading = ref(false)
 const deleting = ref(false)
 const showDeleteModal = ref(false)
 const logToDelete = ref(null)
+const searchQuery = ref('')
 
 const filters = ref({
   venue_id: '',
@@ -188,6 +246,11 @@ const filters = ref({
   from_date: '',
   to_date: ''
 })
+
+const sortKey = ref('maintenance_date')
+const sortOrder = ref('desc')
+const perPage = ref(20)
+const currentPage = ref(1)
 
 const statusBadges = {
   pending: { color: 'warning', label: 'Pendiente' },
@@ -203,9 +266,100 @@ const priorityBadges = {
   urgent: { color: 'danger', label: 'Urgente' }
 }
 
-const totalCost = computed(() => {
-  return logs.value.reduce((sum, l) => sum + (parseFloat(l.cost) || 0), 0)
+const priorityOrder = { urgent: 4, high: 3, medium: 2, low: 1 }
+
+function toggleSort(key) {
+  if (sortKey.value === key) {
+    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortKey.value = key
+    sortOrder.value = 'asc'
+  }
+}
+
+function sortIcon(key) {
+  if (sortKey.value !== key) return ''
+  return sortOrder.value === 'asc' ? '▲' : '▼'
+}
+
+const filteredLogs = computed(() => {
+  let result = logs.value
+
+  if (searchQuery.value) {
+    const q = searchQuery.value.toLowerCase()
+    result = result.filter(l =>
+      (l.description && l.description.toLowerCase().includes(q))
+    )
+  }
+
+  if (sortKey.value) {
+    const key = sortKey.value
+    const dir = sortOrder.value === 'asc' ? 1 : -1
+    result = [...result].sort((a, b) => {
+      let va, vb
+      if (key === 'maintenance_date') {
+        va = a.maintenance_date ? new Date(a.maintenance_date).getTime() : 0
+        vb = b.maintenance_date ? new Date(b.maintenance_date).getTime() : 0
+      } else if (key === 'cost') {
+        va = parseFloat(a.cost) || 0
+        vb = parseFloat(b.cost) || 0
+      } else if (key === 'zone') {
+        va = (a.zone_data?.name || '').toLowerCase()
+        vb = (b.zone_data?.name || '').toLowerCase()
+      } else if (key === 'provider') {
+        va = (a.provider_data?.name || '').toLowerCase()
+        vb = (b.provider_data?.name || '').toLowerCase()
+      } else if (key === 'priority') {
+        va = priorityOrder[a.priority] || 0
+        vb = priorityOrder[b.priority] || 0
+      } else {
+        va = (a[key] || '').toString().toLowerCase()
+        vb = (b[key] || '').toString().toLowerCase()
+      }
+      if (va < vb) return -1 * dir
+      if (va > vb) return 1 * dir
+      return 0
+    })
+  }
+
+  return result
 })
+
+const filteredTotal = computed(() => {
+  return filteredLogs.value.reduce((sum, l) => sum + (parseFloat(l.cost) || 0), 0)
+})
+
+const totalPages = computed(() => Math.ceil(filteredLogs.value.length / perPage.value))
+
+const paginatedLogs = computed(() => {
+  const start = (currentPage.value - 1) * perPage.value
+  return filteredLogs.value.slice(start, start + perPage.value)
+})
+
+const pageStart = computed(() => {
+  if (filteredLogs.value.length === 0) return 0
+  return (currentPage.value - 1) * perPage.value + 1
+})
+
+const pageEnd = computed(() => {
+  return Math.min(currentPage.value * perPage.value, filteredLogs.value.length)
+})
+
+const visiblePages = computed(() => {
+  const pages = []
+  const total = totalPages.value
+  const current = currentPage.value
+  let start = Math.max(1, current - 2)
+  let end = Math.min(total, current + 2)
+  if (end - start < 4) {
+    if (start === 1) end = Math.min(total, start + 4)
+    else start = Math.max(1, end - 4)
+  }
+  for (let i = start; i <= end; i++) pages.push(i)
+  return pages
+})
+
+watch(searchQuery, () => { currentPage.value = 1 })
 
 const newLogLink = computed(() => {
   if (filters.value.venue_id) {
@@ -216,7 +370,7 @@ const newLogLink = computed(() => {
 
 const formatDate = (date) => {
   if (!date) return '-'
-  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })
+  return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
 const formatCurrency = (amount) => {
@@ -226,6 +380,7 @@ const formatCurrency = (amount) => {
 
 const loadLogs = async () => {
   loading.value = true
+  currentPage.value = 1
   try {
     const params = new URLSearchParams()
     if (filters.value.venue_id) params.append('venue_id', filters.value.venue_id)
@@ -327,6 +482,3 @@ onMounted(() => {
   }
 })
 </script>
-
-<style scoped>
-</style>
