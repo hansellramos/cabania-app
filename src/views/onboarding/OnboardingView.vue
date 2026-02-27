@@ -14,9 +14,8 @@
       <div class="text-center mb-4">
         <div class="onboarding-logo">
           <img src="/logo-inverted.svg" alt="CabanIA" class="onboarding-logo-icon" />
-          <img src="/logo-wordmark.svg" alt="CabanIA" class="onboarding-logo-wordmark" />
         </div>
-        <h2 class="onboarding-title">Bienvenido a CabanIA</h2>
+        <h2 class="onboarding-title">Bienvenido a <img src="/logo-wordmark.svg" alt="CabanIA" class="onboarding-title-wordmark" /></h2>
         <p class="onboarding-subtitle" v-if="currentStep <= 6">Configura tu propiedad paso a paso</p>
       </div>
 
@@ -54,6 +53,7 @@
         <LocationStep
           v-if="currentStep === 2"
           :saved-data="getStepData(2)"
+          :theme="resolvedTheme"
           @completed="onStepCompleted"
           @back="goBack"
         />
@@ -440,17 +440,22 @@ onMounted(async () => {
   object-fit: contain;
 }
 
-.onboarding-logo-wordmark {
-  height: 1.4rem;
-  width: auto;
-  object-fit: contain;
-}
-
 .onboarding-title {
   color: var(--ob-text);
   font-weight: 700;
   font-size: 1.5rem;
   margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.onboarding-title-wordmark {
+  height: 1.3rem;
+  width: auto;
+  object-fit: contain;
+  vertical-align: middle;
 }
 
 .onboarding-subtitle {
@@ -657,13 +662,16 @@ onMounted(async () => {
 .onboarding-wrapper .onboarding-logo-icon {
   content: url('/logo.svg');
 }
-.onboarding-wrapper .onboarding-logo-wordmark {
+.onboarding-wrapper .onboarding-title-wordmark {
   filter: none;
 }
 
 /* Dark theme: logo uses inverted versions */
 .onboarding-wrapper[data-theme="dark"] .onboarding-logo-icon {
   content: url('/logo-inverted.svg');
+}
+.onboarding-wrapper[data-theme="dark"] .onboarding-title-wordmark {
+  filter: brightness(1.3);
 }
 
 /* Light: step card secondary elements */

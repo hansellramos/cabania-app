@@ -158,6 +158,7 @@ import '@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css'
 
 const props = defineProps({
   savedData: { type: Object, default: null },
+  theme: { type: String, default: 'light' },
 })
 
 const emit = defineEmits(['completed', 'back'])
@@ -309,6 +310,16 @@ async function fetchNearbyZones(department) {
   }
 }
 
+// Watch theme changes to swap map style
+watch(
+  () => props.theme,
+  (theme) => {
+    if (map) {
+      map.setStyle(theme === 'dark' ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/streets-v11')
+    }
+  },
+)
+
 // Watch department changes to fetch zones
 let deptWatchTimeout = null
 watch(
@@ -350,7 +361,7 @@ onMounted(() => {
   const initialZoom = form.value.latitude ? 14 : 5
 
   map = new mapboxgl.Map({
-    style: 'mapbox://styles/mapbox/streets-v11',
+    style: props.theme === 'dark' ? 'mapbox://styles/mapbox/dark-v11' : 'mapbox://styles/mapbox/streets-v11',
     container: mapContainer.value,
     center: initialCenter,
     zoom: initialZoom,
