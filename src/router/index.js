@@ -489,6 +489,12 @@ const routes = [
         meta: { breadcrumb: 'Proveedores LLM' },
       },
       {
+        path: '/admin/system-whatsapp',
+        name: 'SystemWhatsApp',
+        component: () => import('@/views/settings/SystemWhatsAppView.vue'),
+        meta: { breadcrumb: 'WhatsApp del Sistema' },
+      },
+      {
         path: '/admin/ai-settings',
         name: 'AISettings',
         component: () => import('@/views/settings/AISettingsView.vue'),
@@ -500,6 +506,13 @@ const routes = [
         component: () => import('@/views/venues/VenueChatView.vue'),
         props: true,
         meta: { breadcrumb: 'Chat de Cabaña' },
+      },
+      {
+        path: '/business/venues/:id/whatsapp',
+        name: 'VenueWhatsApp',
+        component: () => import('@/views/venues/WhatsAppConnectionView.vue'),
+        props: true,
+        meta: { breadcrumb: 'WhatsApp - CabanIA' },
       },
       {
         path: '/business/venues/:id/plans',

@@ -10,6 +10,46 @@ const { setupAuth, isAuthenticated } = require('./auth/replitAuth');
 const { loadUserPermissions, hasPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
 const llmService = require('./llm-service');
 
+// Baileys WhatsApp service (only available outside Vercel)
+let baileysService = null;
+let systemBaileysService = null;
+if (!process.env.VERCEL) {
+  try {
+    baileysService = require('./services/baileys/baileysService');
+  } catch (err) {
+    console.warn('[baileys] Baileys not available:', err.message);
+  }
+  try {
+    systemBaileysService = require('./services/baileys/systemBaileysService');
+  } catch (err) {
+    console.warn('[baileys-system] System Baileys not available:', err.message);
+  }
+}
+
+/**
+ * Calculate the next resume time at given hour in America/Bogota timezone.
+ * If the hour has already passed today, returns tomorrow at that hour.
+ */
+function getNextResumeTime(hour = 3) {
+  const now = new Date();
+  // Get current time in Bogota (UTC-5)
+  const bogotaOffset = -5 * 60; // minutes
+  const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+  const bogotaMinutes = utcMinutes + bogotaOffset;
+  const bogotaHour = Math.floor(((bogotaMinutes % 1440) + 1440) % 1440 / 60);
+
+  // Calculate target time in UTC
+  const targetBogotaMs = new Date(now);
+  targetBogotaMs.setUTCHours(hour - (bogotaOffset / 60), 0, 0, 0); // hour in UTC = hour_bogota + 5
+
+  if (targetBogotaMs <= now) {
+    // Already passed today, set for tomorrow
+    targetBogotaMs.setUTCDate(targetBogotaMs.getUTCDate() + 1);
+  }
+
+  return targetBogotaMs;
+}
+
 // AI audit logging helper — price cache for cost calculation
 const _providerPriceCache = { data: null, expires: 0 };
 const PRICE_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
@@ -5984,6 +6024,336 @@ REGLAS:
     }
   });
 
+  // ==================== WhatsApp Baileys API ====================
+
+  // POST /api/venues/:id/whatsapp/connect - Start WhatsApp connection (generates QR)
+  app.post('/api/venues/:id/whatsapp/connect', isAuthenticated, async (req, res) => {
+    try {
+      if (!baileysService || !baileysService.isAvailable()) {
+        return res.status(503).json({ error: 'WhatsApp no disponible en este entorno' });
+      }
+
+      const venueId = req.params.id;
+
+      // Verify user has access to this venue
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      if (venueIds !== null && !venueIds.includes(venueId)) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+
+      const result = await baileysService.connectVenue(venueId);
+      res.json({ success: true, ...result });
+    } catch (error) {
+      console.error('[whatsapp] Connect error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/venues/:id/whatsapp/disconnect - Disconnect WhatsApp
+  app.post('/api/venues/:id/whatsapp/disconnect', isAuthenticated, async (req, res) => {
+    try {
+      if (!baileysService || !baileysService.isAvailable()) {
+        return res.status(503).json({ error: 'WhatsApp no disponible en este entorno' });
+      }
+
+      const venueId = req.params.id;
+
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      if (venueIds !== null && !venueIds.includes(venueId)) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+
+      await baileysService.disconnectVenue(venueId);
+      res.json({ success: true, status: 'disconnected' });
+    } catch (error) {
+      console.error('[whatsapp] Disconnect error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/venues/:id/whatsapp/status - Get connection status + QR
+  app.get('/api/venues/:id/whatsapp/status', isAuthenticated, async (req, res) => {
+    try {
+      const venueId = req.params.id;
+
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      if (venueIds !== null && !venueIds.includes(venueId)) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+
+      if (!baileysService || !baileysService.isAvailable()) {
+        return res.json({ status: 'unavailable', qr_code: null, phone_number: null });
+      }
+
+      const status = await baileysService.getStatus(venueId);
+      res.json(status);
+    } catch (error) {
+      console.error('[whatsapp] Status error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/venues/:id/whatsapp/qr - Get QR code data
+  app.get('/api/venues/:id/whatsapp/qr', isAuthenticated, async (req, res) => {
+    try {
+      const venueId = req.params.id;
+
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      if (venueIds !== null && !venueIds.includes(venueId)) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+
+      const conn = await prisma.whatsapp_connections.findUnique({
+        where: { venue_id: venueId },
+        select: { qr_code: true, status: true }
+      });
+
+      if (!conn || !conn.qr_code) {
+        return res.json({ qr_code: null, status: conn?.status || 'not_configured' });
+      }
+
+      res.json({ qr_code: conn.qr_code, status: conn.status });
+    } catch (error) {
+      console.error('[whatsapp] QR error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/venues/:id/whatsapp/excluded-phones - Get excluded phones list
+  app.get('/api/venues/:id/whatsapp/excluded-phones', isAuthenticated, async (req, res) => {
+    try {
+      const venueId = req.params.id;
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      if (venueIds !== null && !venueIds.includes(venueId)) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+
+      const conn = await prisma.whatsapp_connections.findUnique({
+        where: { venue_id: venueId },
+        select: { excluded_phones: true }
+      });
+
+      res.json({ excluded_phones: conn?.excluded_phones || [] });
+    } catch (error) {
+      console.error('[whatsapp] Excluded phones error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PUT /api/venues/:id/whatsapp/excluded-phones - Update excluded phones list
+  app.put('/api/venues/:id/whatsapp/excluded-phones', isAuthenticated, async (req, res) => {
+    try {
+      const venueId = req.params.id;
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      if (venueIds !== null && !venueIds.includes(venueId)) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+
+      const { excluded_phones } = req.body;
+      if (!Array.isArray(excluded_phones)) {
+        return res.status(400).json({ error: 'excluded_phones debe ser un array' });
+      }
+
+      // Validate each entry has phone field
+      for (const entry of excluded_phones) {
+        if (!entry.phone || typeof entry.phone !== 'string') {
+          return res.status(400).json({ error: 'Cada entrada debe tener un campo "phone"' });
+        }
+        // Clean phone: keep only digits
+        entry.phone = entry.phone.replace(/\D/g, '');
+      }
+
+      await prisma.whatsapp_connections.update({
+        where: { venue_id: venueId },
+        data: { excluded_phones, updated_at: new Date() }
+      });
+
+      res.json({ success: true, excluded_phones });
+    } catch (error) {
+      console.error('[whatsapp] Update excluded phones error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== Per-venue Escalation Config ====================
+
+  // GET /api/venues/:id/whatsapp/escalation-config
+  app.get('/api/venues/:id/whatsapp/escalation-config', isAuthenticated, async (req, res) => {
+    try {
+      const venueId = req.params.id;
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      if (venueIds !== null && !venueIds.includes(venueId)) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+
+      const conn = await prisma.whatsapp_connections.findUnique({
+        where: { venue_id: venueId },
+        select: { escalation_config: true, notification_phone: true }
+      });
+
+      const defaultConfig = {
+        ai_escalation_enabled: true,
+        client_request_enabled: true,
+        message_limit_enabled: false,
+        message_limit: 15,
+        auto_resume_enabled: true,
+        auto_resume_hour: 3
+      };
+
+      res.json({
+        escalation_config: { ...defaultConfig, ...(conn?.escalation_config || {}) },
+        notification_phone: conn?.notification_phone || ''
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PUT /api/venues/:id/whatsapp/escalation-config
+  app.put('/api/venues/:id/whatsapp/escalation-config', isAuthenticated, async (req, res) => {
+    try {
+      const venueId = req.params.id;
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      if (venueIds !== null && !venueIds.includes(venueId)) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+
+      const { escalation_config, notification_phone } = req.body;
+
+      const updateData = { updated_at: new Date() };
+      if (escalation_config !== undefined) updateData.escalation_config = escalation_config;
+      if (notification_phone !== undefined) updateData.notification_phone = notification_phone || null;
+
+      // Upsert: create record if doesn't exist
+      let conn = await prisma.whatsapp_connections.findUnique({
+        where: { venue_id: venueId }
+      });
+
+      if (conn) {
+        conn = await prisma.whatsapp_connections.update({
+          where: { venue_id: venueId },
+          data: updateData
+        });
+      } else {
+        conn = await prisma.whatsapp_connections.create({
+          data: {
+            venue_id: venueId,
+            ...updateData
+          }
+        });
+      }
+
+      res.json({ success: true, escalation_config: conn.escalation_config, notification_phone: conn.notification_phone });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/chat/:venue_id/conversations/:id/resume - Resume a conversation manually
+  app.post('/api/chat/:venue_id/conversations/:id/resume', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, id } = req.params;
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      if (venueIds !== null && !venueIds.includes(venue_id)) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+
+      const conversation = await prisma.chat_conversations.findUnique({
+        where: { id }
+      });
+      if (!conversation || conversation.venue_id !== venue_id) {
+        return res.status(404).json({ error: 'Conversación no encontrada' });
+      }
+      if (conversation.status !== 'human_attention') {
+        return res.json({ success: true, message: 'La conversación ya está activa' });
+      }
+
+      await prisma.chat_conversations.update({
+        where: { id },
+        data: {
+          status: 'active',
+          escalated_at: null,
+          escalated_reason: null,
+          resume_at: null,
+          updated_at: new Date()
+        }
+      });
+
+      // Send greeting to client if baileys conversation
+      if (conversation.phone && conversation.source === 'baileys' && baileysService) {
+        try {
+          await baileysService.sendMessage(
+            venue_id,
+            conversation.phone,
+            '¡Hola! 👋 CabanIA está disponible nuevamente para ayudarte. ¿En qué puedo asistirte?'
+          );
+        } catch (err) {
+          console.error('[resume] Failed to send greeting:', err.message);
+        }
+      }
+
+      res.json({ success: true, message: 'Conversación reanudada' });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== System WhatsApp (Admin) ====================
+
+  // GET /api/admin/system-whatsapp/status
+  app.get('/api/admin/system-whatsapp/status', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims.sub);
+      const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+      if (!currentUser?.is_super_admin) {
+        return res.status(403).json({ error: 'Solo administradores' });
+      }
+      if (!systemBaileysService) {
+        return res.json({ status: 'unavailable' });
+      }
+      const status = await systemBaileysService.getSystemStatus();
+      res.json(status);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/admin/system-whatsapp/connect
+  app.post('/api/admin/system-whatsapp/connect', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims.sub);
+      const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+      if (!currentUser?.is_super_admin) {
+        return res.status(403).json({ error: 'Solo administradores' });
+      }
+      if (!systemBaileysService) {
+        return res.status(400).json({ error: 'Servicio de WhatsApp del sistema no disponible' });
+      }
+      const result = await systemBaileysService.connectSystem();
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/admin/system-whatsapp/disconnect
+  app.post('/api/admin/system-whatsapp/disconnect', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims.sub);
+      const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+      if (!currentUser?.is_super_admin) {
+        return res.status(403).json({ error: 'Solo administradores' });
+      }
+      if (!systemBaileysService) {
+        return res.status(400).json({ error: 'Servicio de WhatsApp del sistema no disponible' });
+      }
+      await systemBaileysService.disconnectSystem();
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ==================== Chat API ====================
 
   // POST /api/chat/:venue_id - Chat endpoint (supports internal and webhook calls)
@@ -6559,10 +6929,154 @@ REGLAS:
             
             llmResponse.tools_used = llmResponse.tools_used || [];
             llmResponse.tools_used.push('create_estimate');
+          } else if (toolCall.function.name === 'escalate_to_human') {
+            const args = JSON.parse(toolCall.function.arguments);
+
+            // Check if escalation is enabled for this venue
+            const waConn = await prisma.whatsapp_connections.findUnique({
+              where: { venue_id }
+            });
+            const escConfig = waConn?.escalation_config || {};
+            const reason = args.reason || 'ai_decided';
+
+            // Verify the trigger is enabled
+            let escalationAllowed = true;
+            if (reason === 'client_requested' && escConfig.client_request_enabled === false) {
+              escalationAllowed = false;
+            }
+            if (reason === 'ai_decided' && escConfig.ai_escalation_enabled === false) {
+              escalationAllowed = false;
+            }
+
+            let escalateResult;
+            if (escalationAllowed) {
+              // Calculate resume_at (next 3 AM in America/Bogota if auto_resume enabled)
+              const autoResumeEnabled = escConfig.auto_resume_enabled !== false;
+              const autoResumeHour = escConfig.auto_resume_hour || 3;
+              let resumeAt = null;
+              if (autoResumeEnabled) {
+                resumeAt = getNextResumeTime(autoResumeHour);
+              }
+
+              // Mark conversation as human_attention
+              await prisma.chat_conversations.update({
+                where: { id: conversation.id },
+                data: {
+                  status: 'human_attention',
+                  escalated_at: new Date(),
+                  escalated_reason: reason,
+                  resume_at: resumeAt,
+                  updated_at: new Date()
+                }
+              });
+
+              // Send notification via system WhatsApp
+              const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
+              if (notificationPhone && systemBaileysService) {
+                try {
+                  const clientPhone = conversation.phone || 'desconocido';
+                  const clientName = conversation.name || 'Cliente';
+                  const resumeNote = autoResumeEnabled
+                    ? `Si no me dices nada, retomo mañana a las ${autoResumeHour}:00 AM automáticamente.`
+                    : 'Respóndeme "ya puedes seguir" cuando quieras que CabanIA retome.';
+
+                  const notificationMsg = `🔔 *Escalación CabanIA - ${venue.name || 'Venue'}*\n\n*Resumen:* ${args.summary}\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Link directo:* https://wa.me/${clientPhone}\n\nPara continuar la conversación, contacta al cliente directamente.\nCuando quieras que CabanIA retome, respóndeme: "ya puedes seguir"\n${resumeNote}`;
+
+                  await systemBaileysService.sendSystemMessage(notificationPhone, notificationMsg);
+                  console.log(`[escalation] Notification sent to ${notificationPhone} for venue ${venue_id}`);
+                } catch (notifErr) {
+                  console.error('[escalation] Failed to send notification:', notifErr.message);
+                }
+              }
+
+              escalateResult = {
+                success: true,
+                message: 'Conversación escalada a un humano. El propietario ha sido notificado.',
+                reason
+              };
+            } else {
+              escalateResult = {
+                success: false,
+                message: 'El escalamiento no está habilitado para este tipo de solicitud. Continúa asistiendo al cliente.',
+                reason
+              };
+            }
+
+            const toolResultContent = JSON.stringify(escalateResult);
+
+            if (chatModelConfig.provider === 'anthropic') {
+              llmMessages.push({
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
+              });
+              llmMessages.push({
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+              });
+            } else {
+              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+            }
+
+            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+              maxTokens: 1024,
+              temperature: 0.7
+            });
+
+            llmResponse.tools_used = llmResponse.tools_used || [];
+            llmResponse.tools_used.push('escalate_to_human');
           }
         }
       }
-      
+
+      // Check message limit escalation (before responding, after tool calls)
+      if (source === 'baileys' && conversation.phone) {
+        const waConn = await prisma.whatsapp_connections.findUnique({
+          where: { venue_id }
+        });
+        const escConfig = waConn?.escalation_config || {};
+        if (escConfig.message_limit_enabled && escConfig.message_limit > 0) {
+          const userMsgCount = await prisma.chat_messages.count({
+            where: { conversation_id: conversation.id, role: 'user' }
+          });
+          // Check if estimate was created for this conversation
+          const hasEstimate = await prisma.estimates.count({
+            where: { conversation_id: conversation.id }
+          });
+          if (userMsgCount >= escConfig.message_limit && hasEstimate === 0 && conversation.status !== 'human_attention') {
+            // Force escalation by message limit
+            const autoResumeEnabled = escConfig.auto_resume_enabled !== false;
+            const autoResumeHour = escConfig.auto_resume_hour || 3;
+            let resumeAt = autoResumeEnabled ? getNextResumeTime(autoResumeHour) : null;
+
+            await prisma.chat_conversations.update({
+              where: { id: conversation.id },
+              data: {
+                status: 'human_attention',
+                escalated_at: new Date(),
+                escalated_reason: 'message_limit',
+                resume_at: resumeAt,
+                updated_at: new Date()
+              }
+            });
+
+            // Notify owner
+            const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
+            if (notificationPhone && systemBaileysService) {
+              try {
+                const clientPhone = conversation.phone || 'desconocido';
+                const clientName = conversation.name || 'Cliente';
+                const notificationMsg = `🔔 *Escalación CabanIA - ${venue.name || 'Venue'}*\n\n*Motivo:* Límite de ${escConfig.message_limit} mensajes alcanzado sin cotización\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Link directo:* https://wa.me/${clientPhone}\n\nEl cliente lleva ${userMsgCount} mensajes sin generar cotización. Puede necesitar atención personalizada.\nResponde "ya puedes seguir" para reactivar CabanIA.`;
+
+                await systemBaileysService.sendSystemMessage(notificationPhone, notificationMsg);
+              } catch (notifErr) {
+                console.error('[escalation] Failed to send limit notification:', notifErr.message);
+              }
+            }
+          }
+        }
+      }
+
       // Track if we used a tool in this request (for rate limiting)
       const toolsUsed = llmResponse.tools_used || [];
       
@@ -8494,6 +9008,70 @@ REGLAS:
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
+
+    // Restore WhatsApp connections after server is listening
+    if (baileysService && baileysService.isAvailable()) {
+      baileysService.restoreAllConnections().catch(err => {
+        console.error('[baileys] Error restoring connections on startup:', err.message);
+      });
+    }
+
+    // Restore system WhatsApp connection
+    if (systemBaileysService) {
+      systemBaileysService.restoreSystemConnection().catch(err => {
+        console.error('[baileys-system] Error restoring system connection on startup:', err.message);
+      });
+    }
+
+    // Auto-resume escalated conversations — check every 5 minutes
+    if (!process.env.VERCEL) {
+      setInterval(async () => {
+        try {
+          const now = new Date();
+          const toResume = await prisma.chat_conversations.findMany({
+            where: {
+              status: 'human_attention',
+              resume_at: { lte: now }
+            }
+          });
+
+          if (toResume.length === 0) return;
+
+          console.log(`[auto-resume] Resuming ${toResume.length} conversation(s)`);
+
+          await prisma.chat_conversations.updateMany({
+            where: {
+              status: 'human_attention',
+              resume_at: { lte: now }
+            },
+            data: {
+              status: 'active',
+              escalated_at: null,
+              escalated_reason: null,
+              resume_at: null,
+              updated_at: now
+            }
+          });
+
+          // Send greeting to baileys conversations
+          for (const conv of toResume) {
+            if (conv.phone && conv.source === 'baileys' && baileysService) {
+              try {
+                await baileysService.sendMessage(
+                  conv.venue_id,
+                  conv.phone,
+                  '¡Hola! 👋 CabanIA está disponible nuevamente para ayudarte. ¿En qué puedo asistirte?'
+                );
+              } catch (err) {
+                // Connection may not be active
+              }
+            }
+          }
+        } catch (err) {
+          console.error('[auto-resume] Error:', err.message);
+        }
+      }, 5 * 60 * 1000); // Every 5 minutes
+    }
   });
 }
 
