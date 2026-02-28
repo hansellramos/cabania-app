@@ -89,6 +89,10 @@
           />
         </div>
 
+        <div class="cabania-forgot-link">
+          <router-link to="/pages/forgot-password">¿Olvidaste tu contraseña?</router-link>
+        </div>
+
         <button
           type="submit"
           class="cabania-btn cabania-btn--gradient"
@@ -558,5 +562,20 @@ const handlePasskeyLogin = async () => {
 
 @keyframes cabania-spin {
   to { transform: rotate(360deg); }
+}
+
+/* --- Forgot password link --- */
+.cabania-forgot-link {
+  text-align: right;
+  margin: -0.5rem 0 1rem;
+}
+.cabania-forgot-link a {
+  color: var(--cl-text-muted);
+  font-size: 0.8rem;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+.cabania-forgot-link a:hover {
+  color: #10b981;
 }
 </style>

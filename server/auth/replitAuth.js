@@ -482,6 +482,175 @@ async function setupAuth(app) {
       res.status(500).json({ message: 'Error al eliminar passkey' });
     }
   });
+
+  // --- OTP Login Code routes ---
+
+  const { getEmailProvider } = require('../services/email');
+  const { loginCodeEmail, loginCodeWhatsAppMessage } = require('../services/email/templates');
+
+  // Request a login code (public)
+  app.post('/api/auth/request-code', async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ message: 'Email requerido' });
+      }
+
+      const normalizedEmail = email.toLowerCase().trim();
+
+      // Rate limit: check if a code was sent in the last 60 seconds
+      const recentCode = await prisma.auth_verification_codes.findFirst({
+        where: {
+          email: normalizedEmail,
+          created_at: { gte: new Date(Date.now() - 60 * 1000) },
+        },
+        orderBy: { created_at: 'desc' },
+      });
+      if (recentCode) {
+        return res.status(429).json({ message: 'Espera 60 segundos antes de solicitar otro código' });
+      }
+
+      // Generic success response to not reveal if user exists
+      const genericResponse = { success: true, message: 'Si existe una cuenta con ese correo, recibirás un código de acceso' };
+
+      const user = await prisma.users.findFirst({
+        where: { email: normalizedEmail },
+      });
+
+      if (!user || user.is_locked) {
+        return res.json(genericResponse);
+      }
+
+      // Invalidate previous pending codes
+      await prisma.auth_verification_codes.updateMany({
+        where: { email: normalizedEmail, status: 'pending' },
+        data: { status: 'expired' },
+      });
+
+      // Generate 6-digit code
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+
+      await prisma.auth_verification_codes.create({
+        data: {
+          user_id: user.id,
+          email: normalizedEmail,
+          code,
+          type: 'login',
+          expires_at: new Date(Date.now() + 10 * 60 * 1000), // 10 minutes
+        },
+      });
+
+      // Send email
+      const userName = user.display_name || user.first_name || null;
+      const emailProvider = getEmailProvider();
+      const template = loginCodeEmail({ code, userName, expiresMinutes: 10 });
+      const emailResult = await emailProvider.send({
+        to: normalizedEmail,
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+      if (!emailResult.success) {
+        console.error('Failed to send login code email:', emailResult.error);
+      }
+
+      // Best-effort: also send via system WhatsApp if available
+      try {
+        const { getSystemStatus, sendSystemMessage } = require('../services/baileys/systemBaileysService');
+        const systemStatus = await getSystemStatus();
+        if (systemStatus.status === 'connected') {
+          const contact = await prisma.contacts.findFirst({ where: { user: user.id } });
+          const phone = contact?.whatsapp ? String(contact.whatsapp) : null;
+          if (phone) {
+            const waMsg = loginCodeWhatsAppMessage({ code, userName, expiresMinutes: 10 });
+            await sendSystemMessage(phone, waMsg);
+          }
+        }
+      } catch (waErr) {
+        console.warn('WhatsApp login code send failed (non-critical):', waErr.message);
+      }
+
+      res.json(genericResponse);
+    } catch (error) {
+      console.error('Error requesting login code:', error);
+      res.status(500).json({ message: 'Error al solicitar código' });
+    }
+  });
+
+  // Verify a login code and create session (public)
+  app.post('/api/auth/verify-code', async (req, res, next) => {
+    try {
+      const { email, code } = req.body;
+      if (!email || !code) {
+        return res.status(400).json({ message: 'Email y código requeridos' });
+      }
+
+      const normalizedEmail = email.toLowerCase().trim();
+
+      // Find valid pending code
+      const record = await prisma.auth_verification_codes.findFirst({
+        where: {
+          email: normalizedEmail,
+          code,
+          status: 'pending',
+          expires_at: { gte: new Date() },
+        },
+      });
+
+      if (!record) {
+        // Check if there's a pending record to increment attempts
+        const pendingRecord = await prisma.auth_verification_codes.findFirst({
+          where: {
+            email: normalizedEmail,
+            status: 'pending',
+            expires_at: { gte: new Date() },
+          },
+        });
+
+        if (pendingRecord) {
+          const newAttempts = pendingRecord.attempts + 1;
+          if (newAttempts >= pendingRecord.max_attempts) {
+            await prisma.auth_verification_codes.update({
+              where: { id: pendingRecord.id },
+              data: { attempts: newAttempts, status: 'expired' },
+            });
+            return res.status(401).json({ message: 'Demasiados intentos. Solicita un nuevo código.' });
+          }
+          await prisma.auth_verification_codes.update({
+            where: { id: pendingRecord.id },
+            data: { attempts: newAttempts },
+          });
+        }
+
+        return res.status(401).json({ message: 'Código inválido o expirado' });
+      }
+
+      // Mark code as used
+      await prisma.auth_verification_codes.update({
+        where: { id: record.id },
+        data: { status: 'used', used_at: new Date() },
+      });
+
+      // Find user and create session
+      const user = await prisma.users.findUnique({ where: { id: record.user_id } });
+      if (!user || user.is_locked) {
+        return res.status(401).json({ message: 'Cuenta no disponible' });
+      }
+
+      const sessionUser = {
+        claims: { sub: user.id },
+        expires_at: Math.floor(Date.now() / 1000) + SESSION_TTL,
+      };
+
+      req.logIn(sessionUser, (err) => {
+        if (err) return next(err);
+        res.json({ success: true, message: 'OK' });
+      });
+    } catch (error) {
+      console.error('Error verifying login code:', error);
+      res.status(500).json({ message: 'Error al verificar código' });
+    }
+  });
 }
 
 const isAuthenticated = async (req, res, next) => {
