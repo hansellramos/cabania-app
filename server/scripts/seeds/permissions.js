@@ -37,6 +37,14 @@ const data = [
   { code: 'venues:edit', name: 'Editar venues', description: 'Permite editar venues' },
   { code: 'venues:view', name: 'Ver venues', description: 'Permite ver venues de organizaciones asignadas' },
   { code: 'ai-usage:view', name: 'Ver uso de IA', description: 'Permite ver estadísticas y registros de uso de IA' },
+  // Permisos :own — solo aplican a datos creados por el usuario
+  { code: 'accommodations:view:own', name: 'Ver reservas propias', description: 'Ve ocupación general sin detalles; solo detalles de reservas propias' },
+  { code: 'accommodations:edit:own', name: 'Editar reservas propias', description: 'Solo puede editar reservas que creó' },
+  { code: 'accommodations:delete:own', name: 'Eliminar reservas propias', description: 'Solo puede eliminar reservas que creó' },
+  { code: 'contacts:view:own', name: 'Ver contactos propios', description: 'Solo contactos vinculados a sus reservas' },
+  { code: 'payments:view:own', name: 'Ver pagos propios', description: 'Solo pagos de sus reservas' },
+  { code: 'payments:verify:own', name: 'Verificar pagos propios', description: 'Verificar pagos solo de sus reservas' },
+  { code: 'deposits:view:own', name: 'Ver depósitos propios', description: 'Solo depósitos de sus reservas' },
 ];
 
 async function seed(prisma) {
