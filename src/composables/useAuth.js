@@ -209,6 +209,48 @@ async function deletePasskey(id) {
   }
 }
 
+async function requestLoginCode(email) {
+  try {
+    error.value = null;
+    const response = await fetch('/api/auth/request-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || 'Error al solicitar código');
+    }
+    return true;
+  } catch (err) {
+    error.value = err.message;
+    return false;
+  }
+}
+
+async function verifyLoginCode(email, code) {
+  try {
+    error.value = null;
+    const response = await fetch('/api/auth/verify-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ email, code }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.message || 'Código inválido');
+    }
+    resetAuthState();
+    await fetchUser();
+    return true;
+  } catch (err) {
+    error.value = err.message;
+    return false;
+  }
+}
+
 export function useAuth() {
   const isAuthenticated = computed(() => !!user.value);
 
@@ -231,6 +273,8 @@ export function useAuth() {
     registerPasskey,
     getPasskeys,
     deletePasskey,
+    requestLoginCode,
+    verifyLoginCode,
   };
 }
 
