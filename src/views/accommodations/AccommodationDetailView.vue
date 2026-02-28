@@ -17,137 +17,170 @@
           </div>
         </CCardHeader>
         <CCardBody v-if="accommodation">
-          <CRow>
-            <CCol :md="6">
-              <h6 class="text-muted">Cliente</h6>
-              <p class="fs-5">{{ accommodation.customer_data?.fullname || accommodation.customer_data?.user_data?.email || '—' }}</p>
-            </CCol>
-            <CCol :md="6">
-              <h6 class="text-muted">Cabaña</h6>
-              <p class="fs-5">
-                <router-link 
-                  v-if="accommodation.venue_data?.id" 
-                  :to="`/business/venues/${accommodation.venue_data.id}`"
-                  class="text-decoration-none"
-                >
-                  {{ accommodation.venue_data?.name || '—' }}
-                </router-link>
-                <span v-else>{{ accommodation.venue_data?.name || '—' }}</span>
-              </p>
-            </CCol>
-          </CRow>
-          <CRow class="mt-3">
-            <CCol :md="6">
-              <h6 class="text-muted">Organización</h6>
-              <p>{{ accommodation.venue_data?.organization_data?.name || '—' }}</p>
-            </CCol>
-            <CCol :md="6">
-              <h6 class="text-muted">Fecha</h6>
-              <p>{{ formatDate(accommodation.date) }}</p>
-            </CCol>
-          </CRow>
-          <CRow class="mt-3">
-            <CCol :md="6">
-              <h6 class="text-muted">Check In</h6>
-              <p>{{ formatTime(accommodation.time) }}</p>
-            </CCol>
-            <CCol :md="6">
-              <h6 class="text-muted">Duración</h6>
-              <p>{{ formatDuration(accommodation.duration) }}</p>
-            </CCol>
-          </CRow>
-          <CRow class="mt-3">
-            <CCol :md="6">
-              <h6 class="text-muted">Check Out</h6>
-              <p>{{ calcCheckout(accommodation.time, accommodation.duration, accommodation.date) }}</p>
-            </CCol>
-            <CCol :md="6">
-              <h6 class="text-muted">Creado</h6>
-              <p>{{ new Date(accommodation.created_at).toLocaleString('es-CO') }}</p>
-            </CCol>
-          </CRow>
-          <CRow class="mt-3">
-            <CCol :md="4">
-              <h6 class="text-muted">Total Asistentes</h6>
-              <p class="fs-4 fw-bold">{{ (accommodation.adults || 0) + (accommodation.children || 0) }}</p>
-            </CCol>
-            <CCol :md="4">
-              <h6 class="text-muted">Adultos</h6>
-              <p class="fs-5">{{ accommodation.adults || 0 }}</p>
-            </CCol>
-            <CCol :md="4">
-              <h6 class="text-muted">Niños</h6>
-              <p class="fs-5">{{ accommodation.children || 0 }}</p>
-            </CCol>
-          </CRow>
-          <hr />
-          <CRow class="mt-3">
-            <CCol :xs="12">
-              <h5 class="mb-3">Resumen Financiero</h5>
-              <div class="row g-3">
-                <div class="col-md-4">
-                  <div class="p-3 border rounded text-center">
-                    <h6 class="text-muted mb-2">Valor Alquilado</h6>
-                    <p class="fs-4 fw-bold text-primary mb-0">{{ formatCurrency(accommodation.agreed_price || accommodation.calculated_price || 0) }}</p>
-                    <small v-if="hasDiscount" class="text-success">
-                      <s class="text-muted">${{ formatNumber(accommodation.calculated_price) }}</s>
-                      (-{{ discountPercent }}%)
-                    </small>
+          <CNav variant="tabs" class="mb-3">
+            <CNavItem>
+              <CNavLink href="javascript:void(0)" :active="activeTab === 0" @click="activeTab = 0">
+                Resumen
+              </CNavLink>
+            </CNavItem>
+            <CNavItem>
+              <CNavLink href="javascript:void(0)" :active="activeTab === 1" @click="activeTab = 1">
+                Pagos
+              </CNavLink>
+            </CNavItem>
+            <CNavItem>
+              <CNavLink href="javascript:void(0)" :active="activeTab === 2" @click="activeTab = 2">
+                Depósito
+              </CNavLink>
+            </CNavItem>
+            <CNavItem>
+              <CNavLink href="javascript:void(0)" :active="activeTab === 3" @click="activeTab = 3">
+                Comisiones y Gastos
+              </CNavLink>
+            </CNavItem>
+            <CNavItem>
+              <CNavLink href="javascript:void(0)" :active="activeTab === 4" @click="activeTab = 4">
+                Mensajes
+              </CNavLink>
+            </CNavItem>
+          </CNav>
+
+          <CTabContent>
+            <!-- Tab Resumen -->
+            <CTabPane :visible="activeTab === 0">
+              <CRow>
+                <CCol :md="6">
+                  <h6 class="text-muted">Cliente</h6>
+                  <p class="fs-5">{{ accommodation.customer_data?.fullname || accommodation.customer_data?.user_data?.email || '—' }}</p>
+                </CCol>
+                <CCol :md="6">
+                  <h6 class="text-muted">Cabaña</h6>
+                  <p class="fs-5">
+                    <router-link
+                      v-if="accommodation.venue_data?.id"
+                      :to="`/business/venues/${accommodation.venue_data.id}`"
+                      class="text-decoration-none"
+                    >
+                      {{ accommodation.venue_data?.name || '—' }}
+                    </router-link>
+                    <span v-else>{{ accommodation.venue_data?.name || '—' }}</span>
+                  </p>
+                </CCol>
+              </CRow>
+              <CRow class="mt-3">
+                <CCol :md="6">
+                  <h6 class="text-muted">Organización</h6>
+                  <p>{{ accommodation.venue_data?.organization_data?.name || '—' }}</p>
+                </CCol>
+                <CCol :md="6">
+                  <h6 class="text-muted">Fecha</h6>
+                  <p>{{ formatDate(accommodation.date) }}</p>
+                </CCol>
+              </CRow>
+              <CRow class="mt-3">
+                <CCol :md="6">
+                  <h6 class="text-muted">Check In</h6>
+                  <p>{{ formatTime(accommodation.time) }}</p>
+                </CCol>
+                <CCol :md="6">
+                  <h6 class="text-muted">Duración</h6>
+                  <p>{{ formatDuration(accommodation.duration) }}</p>
+                </CCol>
+              </CRow>
+              <CRow class="mt-3">
+                <CCol :md="6">
+                  <h6 class="text-muted">Check Out</h6>
+                  <p>{{ calcCheckout(accommodation.time, accommodation.duration, accommodation.date) }}</p>
+                </CCol>
+                <CCol :md="6">
+                  <h6 class="text-muted">Creado</h6>
+                  <p>{{ new Date(accommodation.created_at).toLocaleString('es-CO') }}</p>
+                </CCol>
+              </CRow>
+              <CRow class="mt-3">
+                <CCol :md="4">
+                  <h6 class="text-muted">Total Asistentes</h6>
+                  <p class="fs-4 fw-bold">{{ (accommodation.adults || 0) + (accommodation.children || 0) }}</p>
+                </CCol>
+                <CCol :md="4">
+                  <h6 class="text-muted">Adultos</h6>
+                  <p class="fs-5">{{ accommodation.adults || 0 }}</p>
+                </CCol>
+                <CCol :md="4">
+                  <h6 class="text-muted">Niños</h6>
+                  <p class="fs-5">{{ accommodation.children || 0 }}</p>
+                </CCol>
+              </CRow>
+              <hr />
+              <CRow class="mt-3">
+                <CCol :xs="12">
+                  <h5 class="mb-3">Resumen Financiero</h5>
+                  <div class="row g-3">
+                    <div class="col-md-4">
+                      <div class="p-3 border rounded text-center">
+                        <h6 class="text-muted mb-2">Valor Alquilado</h6>
+                        <p class="fs-4 fw-bold text-primary mb-0">{{ formatCurrency(accommodation.agreed_price || accommodation.calculated_price || 0) }}</p>
+                        <small v-if="hasDiscount" class="text-success">
+                          <s class="text-muted">${{ formatNumber(accommodation.calculated_price) }}</s>
+                          (-{{ discountPercent }}%)
+                        </small>
+                      </div>
+                    </div>
+                    <div class="col-md-4">
+                      <div class="p-3 border rounded text-center">
+                        <h6 class="text-muted mb-2">Total Abonado</h6>
+                        <p class="fs-4 fw-bold text-success mb-0">{{ formatCurrency(totalPaid) }}</p>
+                      </div>
+                    </div>
+                    <div class="col-md-4">
+                      <div class="p-3 border rounded text-center" :class="{ 'border-danger': pendingBalance > 0, 'border-success': pendingBalance <= 0 }">
+                        <h6 class="text-muted mb-2">Saldo Pendiente</h6>
+                        <p class="fs-4 fw-bold mb-0" :class="{ 'text-danger': pendingBalance > 0, 'text-success': pendingBalance <= 0 }">
+                          {{ formatCurrency(pendingBalance) }}
+                        </p>
+                        <small v-if="pendingBalance <= 0" class="text-success">Pagado</small>
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div class="col-md-4">
-                  <div class="p-3 border rounded text-center">
-                    <h6 class="text-muted mb-2">Total Abonado</h6>
-                    <p class="fs-4 fw-bold text-success mb-0">{{ formatCurrency(totalPaid) }}</p>
+                  <div class="row g-3 mt-2">
+                    <div class="col-md-6">
+                      <div class="p-3 border rounded text-center">
+                        <h6 class="text-muted mb-2">Total Egresos</h6>
+                        <p class="fs-4 fw-bold text-warning mb-0">{{ formatCurrency(totalExpenses) }}</p>
+                      </div>
+                    </div>
+                    <div class="col-md-6">
+                      <div class="p-3 border rounded text-center" :class="{ 'border-success': profit >= 0, 'border-danger': profit < 0 }">
+                        <h6 class="text-muted mb-2">Ganancia</h6>
+                        <p class="fs-4 fw-bold mb-0" :class="{ 'text-success': profit >= 0, 'text-danger': profit < 0 }">
+                          {{ formatCurrency(profit) }}
+                        </p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-                <div class="col-md-4">
-                  <div class="p-3 border rounded text-center" :class="{ 'border-danger': pendingBalance > 0, 'border-success': pendingBalance <= 0 }">
-                    <h6 class="text-muted mb-2">Saldo Pendiente</h6>
-                    <p class="fs-4 fw-bold mb-0" :class="{ 'text-danger': pendingBalance > 0, 'text-success': pendingBalance <= 0 }">
-                      {{ formatCurrency(pendingBalance) }}
-                    </p>
-                    <small v-if="pendingBalance <= 0" class="text-success">Pagado</small>
-                  </div>
-                </div>
-              </div>
-              <div class="row g-3 mt-2">
-                <div class="col-md-6">
-                  <div class="p-3 border rounded text-center">
-                    <h6 class="text-muted mb-2">Total Egresos</h6>
-                    <p class="fs-4 fw-bold text-warning mb-0">{{ formatCurrency(totalExpenses) }}</p>
-                  </div>
-                </div>
-                <div class="col-md-6">
-                  <div class="p-3 border rounded text-center" :class="{ 'border-success': profit >= 0, 'border-danger': profit < 0 }">
-                    <h6 class="text-muted mb-2">Ganancia</h6>
-                    <p class="fs-4 fw-bold mb-0" :class="{ 'text-success': profit >= 0, 'text-danger': profit < 0 }">
-                      {{ formatCurrency(profit) }}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </CCol>
-          </CRow>
-          <hr />
-          <CRow class="mt-3" v-if="accommodation.customer_data">
-            <CCol :xs="12">
-              <h6 class="text-muted">Contacto del Cliente</h6>
-              <p v-if="accommodation.customer_data.whatsapp">
-                <a :href="'https://wa.me/57' + accommodation.customer_data.whatsapp" target="_blank" class="text-success text-decoration-none">
-                  <CIcon icon="cib-whatsapp" /> {{ accommodation.customer_data.whatsapp }}
-                </a>
-              </p>
-              <p v-if="accommodation.customer_data.user_data?.email">
-                <a :href="'mailto:' + accommodation.customer_data.user_data.email" class="text-primary text-decoration-none">
-                  <CIcon icon="cil-envelope-closed" /> {{ accommodation.customer_data.user_data.email }}
-                </a>
-              </p>
-            </CCol>
-          </CRow>
-          <hr />
-          <CRow class="mt-3">
-            <CCol :xs="12">
+                </CCol>
+              </CRow>
+              <hr />
+              <CRow class="mt-3" v-if="accommodation.customer_data">
+                <CCol :xs="12">
+                  <h6 class="text-muted">Contacto del Cliente</h6>
+                  <p v-if="accommodation.customer_data.whatsapp">
+                    <a :href="'https://wa.me/57' + accommodation.customer_data.whatsapp" target="_blank" class="text-success text-decoration-none">
+                      <CIcon icon="cib-whatsapp" /> {{ accommodation.customer_data.whatsapp }}
+                    </a>
+                  </p>
+                  <p v-if="accommodation.customer_data.user_data?.email">
+                    <a :href="'mailto:' + accommodation.customer_data.user_data.email" class="text-primary text-decoration-none">
+                      <CIcon icon="cil-envelope-closed" /> {{ accommodation.customer_data.user_data.email }}
+                    </a>
+                  </p>
+                </CCol>
+              </CRow>
+
+            </CTabPane>
+
+            <!-- Tab Pagos -->
+            <CTabPane :visible="activeTab === 1">
               <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0">Pagos</h5>
                 <CButton color="primary" size="sm" @click="$router.push(`/business/payments/new?accommodation_id=${route.params.id}`)">
@@ -191,23 +224,22 @@
               <div v-if="payments.length > 0" class="mt-2 p-2 border rounded">
                 <strong>Total pagado:</strong> {{ formatCurrency(totalPaid) }}
               </div>
-            </CCol>
-          </CRow>
-          <hr />
-          <CRow class="mt-3">
-            <CCol :xs="12">
+            </CTabPane>
+
+            <!-- Tab Depósito -->
+            <CTabPane :visible="activeTab === 2">
               <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0">Depósito de Garantía</h5>
-                <CButton 
-                  v-if="!deposit" 
-                  color="primary" 
-                  size="sm" 
+                <CButton
+                  v-if="!deposit"
+                  color="primary"
+                  size="sm"
                   @click="$router.push(`/business/deposits/new?accommodation_id=${route.params.id}`)"
                 >
                   Registrar Depósito
                 </CButton>
               </div>
-              
+
               <div v-if="deposit" class="border rounded p-3">
                 <CRow>
                   <CCol :md="3">
@@ -222,8 +254,8 @@
                   </CCol>
                   <CCol :md="3">
                     <h6 class="text-muted mb-1">Estado</h6>
-                    <CBadge 
-                      :color="depositStatusColor(deposit.status)" 
+                    <CBadge
+                      :color="depositStatusColor(deposit.status)"
                       class="px-3 py-2"
                     >
                       {{ depositStatusLabel(deposit.status) }}
@@ -240,18 +272,18 @@
                       por {{ deposit.verified_by_user.name || deposit.verified_by_user.email }}
                     </div>
                     <div class="mt-2">
-                      <CButton 
+                      <CButton
                         v-if="!deposit.verified"
-                        color="success" 
-                        size="sm" 
+                        color="success"
+                        size="sm"
                         @click="verifyDeposit"
                       >
                         Verificar
                       </CButton>
-                      <CButton 
+                      <CButton
                         v-else
-                        color="warning" 
-                        size="sm" 
+                        color="warning"
+                        size="sm"
                         variant="outline"
                         @click="unverifyDeposit"
                       >
@@ -264,7 +296,7 @@
                     <p class="mb-0">{{ formatPaymentDate(deposit.payment_date) }}</p>
                   </CCol>
                 </CRow>
-                
+
                 <CRow class="mt-3" v-if="deposit.payment_method || deposit.reference">
                   <CCol :md="6" v-if="deposit.payment_method">
                     <h6 class="text-muted mb-1">Método de Pago</h6>
@@ -275,7 +307,7 @@
                     <p class="mb-0">{{ deposit.reference }}</p>
                   </CCol>
                 </CRow>
-                
+
                 <CRow class="mt-3" v-if="deposit.status === 'refunded'">
                   <CCol :md="4">
                     <h6 class="text-muted mb-1">Monto Devuelto</h6>
@@ -290,7 +322,7 @@
                     <p class="mb-0">{{ deposit.refund_reference }}</p>
                   </CCol>
                 </CRow>
-                
+
                 <CRow class="mt-3" v-if="deposit.status === 'claimed'">
                   <CCol :md="4">
                     <h6 class="text-muted mb-1">Monto Retenido</h6>
@@ -301,7 +333,7 @@
                     <p class="mb-0">{{ deposit.damage_notes }}</p>
                   </CCol>
                 </CRow>
-                
+
                 <div class="mt-3 d-flex gap-2" v-if="deposit.status === 'pending'">
                   <CButton color="success" size="sm" @click="openRefundModal">
                     Liberar Depósito
@@ -318,13 +350,13 @@
                     Eliminar Depósito
                   </CButton>
                 </div>
-                
+
                 <div class="mt-3" v-if="deposit.evidence && deposit.evidence.length > 0">
                   <h6 class="text-muted mb-2">Comprobantes</h6>
                   <div class="d-flex gap-2 flex-wrap">
-                    <div 
-                      v-for="(ev, idx) in deposit.evidence" 
-                      :key="idx" 
+                    <div
+                      v-for="(ev, idx) in deposit.evidence"
+                      :key="idx"
                       class="border rounded p-1 cursor-pointer"
                       style="cursor: pointer;"
                       @click="openEvidenceModal(ev)"
@@ -335,15 +367,14 @@
                   </div>
                 </div>
               </div>
-              
+
               <div v-else class="text-muted text-center py-3">
                 No hay depósito registrado para este hospedaje
               </div>
-            </CCol>
-          </CRow>
-          <hr />
-          <CRow class="mt-3">
-            <CCol :xs="12">
+            </CTabPane>
+
+            <!-- Tab Comisiones y Gastos -->
+            <CTabPane :visible="activeTab === 3">
               <CommissionCalculator
                 :accommodation-id="route.params.id"
                 :accommodation="accommodation"
@@ -388,20 +419,36 @@
               <div v-if="expenses.length > 0" class="mt-2 p-2 border rounded">
                 <strong>Total egresos:</strong> {{ formatCurrency(totalExpenses) }}
               </div>
-            </CCol>
-          </CRow>
+            </CTabPane>
+
+            <!-- Tab Mensajes -->
+            <CTabPane :visible="activeTab === 4">
+              <MessageSuggestions :accommodation="accommodation" />
+            </CTabPane>
+          </CTabContent>
+
+          <!-- Botones duplicados al final del contenido -->
+          <div class="mt-4 d-flex gap-2 flex-wrap justify-content-end">
+            <CButton color="warning" size="sm" @click="$router.push(`/business/accommodations/${route.params.id}/edit`)">
+              Editar
+            </CButton>
+            <CButton color="danger" size="sm" @click="onDelete">
+              Eliminar
+            </CButton>
+            <CButton color="secondary" size="sm" variant="outline" @click="$router.push('/business/accommodations')">
+              Volver
+            </CButton>
+          </div>
         </CCardBody>
         <CCardBody v-else>
           <p class="text-muted">Cargando...</p>
         </CCardBody>
       </CCard>
-
-      <MessageSuggestions v-if="accommodation" :accommodation="accommodation" />
     </CCol>
   </CRow>
 
-  <CModal 
-    :visible="showRefundModal" 
+  <CModal
+    :visible="showRefundModal"
     @close="showRefundModal = false"
     backdrop="static"
   >
@@ -414,9 +461,9 @@
       </div>
       <div class="mb-3">
         <label class="form-label">Monto a Devolver *</label>
-        <CFormInput 
-          type="number" 
-          v-model="refundForm.refund_amount" 
+        <CFormInput
+          type="number"
+          v-model="refundForm.refund_amount"
           :max="deposit?.amount"
           required
         />
@@ -454,8 +501,8 @@
     </CModalFooter>
   </CModal>
 
-  <CModal 
-    :visible="showClaimModal" 
+  <CModal
+    :visible="showClaimModal"
     @close="showClaimModal = false"
     backdrop="static"
   >
@@ -468,9 +515,9 @@
       </div>
       <div class="mb-3">
         <label class="form-label">Monto a Retener *</label>
-        <CFormInput 
-          type="number" 
-          v-model="claimForm.damage_amount" 
+        <CFormInput
+          type="number"
+          v-model="claimForm.damage_amount"
           :max="deposit?.amount"
           required
         />
@@ -478,8 +525,8 @@
       </div>
       <div class="mb-3">
         <label class="form-label">Motivo de la Retención *</label>
-        <CFormTextarea 
-          v-model="claimForm.damage_notes" 
+        <CFormTextarea
+          v-model="claimForm.damage_notes"
           rows="3"
           placeholder="Describa los daños o motivo de la retención"
           required
@@ -510,8 +557,8 @@
     </CModalFooter>
   </CModal>
 
-  <CModal 
-    :visible="showEvidenceModal" 
+  <CModal
+    :visible="showEvidenceModal"
     @close="showEvidenceModal = false"
     size="lg"
   >
@@ -519,19 +566,19 @@
       <CModalTitle>{{ selectedEvidence?.type === 'refund' ? 'Comprobante de Devolución' : selectedEvidence?.type === 'damage' ? 'Evidencia de Daño' : 'Comprobante' }}</CModalTitle>
     </CModalHeader>
     <CModalBody class="text-center">
-      <img 
-        v-if="selectedEvidence" 
-        :src="selectedEvidence.image_url" 
-        class="img-fluid rounded" 
+      <img
+        v-if="selectedEvidence"
+        :src="selectedEvidence.image_url"
+        class="img-fluid rounded"
         style="max-height: 70vh;"
       />
       <p v-if="selectedEvidence?.description" class="mt-3 text-muted">{{ selectedEvidence.description }}</p>
     </CModalBody>
   </CModal>
 
-  <CModal 
-    :visible="showReceiptModal" 
-    @close="showReceiptModal = false" 
+  <CModal
+    :visible="showReceiptModal"
+    @close="showReceiptModal = false"
     size="xl"
     :keyboard="true"
     backdrop="true"
@@ -591,9 +638,9 @@
     </CModalBody>
     <CModalFooter class="justify-content-between">
       <div>
-        <CButton 
-          v-if="selectedPayment && !selectedPayment.verified" 
-          color="warning" 
+        <CButton
+          v-if="selectedPayment && !selectedPayment.verified"
+          color="warning"
           variant="outline"
           class="me-2"
           @click="editPayment"
@@ -601,8 +648,8 @@
           <CIcon name="cil-pencil" class="me-1" />
           Editar
         </CButton>
-        <CButton 
-          v-if="selectedPayment && !selectedPayment.verified" 
+        <CButton
+          v-if="selectedPayment && !selectedPayment.verified"
           color="success"
           :disabled="verifying"
           @click="verifyPayment"
@@ -628,6 +675,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
+import { CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
 import MessageSuggestions from '@/components/accommodations/MessageSuggestions.vue'
 import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
 import { deleteAccommodation } from '@/services/accommodationService'
@@ -641,6 +689,7 @@ const selectedReceiptUrl = ref('')
 const selectedPayment = ref(null)
 const receiptLoadError = ref(false)
 const verifying = ref(false)
+const activeTab = ref(0)
 
 const expenses = ref([])
 const deposit = ref(null)
@@ -692,7 +741,7 @@ function editPayment() {
 
 async function verifyPayment() {
   if (!selectedPayment.value) return
-  
+
   verifying.value = true
   try {
     const res = await fetch(`/api/payments/${selectedPayment.value.id}/verify`, {
@@ -701,7 +750,7 @@ async function verifyPayment() {
       credentials: 'include',
       body: JSON.stringify({ verified: true })
     })
-    
+
     if (res.ok) {
       const updated = await res.json()
       selectedPayment.value = updated
@@ -723,7 +772,7 @@ async function verifyPayment() {
 
 async function verifyDeposit() {
   if (!deposit.value) return
-  
+
   try {
     const res = await fetch(`/api/deposits/${deposit.value.id}/verify`, {
       method: 'PUT',
@@ -731,7 +780,7 @@ async function verifyDeposit() {
       credentials: 'include',
       body: JSON.stringify({ verified: true })
     })
-    
+
     if (res.ok) {
       await loadDeposit()
     } else {
@@ -746,7 +795,7 @@ async function verifyDeposit() {
 
 async function unverifyDeposit() {
   if (!deposit.value) return
-  
+
   try {
     const res = await fetch(`/api/deposits/${deposit.value.id}/verify`, {
       method: 'PUT',
@@ -754,7 +803,7 @@ async function unverifyDeposit() {
       credentials: 'include',
       body: JSON.stringify({ verified: false })
     })
-    
+
     if (res.ok) {
       await loadDeposit()
     } else {
@@ -871,12 +920,12 @@ function formatDuration(seconds) {
 
 function calcCheckout(timeStr, duration, dateStr) {
   if (!timeStr || !duration || !dateStr) return '—'
-  
+
   const dateObj = new Date(dateStr)
   const year = dateObj.getUTCFullYear()
   const month = dateObj.getUTCMonth()
   const day = dateObj.getUTCDate()
-  
+
   let hours = 0, minutes = 0
   if (timeStr.includes('T')) {
     const timeDate = new Date(timeStr)
@@ -887,11 +936,11 @@ function calcCheckout(timeStr, duration, dateStr) {
     hours = h
     minutes = m
   }
-  
+
   const startMs = Date.UTC(year, month, day, hours, minutes)
   const endMs = startMs + Number(duration) * 1000
   const end = new Date(endMs)
-  
+
   return end.toLocaleDateString('es-CO', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }) +
     ' ' + String(end.getUTCHours()).padStart(2, '0') + ':' + String(end.getUTCMinutes()).padStart(2, '0')
 }
@@ -1005,17 +1054,17 @@ async function processRefund() {
     alert('Por favor complete los campos requeridos')
     return
   }
-  
+
   processingRefund.value = true
   try {
     const existingEvidence = deposit.value?.evidence || []
     const newEvidence = [...existingEvidence]
-    
+
     if (refundFile.value) {
       const ev = await uploadEvidence(refundFile.value, 'refund')
       newEvidence.push(ev)
     }
-    
+
     const res = await fetch(`/api/deposits/${deposit.value.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -1028,7 +1077,7 @@ async function processRefund() {
         evidence: newEvidence
       })
     })
-    
+
     if (res.ok) {
       showRefundModal.value = false
       await loadDeposit()
@@ -1049,17 +1098,17 @@ async function processClaim() {
     alert('Por favor complete los campos requeridos')
     return
   }
-  
+
   processingClaim.value = true
   try {
     const existingEvidence = deposit.value?.evidence || []
     const newEvidence = [...existingEvidence]
-    
+
     for (const file of claimFiles.value) {
       const ev = await uploadEvidence(file, 'damage')
       newEvidence.push(ev)
     }
-    
+
     const res = await fetch(`/api/deposits/${deposit.value.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -1071,7 +1120,7 @@ async function processClaim() {
         evidence: newEvidence
       })
     })
-    
+
     if (res.ok) {
       showClaimModal.value = false
       await loadDeposit()
