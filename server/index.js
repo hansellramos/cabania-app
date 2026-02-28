@@ -798,8 +798,21 @@ async function startServer() {
         }
       });
 
-      // TODO: Send code via WhatsApp (future integration)
-      const response = { success: true, message: 'Código de verificación generado' };
+      // Send code via system WhatsApp (Baileys)
+      let codeSent = false;
+      try {
+        const { getSystemStatus, sendSystemMessage } = require('./services/baileys/systemBaileysService');
+        const systemStatus = await getSystemStatus();
+        if (systemStatus.status === 'connected') {
+          const waMsg = `🔐 *CabanIA* — Código de verificación\n\nTu código es: *${code}*\n\nExpira en 10 minutos. No compartas este código.`;
+          const sent = await sendSystemMessage(phone, waMsg);
+          if (sent) codeSent = true;
+        }
+      } catch (waErr) {
+        console.warn('[chat-verify] WhatsApp send failed:', waErr.message);
+      }
+
+      const response = { success: true, message: 'Código de verificación enviado', codeSent };
       if (process.env.NODE_ENV !== 'production') {
         response.code = code; // Dev only
       }
@@ -8545,6 +8558,22 @@ REGLAS:
   const bcryptInv = require('bcryptjs');
   const crypto = require('crypto');
 
+  // Helper: send WhatsApp via Baileys first, fallback to Twilio
+  async function sendInvitationWhatsApp(phone, body) {
+    try {
+      const { getSystemStatus, sendSystemMessage } = require('./services/baileys/systemBaileysService');
+      const systemStatus = await getSystemStatus();
+      if (systemStatus.status === 'connected') {
+        const cleanPhone = phone.replace('whatsapp:', '');
+        const sent = await sendSystemMessage(cleanPhone, body);
+        if (sent) return { success: true, channel: 'baileys' };
+      }
+    } catch (err) {
+      console.warn('[invitation] Baileys send failed, trying Twilio:', err.message);
+    }
+    return sendWhatsApp({ to: phone, body });
+  }
+
   // List invitations
   app.get('/api/invitations', isAuthenticated, async (req, res) => {
     try {
@@ -8644,7 +8673,7 @@ REGLAS:
           organizationName: orgName,
           token: invitation.token,
         });
-        const result = await sendWhatsApp({ to: phone, body });
+        const result = await sendInvitationWhatsApp(phone, body);
         if (!result.success) {
           console.error('Failed to send WhatsApp invitation:', result.error);
         }
@@ -8704,7 +8733,7 @@ REGLAS:
           organizationName: orgName,
           token: invitation.token,
         });
-        await sendWhatsApp({ to: invitation.phone, body });
+        await sendInvitationWhatsApp(invitation.phone, body);
       }
 
       res.json(updated);

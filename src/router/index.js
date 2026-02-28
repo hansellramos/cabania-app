@@ -661,6 +661,16 @@ const routes = [
         name: 'Register',
         component: () => import('@/views/pages/Register'),
       },
+      {
+        path: 'forgot-password',
+        name: 'ForgotPassword',
+        component: () => import('@/views/pages/ForgotPassword'),
+      },
+      {
+        path: 'code-login',
+        name: 'CodeLogin',
+        component: () => import('@/views/pages/CodeLogin'),
+      },
     ],
   },
 ]
@@ -678,7 +688,7 @@ const router = createRouter({
 const { posthog } = usePostHog()
 
 // Public routes that don't require authentication
-const publicRoutes = ['/availability', '/p/', '/pages/login', '/pages/register', '/pages/404', '/pages/500', '/payment-result', '/onboarding']
+const publicRoutes = ['/availability', '/p/', '/pages/login', '/pages/register', '/pages/forgot-password', '/pages/code-login', '/pages/404', '/pages/500', '/payment-result', '/onboarding']
 
 // Routes that don't require subscription
 const noSubscriptionRoutes = ['/no-subscription', '/profile']
