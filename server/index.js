@@ -6928,11 +6928,872 @@ REGLAS:
 
   // ==================== Chat API ====================
 
+  // Reusable chat processing function — called by POST /api/chat/:venue_id and reprocess endpoint
+  async function processChat({ venue_id, userMessage, conversation, source, media_url, media_type, contact_type, contact_value, userId }) {
+    // Get venue with all relevant info
+    const venue = await prisma.venues.findUnique({
+      where: { id: venue_id }
+    });
+
+    if (!venue) {
+      throw Object.assign(new Error('Cabaña no encontrada'), { statusCode: 404 });
+    }
+
+    // Get venue plans
+    const plans = await prisma.venue_plans.findMany({
+      where: { venue_id, is_active: true }
+    });
+
+    // Get templates for this venue (including system templates)
+    const templates = await prisma.message_templates.findMany({
+      where: {
+        is_active: true,
+        OR: [
+          { venue_id },
+          { venue_id: null, is_system: true }
+        ]
+      }
+    });
+
+    // Get configured model for customer chat from ai_settings
+    const chatSetting = await prisma.ai_settings.findUnique({
+      where: { setting_key: 'customer_chat' }
+    });
+
+    const chatProviderCode = chatSetting?.provider_code || 'anthropic_claude';
+    const chatModelConfig = llmService.getModelConfig(chatProviderCode);
+
+    if (!chatModelConfig) {
+      throw Object.assign(new Error('Modelo de chat no configurado'), { statusCode: 400 });
+    }
+
+    const chatApiKey = llmService.getApiKeyForProvider(chatProviderCode);
+    if (!chatApiKey) {
+      throw Object.assign(new Error(`API key no configurada (${chatModelConfig.env_key})`), { statusCode: 400 });
+    }
+
+    // Auto-detect payment receipt: if image + estimate with payment_status 'qr_sent'
+    let receiptContext = null;
+    if (media_url && media_type === 'image') {
+      const pendingEstimate = await prisma.estimates.findFirst({
+        where: {
+          conversation_id: conversation.id,
+          payment_status: 'qr_sent'
+        },
+        orderBy: { created_at: 'desc' }
+      });
+      if (pendingEstimate) {
+        // Update estimate with receipt
+        await prisma.estimates.update({
+          where: { id: pendingEstimate.id },
+          data: {
+            payment_status: 'receipt_received',
+            receipt_url: media_url,
+            updated_at: new Date()
+          }
+        });
+
+        // Create payment record
+        const paymentMethodRecord = pendingEstimate.payment_method_id
+          ? await prisma.venue_payment_methods.findUnique({ where: { id: pendingEstimate.payment_method_id } })
+          : null;
+
+        const payment = await prisma.payments.create({
+          data: {
+            amount: pendingEstimate.agreed_price || pendingEstimate.calculated_price,
+            payment_method: paymentMethodRecord?.label || 'WhatsApp',
+            receipt_url: media_url,
+            verified: false,
+            created_by: 'chat_ai',
+            type: 'accommodation'
+          }
+        });
+
+        await prisma.estimates.update({
+          where: { id: pendingEstimate.id },
+          data: { payment_id: payment.id, updated_at: new Date() }
+        });
+
+        // Notify venue owner via system WhatsApp
+        const waConn = await prisma.whatsapp_connections.findUnique({ where: { venue_id } });
+        const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
+        if (notificationPhone && whatsappClient.isAvailable()) {
+          try {
+            const clientName = conversation.name || 'Cliente';
+            const clientPhone = conversation.phone || 'desconocido';
+            const amount = pendingEstimate.agreed_price || pendingEstimate.calculated_price || 'N/A';
+            const methodName = paymentMethodRecord?.label || 'N/A';
+            const notifMsg = `💰 *Comprobante de Pago Recibido - ${venue.name || 'Venue'}*\n\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Monto:* $${amount}\n*Método:* ${methodName}\n\n🔗 Verifica el pago en el sistema para confirmar la reserva.`;
+            await whatsappClient.sendSystemMessage(notificationPhone, notifMsg);
+          } catch (notifErr) {
+            console.error('[payment] Failed to send receipt notification:', notifErr.message);
+          }
+        }
+
+        receiptContext = '[El cliente envió un comprobante de pago. El sistema ya lo registró automáticamente. Confirma al cliente que recibiste su comprobante y que será verificado por el equipo pronto.]';
+      }
+    }
+
+    // Build context and messages
+    const context = llmService.buildVenueContext(venue, templates, plans);
+    const contactInfo = (contact_type && contact_value) ? { type: contact_type, value: contact_value } : null;
+    const systemPrompt = llmService.buildSystemPrompt(venue, context, contactInfo);
+
+    const llmMessages = [
+      { role: 'system', content: systemPrompt }
+    ];
+
+    // Add conversation history
+    for (const msg of conversation.messages) {
+      llmMessages.push({ role: msg.role, content: msg.content });
+    }
+
+    // Add current message (with receipt context if applicable)
+    const finalUserMessage = receiptContext ? `${userMessage}\n\n${receiptContext}` : userMessage;
+    llmMessages.push({ role: 'user', content: finalUserMessage });
+
+    // Call LLM using configured model with tools
+    const chatLlmStart = Date.now();
+    let chatTotalInputTokens = 0;
+    let chatTotalOutputTokens = 0;
+    let llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+      maxTokens: 1024,
+      temperature: 0.7,
+      tools: llmService.CHAT_TOOLS
+    });
+
+    // Handle tool calls (function calling)
+    if (llmResponse.tool_calls && llmResponse.tool_calls.length > 0) {
+      for (const toolCall of llmResponse.tool_calls) {
+        if (toolCall.function.name === 'check_availability') {
+          const args = JSON.parse(toolCall.function.arguments);
+
+          // Rate limiting: max 5 availability checks per hour per conversation
+          const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+          const recentChecks = await prisma.chat_messages.count({
+            where: {
+              conversation_id: conversation.id,
+              role: 'assistant',
+              content: { contains: '"tool":"check_availability"' },
+              created_at: { gte: oneHourAgo }
+            }
+          });
+
+          if (recentChecks >= 5) {
+            const availabilityData = {
+              error: true,
+              message: 'Has alcanzado el límite de consultas de disponibilidad (5 por hora). Por favor espera un momento o contacta directamente por WhatsApp para más información.'
+            };
+            const toolResultContent = JSON.stringify(availabilityData);
+
+            if (chatModelConfig.provider === 'anthropic') {
+              llmMessages.push({
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
+              });
+              llmMessages.push({
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+              });
+            } else {
+              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+            }
+
+            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+              maxTokens: 1024,
+              temperature: 0.7
+            });
+            continue;
+          }
+
+          // Validate dates are not in the past and check_out >= check_in
+          const checkInDate = new Date(args.check_in);
+          const checkOutDate = args.check_out ? new Date(args.check_out) : checkInDate;
+          const today = new Date();
+          today.setUTCHours(0, 0, 0, 0);
+          const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
+          const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
+
+          let dateError = null;
+          if (checkInDay < today) {
+            dateError = 'La fecha de llegada está en el pasado. Por favor proporciona una fecha futura.';
+          } else if (checkOutDay < checkInDay) {
+            dateError = 'La fecha de salida debe ser igual o posterior a la fecha de llegada.';
+          } else if (checkOutDay < today) {
+            dateError = 'La fecha de salida está en el pasado. Por favor proporciona una fecha futura.';
+          }
+
+          if (dateError) {
+            const availabilityData = {
+              error: true,
+              message: dateError,
+              today: today.toISOString().split('T')[0]
+            };
+            const toolResultContent = JSON.stringify(availabilityData);
+
+            if (chatModelConfig.provider === 'anthropic') {
+              llmMessages.push({
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
+              });
+              llmMessages.push({
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+              });
+            } else {
+              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+            }
+
+            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+              maxTokens: 1024,
+              temperature: 0.7
+            });
+            continue;
+          }
+
+          const numAdults = parseInt(args.adults) || 1;
+          const numChildren = parseInt(args.children) || 0;
+          const totalGuests = numAdults + numChildren;
+
+          // Check for existing accommodations
+          const existingAccommodations = await prisma.accommodations.findMany({
+            where: { venue: venue_id }
+          });
+
+          let isAvailable = true;
+          for (const acc of existingAccommodations) {
+            const accDate = new Date(acc.date);
+            const durationSeconds = parseInt(acc.duration) || 43200;
+            const accEndDate = new Date(accDate.getTime() + durationSeconds * 1000);
+
+            const accStartDay = new Date(accDate.getUTCFullYear(), accDate.getUTCMonth(), accDate.getUTCDate());
+            const accEndDay = new Date(accEndDate.getUTCFullYear(), accEndDate.getUTCMonth(), accEndDate.getUTCDate());
+            const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
+            const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
+
+            if (accStartDay <= checkOutDay && accEndDay >= checkInDay) {
+              isAvailable = false;
+              break;
+            }
+          }
+
+          // Check suitable plans
+          const suitablePlans = plans.filter(p => {
+            const planMin = p.min_guests || 1;
+            const planMax = p.max_capacity || 999;
+            return totalGuests >= planMin && totalGuests <= planMax;
+          }).map(p => ({
+            name: p.name,
+            plan_type: p.plan_type,
+            adult_price: p.adult_price,
+            child_price: p.child_price
+          }));
+
+          // Get next available dates if not available
+          let nextAvailableDates = [];
+          if (!isAvailable) {
+            // Determine if user is looking for weekends (check_in is Sat/Sun)
+            const checkInDayOfWeek = checkInDate.getDay();
+            const preferWeekends = checkInDayOfWeek === 0 || checkInDayOfWeek === 6;
+            // Calculate stay length in days
+            const stayLength = Math.max(1, Math.ceil((checkOutDay - checkInDay) / (1000 * 60 * 60 * 24)) + 1);
+
+            nextAvailableDates = llmService.getNextAvailableDates(existingAccommodations, checkInDate, {
+              preferWeekends,
+              stayLength,
+              numDays: 30
+            });
+          }
+
+          const availabilityData = {
+            venue_name: venue.name,
+            check_in: args.check_in,
+            check_out: args.check_out || args.check_in,
+            adults: numAdults,
+            children: numChildren,
+            total_guests: totalGuests,
+            is_available: isAvailable,
+            suitable_plans: suitablePlans,
+            next_available_dates: nextAvailableDates,
+            message: isAvailable
+              ? (suitablePlans.length > 0
+                  ? `La cabaña está disponible para ${totalGuests} persona(s). Hay ${suitablePlans.length} plan(es) disponible(s).`
+                  : `La cabaña está disponible pero no hay planes para ${totalGuests} persona(s).`)
+              : `La cabaña no está disponible para esas fechas. ${nextAvailableDates.length > 0 ? `Fechas próximas disponibles: ${nextAvailableDates.map(d => d.date + ' (' + d.day_of_week + ')').join(', ')}.` : ''}`
+          };
+
+          const toolResultContent = JSON.stringify(availabilityData);
+
+          // Handle differently for Anthropic vs OpenAI
+          if (chatModelConfig.provider === 'anthropic') {
+            // For Anthropic, add assistant message with tool_use and user message with tool_result
+            llmMessages.push({
+              role: 'assistant',
+              content: [
+                ...(llmResponse.content ? [{ type: 'text', text: llmResponse.content }] : []),
+                {
+                  type: 'tool_use',
+                  id: toolCall.id,
+                  name: toolCall.function.name,
+                  input: args
+                }
+              ]
+            });
+
+            llmMessages.push({
+              role: 'user',
+              content: [{
+                type: 'tool_result',
+                tool_use_id: toolCall.id,
+                content: toolResultContent
+              }]
+            });
+          } else {
+            // For OpenAI-compatible, use standard tool message format
+            llmMessages.push({
+              role: 'assistant',
+              content: llmResponse.content || null,
+              tool_calls: llmResponse.tool_calls
+            });
+
+            llmMessages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: toolResultContent
+            });
+          }
+
+          // Get final response with tool results
+          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            maxTokens: 1024,
+            temperature: 0.7
+          });
+
+          // Track that we used check_availability tool (for rate limiting)
+          llmResponse.tools_used = llmResponse.tools_used || [];
+          llmResponse.tools_used.push('check_availability');
+        } else if (toolCall.function.name === 'get_venue_info') {
+          // Get venue with amenities
+          const venueAmenities = await prisma.venue_amenities.findMany({
+            where: { venue_id }
+          });
+          const amenityIds = venueAmenities.map(va => va.amenity_id);
+          const amenities = amenityIds.length > 0 ? await prisma.amenities.findMany({
+            where: { id: { in: amenityIds }, is_active: true }
+          }) : [];
+
+          const venueInfoData = {
+            name: venue.name,
+            address: venue.address,
+            city: venue.city,
+            department: venue.department,
+            address_reference: venue.address_reference,
+            whatsapp: venue.whatsapp,
+            instagram: venue.instagram,
+            wifi_ssid: venue.wifi_ssid,
+            wifi_password: venue.wifi_password,
+            venue_info: venue.venue_info,
+            delivery_info: venue.delivery_info,
+            waze_link: venue.waze_link,
+            google_maps_link: venue.google_maps_link,
+            amenities: amenities.map(a => ({
+              name: a.name,
+              description: a.description,
+              category: a.category
+            }))
+          };
+
+          const toolResultContent = JSON.stringify(venueInfoData);
+
+          if (chatModelConfig.provider === 'anthropic') {
+            llmMessages.push({
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: {} }]
+            });
+            llmMessages.push({
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+            });
+          } else {
+            llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+            llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+          }
+
+          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            maxTokens: 1024,
+            temperature: 0.7
+          });
+
+          llmResponse.tools_used = llmResponse.tools_used || [];
+          llmResponse.tools_used.push('get_venue_info');
+        } else if (toolCall.function.name === 'get_plans') {
+          // Get plans with their amenities
+          const planAmenities = await prisma.plan_amenities.findMany({
+            where: { plan_id: { in: plans.map(p => p.id) } }
+          });
+          const planAmenityIds = [...new Set(planAmenities.map(pa => pa.amenity_id))];
+          const planAmenitiesData = planAmenityIds.length > 0 ? await prisma.amenities.findMany({
+            where: { id: { in: planAmenityIds }, is_active: true }
+          }) : [];
+          const amenityMap = {};
+          planAmenitiesData.forEach(a => { amenityMap[a.id] = a; });
+
+          const plansWithAmenities = plans.map(p => {
+            const pAmenities = planAmenities.filter(pa => pa.plan_id === p.id);
+            return {
+              id: p.id,
+              name: p.name,
+              plan_type: p.plan_type,
+              description: p.description,
+              adult_price: p.adult_price,
+              child_price: p.child_price,
+              min_guests: p.min_guests,
+              max_capacity: p.max_capacity,
+              check_in_time: p.check_in_time,
+              check_out_time: p.check_out_time,
+              includes_food: p.includes_food,
+              food_description: p.food_description,
+              includes_beverages: p.includes_beverages,
+              includes_overnight: p.includes_overnight,
+              includes_rooms: p.includes_rooms,
+              amenities: pAmenities.map(pa => {
+                const am = amenityMap[pa.amenity_id];
+                return am ? { name: am.name, description: am.description } : null;
+              }).filter(Boolean)
+            };
+          });
+
+          const toolResultContent = JSON.stringify({ plans: plansWithAmenities });
+
+          if (chatModelConfig.provider === 'anthropic') {
+            llmMessages.push({
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: {} }]
+            });
+            llmMessages.push({
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+            });
+          } else {
+            llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+            llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+          }
+
+          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            maxTokens: 1024,
+            temperature: 0.7
+          });
+
+          llmResponse.tools_used = llmResponse.tools_used || [];
+          llmResponse.tools_used.push('get_plans');
+        } else if (toolCall.function.name === 'create_estimate') {
+          const args = JSON.parse(toolCall.function.arguments);
+
+          // Find matching plan by name
+          const matchingPlan = plans.find(p =>
+            p.name.toLowerCase().includes(args.plan_name.toLowerCase()) ||
+            args.plan_name.toLowerCase().includes(p.name.toLowerCase())
+          );
+
+          // Calculate price if plan found
+          let calculatedPrice = null;
+          if (matchingPlan) {
+            const adults = args.adults || 0;
+            const children = args.children || 0;
+            calculatedPrice = (parseFloat(matchingPlan.adult_price) * adults) +
+                             (parseFloat(matchingPlan.child_price) * children);
+          }
+
+          // Create the estimate
+          const estimate = await prisma.estimates.create({
+            data: {
+              venue_id,
+              plan_id: matchingPlan?.id || null,
+              customer_name: args.customer_name,
+              contact_type: contact_type || 'whatsapp',
+              contact_value: contact_value || '',
+              check_in: args.check_in ? new Date(args.check_in) : null,
+              check_out: args.check_out ? new Date(args.check_out) : (args.check_in ? new Date(args.check_in) : null),
+              adults: args.adults || 0,
+              children: args.children || 0,
+              calculated_price: calculatedPrice,
+              notes: args.notes || null,
+              conversation_id: conversation.id,
+              status: 'pending',
+              created_by: 'chat_ai'
+            }
+          });
+
+          const estimateResult = {
+            success: true,
+            estimate_id: estimate.id,
+            customer_name: args.customer_name,
+            plan: matchingPlan?.name || args.plan_name,
+            check_in: args.check_in,
+            check_out: args.check_out || args.check_in,
+            adults: args.adults,
+            children: args.children || 0,
+            calculated_price: calculatedPrice,
+            message: `Cotización creada exitosamente. El cliente ${args.customer_name} recibirá confirmación pronto.`
+          };
+
+          const toolResultContent = JSON.stringify(estimateResult);
+
+          if (chatModelConfig.provider === 'anthropic') {
+            llmMessages.push({
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
+            });
+            llmMessages.push({
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+            });
+          } else {
+            llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+            llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+          }
+
+          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            maxTokens: 1024,
+            temperature: 0.7
+          });
+
+          llmResponse.tools_used = llmResponse.tools_used || [];
+          llmResponse.tools_used.push('create_estimate');
+        } else if (toolCall.function.name === 'get_payment_methods') {
+          // Get active payment methods for this venue
+          const paymentMethods = await prisma.venue_payment_methods.findMany({
+            where: { venue_id, is_active: true },
+            orderBy: { sort_order: 'asc' },
+            select: { id: true, method_type: true, label: true, account_info: true, holder_name: true, instructions: true, qr_image_url: true }
+          });
+
+          const paymentResult = {
+            methods: paymentMethods.map(m => ({
+              id: m.id,
+              type: m.method_type,
+              name: m.label,
+              account_info: m.account_info,
+              holder_name: m.holder_name,
+              has_qr: !!m.qr_image_url,
+              instructions: m.instructions
+            })),
+            message: paymentMethods.length > 0
+              ? `Hay ${paymentMethods.length} método(s) de pago disponible(s).`
+              : 'No hay métodos de pago configurados. El cliente deberá coordinar el pago directamente con el venue.'
+          };
+
+          const toolResultContent = JSON.stringify(paymentResult);
+
+          if (chatModelConfig.provider === 'anthropic') {
+            llmMessages.push({
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: {} }]
+            });
+            llmMessages.push({
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+            });
+          } else {
+            llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+            llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+          }
+
+          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            maxTokens: 1024,
+            temperature: 0.7,
+            tools: llmService.CHAT_TOOLS
+          });
+
+          llmResponse.tools_used = llmResponse.tools_used || [];
+          llmResponse.tools_used.push('get_payment_methods');
+        } else if (toolCall.function.name === 'send_payment_info') {
+          const args = JSON.parse(toolCall.function.arguments);
+
+          // Fetch the payment method
+          const paymentMethod = args.payment_method_id
+            ? await prisma.venue_payment_methods.findUnique({ where: { id: args.payment_method_id } })
+            : null;
+
+          let sendResult;
+          if (!paymentMethod) {
+            sendResult = { success: false, message: 'Método de pago no encontrado.' };
+          } else {
+            // Update estimate
+            if (args.estimate_id) {
+              await prisma.estimates.update({
+                where: { id: args.estimate_id },
+                data: {
+                  payment_status: 'qr_sent',
+                  payment_method_id: paymentMethod.id,
+                  updated_at: new Date()
+                }
+              });
+            }
+
+            // Build caption
+            const amount = args.payment_amount || 0;
+            let caption = `💳 *Pago - ${paymentMethod.label}*\n`;
+            if (amount) caption += `\n💰 *Monto:* $${Number(amount).toLocaleString('es-CO')}\n`;
+            if (paymentMethod.account_info) caption += `\n📱 *Cuenta/Número:* ${paymentMethod.account_info}`;
+            if (paymentMethod.holder_name) caption += `\n👤 *Titular:* ${paymentMethod.holder_name}`;
+            if (paymentMethod.instructions) caption += `\n\n📝 ${paymentMethod.instructions}`;
+            caption += '\n\n📸 Una vez realices el pago, envía la foto del comprobante por este chat.';
+
+            // Send QR image or text via WhatsApp if source is baileys
+            if (source === 'baileys' && conversation.phone && whatsappClient.isAvailable()) {
+              try {
+                if (paymentMethod.qr_image_url) {
+                  await whatsappClient.sendImage(venue_id, conversation.phone, paymentMethod.qr_image_url, caption);
+                } else {
+                  await whatsappClient.sendMessage(venue_id, conversation.phone, caption);
+                }
+              } catch (sendErr) {
+                console.error('[payment] Failed to send payment info via WhatsApp:', sendErr.message);
+              }
+            }
+
+            sendResult = {
+              success: true,
+              method_name: paymentMethod.label,
+              has_qr: !!paymentMethod.qr_image_url,
+              message: paymentMethod.qr_image_url
+                ? `Se envió el QR de ${paymentMethod.label} al cliente con los datos de pago.`
+                : `Se enviaron los datos de pago de ${paymentMethod.label} al cliente.`
+            };
+          }
+
+          const toolResultContent = JSON.stringify(sendResult);
+
+          if (chatModelConfig.provider === 'anthropic') {
+            llmMessages.push({
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
+            });
+            llmMessages.push({
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+            });
+          } else {
+            llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+            llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+          }
+
+          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            maxTokens: 1024,
+            temperature: 0.7
+          });
+
+          llmResponse.tools_used = llmResponse.tools_used || [];
+          llmResponse.tools_used.push('send_payment_info');
+        } else if (toolCall.function.name === 'escalate_to_human') {
+          const args = JSON.parse(toolCall.function.arguments);
+
+          // Check if escalation is enabled for this venue
+          const waConn = await prisma.whatsapp_connections.findUnique({
+            where: { venue_id }
+          });
+          const escConfig = waConn?.escalation_config || {};
+          const reason = args.reason || 'ai_decided';
+
+          // Verify the trigger is enabled
+          let escalationAllowed = true;
+          if (reason === 'client_requested' && escConfig.client_request_enabled === false) {
+            escalationAllowed = false;
+          }
+          if (reason === 'ai_decided' && escConfig.ai_escalation_enabled === false) {
+            escalationAllowed = false;
+          }
+
+          let escalateResult;
+          if (escalationAllowed) {
+            // Calculate resume_at (next 3 AM in America/Bogota if auto_resume enabled)
+            const autoResumeEnabled = escConfig.auto_resume_enabled !== false;
+            const autoResumeHour = escConfig.auto_resume_hour || 3;
+            let resumeAt = null;
+            if (autoResumeEnabled) {
+              resumeAt = getNextResumeTime(autoResumeHour);
+            }
+
+            // Mark conversation as human_attention
+            await prisma.chat_conversations.update({
+              where: { id: conversation.id },
+              data: {
+                status: 'human_attention',
+                escalated_at: new Date(),
+                escalated_reason: reason,
+                resume_at: resumeAt,
+                updated_at: new Date()
+              }
+            });
+
+            // Send notification via system WhatsApp
+            const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
+            if (notificationPhone && whatsappClient.isAvailable()) {
+              try {
+                const clientPhone = conversation.phone || 'desconocido';
+                const clientName = conversation.name || 'Cliente';
+                const resumeNote = autoResumeEnabled
+                  ? `Si no me dices nada, retomo mañana a las ${autoResumeHour}:00 AM automáticamente.`
+                  : 'Respóndeme "ya puedes seguir" cuando quieras que CabanIA retome.';
+
+                const notificationMsg = `🔔 *Escalación CabanIA - ${venue.name || 'Venue'}*\n\n*Resumen:* ${args.summary}\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Link directo:* https://wa.me/${clientPhone}\n\nPara continuar la conversación, contacta al cliente directamente.\nCuando quieras que CabanIA retome, respóndeme: "ya puedes seguir"\n${resumeNote}`;
+
+                await whatsappClient.sendSystemMessage(notificationPhone, notificationMsg);
+                console.log(`[escalation] Notification sent to ${notificationPhone} for venue ${venue_id}`);
+              } catch (notifErr) {
+                console.error('[escalation] Failed to send notification:', notifErr.message);
+              }
+            }
+
+            escalateResult = {
+              success: true,
+              message: 'Conversación escalada a un humano. El propietario ha sido notificado.',
+              reason
+            };
+          } else {
+            escalateResult = {
+              success: false,
+              message: 'El escalamiento no está habilitado para este tipo de solicitud. Continúa asistiendo al cliente.',
+              reason
+            };
+          }
+
+          const toolResultContent = JSON.stringify(escalateResult);
+
+          if (chatModelConfig.provider === 'anthropic') {
+            llmMessages.push({
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
+            });
+            llmMessages.push({
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+            });
+          } else {
+            llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+            llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+          }
+
+          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            maxTokens: 1024,
+            temperature: 0.7
+          });
+
+          llmResponse.tools_used = llmResponse.tools_used || [];
+          llmResponse.tools_used.push('escalate_to_human');
+        }
+      }
+    }
+
+    // Check message limit escalation (before responding, after tool calls)
+    if (source === 'baileys' && conversation.phone) {
+      const waConn = await prisma.whatsapp_connections.findUnique({
+        where: { venue_id }
+      });
+      const escConfig = waConn?.escalation_config || {};
+      if (escConfig.message_limit_enabled && escConfig.message_limit > 0) {
+        const userMsgCount = await prisma.chat_messages.count({
+          where: { conversation_id: conversation.id, role: 'user' }
+        });
+        // Check if estimate was created for this conversation
+        const hasEstimate = await prisma.estimates.count({
+          where: { conversation_id: conversation.id }
+        });
+        if (userMsgCount >= escConfig.message_limit && hasEstimate === 0 && conversation.status !== 'human_attention') {
+          // Force escalation by message limit
+          const autoResumeEnabled = escConfig.auto_resume_enabled !== false;
+          const autoResumeHour = escConfig.auto_resume_hour || 3;
+          let resumeAt = autoResumeEnabled ? getNextResumeTime(autoResumeHour) : null;
+
+          await prisma.chat_conversations.update({
+            where: { id: conversation.id },
+            data: {
+              status: 'human_attention',
+              escalated_at: new Date(),
+              escalated_reason: 'message_limit',
+              resume_at: resumeAt,
+              updated_at: new Date()
+            }
+          });
+
+          // Notify owner
+          const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
+          if (notificationPhone && whatsappClient.isAvailable()) {
+            try {
+              const clientPhone = conversation.phone || 'desconocido';
+              const clientName = conversation.name || 'Cliente';
+              const notificationMsg = `🔔 *Escalación CabanIA - ${venue.name || 'Venue'}*\n\n*Motivo:* Límite de ${escConfig.message_limit} mensajes alcanzado sin cotización\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Link directo:* https://wa.me/${clientPhone}\n\nEl cliente lleva ${userMsgCount} mensajes sin generar cotización. Puede necesitar atención personalizada.\nResponde "ya puedes seguir" para reactivar CabanIA.`;
+
+              await whatsappClient.sendSystemMessage(notificationPhone, notificationMsg);
+            } catch (notifErr) {
+              console.error('[escalation] Failed to send limit notification:', notifErr.message);
+            }
+          }
+        }
+      }
+    }
+
+    // Track if we used a tool in this request (for rate limiting)
+    const toolsUsed = llmResponse.tools_used || [];
+
+    // Save assistant response with tool metadata if applicable
+    const messageContent = toolsUsed.length > 0
+      ? `${llmResponse.content}\n<!-- {"tool":"${toolsUsed[0]}"} -->`
+      : llmResponse.content;
+
+    const assistantMessage = await prisma.chat_messages.create({
+      data: {
+        conversation_id: conversation.id,
+        role: 'assistant',
+        content: messageContent,
+        provider: chatProviderCode,
+        model: llmResponse.model,
+        tokens_used: llmResponse.usage?.total_tokens,
+        status: source === 'baileys' ? 'pending' : null
+      }
+    });
+
+    // Update conversation timestamp
+    await prisma.chat_conversations.update({
+      where: { id: conversation.id },
+      data: { updated_at: new Date() }
+    });
+
+    // Audit log for chat
+    chatTotalInputTokens += llmResponse.usage?.prompt_tokens || 0;
+    chatTotalOutputTokens += llmResponse.usage?.completion_tokens || 0;
+    logAICall({
+      venue_id,
+      feature: 'chat',
+      provider_code: chatProviderCode,
+      model: llmResponse.model || chatProviderCode,
+      system_prompt: systemPrompt,
+      user_prompt: userMessage,
+      response_content: llmResponse.content,
+      input_tokens: chatTotalInputTokens,
+      output_tokens: chatTotalOutputTokens,
+      response_time_ms: Date.now() - chatLlmStart,
+      user_id: userId,
+      conversation_id: conversation.id,
+      metadata: { tools_used: toolsUsed, source }
+    });
+
+    return {
+      assistantMessage,
+      llmResponse,
+      chatProviderCode,
+      toolsUsed
+    };
+  }
+
   // POST /api/chat/:venue_id - Chat endpoint (supports internal and webhook calls)
   app.post('/api/chat/:venue_id', async (req, res) => {
     try {
       const { venue_id } = req.params;
-      const { message, conversation_id, provider_id, source = 'web', contact_type, contact_value, media_url, media_type } = req.body;
+      const { message, conversation_id, source = 'web', contact_type, contact_value, media_url, media_type } = req.body;
 
       // Validate internal key for Baileys microservice callbacks
       if (source === 'baileys' && process.env.WHATSAPP_INTERNAL_KEY) {
@@ -6941,20 +7802,20 @@ REGLAS:
           return res.status(401).json({ error: 'Invalid internal key' });
         }
       }
-      
+
       // For Twilio/Meta webhooks, extract message from their format
       let userMessage = message;
       let externalId = null;
       let phone = null;
       let userName = null;
-      
+
       // Handle Twilio webhook format
       if (req.body.Body && req.body.From) {
         userMessage = req.body.Body;
         phone = req.body.From;
         externalId = req.body.MessageSid;
       }
-      
+
       // Handle Meta/WhatsApp webhook format
       if (req.body.entry && req.body.entry[0]?.changes) {
         const changes = req.body.entry[0].changes[0];
@@ -6967,55 +7828,11 @@ REGLAS:
           userName = contact?.profile?.name;
         }
       }
-      
+
       if (!userMessage) {
         return res.status(400).json({ error: 'Se requiere un mensaje' });
       }
-      
-      // Get venue with all relevant info
-      const venue = await prisma.venues.findUnique({
-        where: { id: venue_id }
-      });
-      
-      if (!venue) {
-        return res.status(404).json({ error: 'Cabaña no encontrada' });
-      }
-      
-      // Get venue plans
-      const plans = await prisma.venue_plans.findMany({
-        where: { venue_id, is_active: true }
-      });
-      
-      // Get templates for this venue (including system templates)
-      const templates = await prisma.message_templates.findMany({
-        where: {
-          is_active: true,
-          OR: [
-            { venue_id },
-            { venue_id: null, is_system: true }
-          ]
-        }
-      });
-      
-      // Get configured model for customer chat from ai_settings
-      const chatSetting = await prisma.ai_settings.findUnique({
-        where: { setting_key: 'customer_chat' }
-      });
-      
-      const chatProviderCode = chatSetting?.provider_code || 'anthropic_claude';
-      const chatModelConfig = llmService.getModelConfig(chatProviderCode);
-      
-      if (!chatModelConfig) {
-        return res.status(400).json({ error: 'Modelo de chat no configurado' });
-      }
-      
-      const chatApiKey = llmService.getApiKeyForProvider(chatProviderCode);
-      if (!chatApiKey) {
-        return res.status(400).json({ 
-          error: `API key no configurada (${chatModelConfig.env_key})` 
-        });
-      }
-      
+
       // Get or create conversation
       let conversation;
       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -7025,7 +7842,7 @@ REGLAS:
           include: { messages: { orderBy: { created_at: 'asc' }, take: 20 } }
         });
       }
-      
+
       if (!conversation) {
         conversation = await prisma.chat_conversations.create({
           data: {
@@ -7074,7 +7891,7 @@ REGLAS:
       }
 
       // Save user message
-      await prisma.chat_messages.create({
+      const userMsg = await prisma.chat_messages.create({
         data: {
           conversation_id: conversation.id,
           role: 'user',
@@ -7085,794 +7902,17 @@ REGLAS:
         }
       });
 
-      // Auto-detect payment receipt: if image + estimate with payment_status 'qr_sent'
-      let receiptContext = null;
-      if (media_url && media_type === 'image') {
-        const pendingEstimate = await prisma.estimates.findFirst({
-          where: {
-            conversation_id: conversation.id,
-            payment_status: 'qr_sent'
-          },
-          orderBy: { created_at: 'desc' }
-        });
-        if (pendingEstimate) {
-          // Update estimate with receipt
-          await prisma.estimates.update({
-            where: { id: pendingEstimate.id },
-            data: {
-              payment_status: 'receipt_received',
-              receipt_url: media_url,
-              updated_at: new Date()
-            }
-          });
-
-          // Create payment record
-          const paymentMethodRecord = pendingEstimate.payment_method_id
-            ? await prisma.venue_payment_methods.findUnique({ where: { id: pendingEstimate.payment_method_id } })
-            : null;
-
-          const payment = await prisma.payments.create({
-            data: {
-              amount: pendingEstimate.agreed_price || pendingEstimate.calculated_price,
-              payment_method: paymentMethodRecord?.label || 'WhatsApp',
-              receipt_url: media_url,
-              verified: false,
-              created_by: 'chat_ai',
-              type: 'accommodation'
-            }
-          });
-
-          await prisma.estimates.update({
-            where: { id: pendingEstimate.id },
-            data: { payment_id: payment.id, updated_at: new Date() }
-          });
-
-          // Notify venue owner via system WhatsApp
-          const waConn = await prisma.whatsapp_connections.findUnique({ where: { venue_id } });
-          const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
-          if (notificationPhone && whatsappClient.isAvailable()) {
-            try {
-              const clientName = conversation.name || 'Cliente';
-              const clientPhone = conversation.phone || 'desconocido';
-              const amount = pendingEstimate.agreed_price || pendingEstimate.calculated_price || 'N/A';
-              const methodName = paymentMethodRecord?.label || 'N/A';
-              const notifMsg = `💰 *Comprobante de Pago Recibido - ${venue.name || 'Venue'}*\n\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Monto:* $${amount}\n*Método:* ${methodName}\n\n🔗 Verifica el pago en el sistema para confirmar la reserva.`;
-              await whatsappClient.sendSystemMessage(notificationPhone, notifMsg);
-            } catch (notifErr) {
-              console.error('[payment] Failed to send receipt notification:', notifErr.message);
-            }
-          }
-
-          receiptContext = '[El cliente envió un comprobante de pago. El sistema ya lo registró automáticamente. Confirma al cliente que recibiste su comprobante y que será verificado por el equipo pronto.]';
-        }
-      }
-      
-      // Build context and messages
-      const context = llmService.buildVenueContext(venue, templates, plans);
-      const contactInfo = (contact_type && contact_value) ? { type: contact_type, value: contact_value } : null;
-      const systemPrompt = llmService.buildSystemPrompt(venue, context, contactInfo);
-      
-      const llmMessages = [
-        { role: 'system', content: systemPrompt }
-      ];
-      
-      // Add conversation history
-      for (const msg of conversation.messages) {
-        llmMessages.push({ role: msg.role, content: msg.content });
-      }
-      
-      // Add current message (with receipt context if applicable)
-      const finalUserMessage = receiptContext ? `${userMessage}\n\n${receiptContext}` : userMessage;
-      llmMessages.push({ role: 'user', content: finalUserMessage });
-      
-      // Call LLM using configured model with tools
-      const chatLlmStart = Date.now();
-      let chatTotalInputTokens = 0;
-      let chatTotalOutputTokens = 0;
-      let llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
-        maxTokens: 1024,
-        temperature: 0.7,
-        tools: llmService.CHAT_TOOLS
-      });
-      
-      // Handle tool calls (function calling)
-      if (llmResponse.tool_calls && llmResponse.tool_calls.length > 0) {
-        for (const toolCall of llmResponse.tool_calls) {
-          if (toolCall.function.name === 'check_availability') {
-            const args = JSON.parse(toolCall.function.arguments);
-            
-            // Rate limiting: max 5 availability checks per hour per conversation
-            const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-            const recentChecks = await prisma.chat_messages.count({
-              where: {
-                conversation_id: conversation.id,
-                role: 'assistant',
-                content: { contains: '"tool":"check_availability"' },
-                created_at: { gte: oneHourAgo }
-              }
-            });
-            
-            if (recentChecks >= 5) {
-              const availabilityData = {
-                error: true,
-                message: 'Has alcanzado el límite de consultas de disponibilidad (5 por hora). Por favor espera un momento o contacta directamente por WhatsApp para más información.'
-              };
-              const toolResultContent = JSON.stringify(availabilityData);
-              
-              if (chatModelConfig.provider === 'anthropic') {
-                llmMessages.push({
-                  role: 'assistant',
-                  content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
-                });
-                llmMessages.push({
-                  role: 'user',
-                  content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
-                });
-              } else {
-                llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
-                llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
-              }
-              
-              llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
-                maxTokens: 1024,
-                temperature: 0.7
-              });
-              continue;
-            }
-            
-            // Validate dates are not in the past and check_out >= check_in
-            const checkInDate = new Date(args.check_in);
-            const checkOutDate = args.check_out ? new Date(args.check_out) : checkInDate;
-            const today = new Date();
-            today.setUTCHours(0, 0, 0, 0);
-            const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
-            const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
-            
-            let dateError = null;
-            if (checkInDay < today) {
-              dateError = 'La fecha de llegada está en el pasado. Por favor proporciona una fecha futura.';
-            } else if (checkOutDay < checkInDay) {
-              dateError = 'La fecha de salida debe ser igual o posterior a la fecha de llegada.';
-            } else if (checkOutDay < today) {
-              dateError = 'La fecha de salida está en el pasado. Por favor proporciona una fecha futura.';
-            }
-            
-            if (dateError) {
-              const availabilityData = {
-                error: true,
-                message: dateError,
-                today: today.toISOString().split('T')[0]
-              };
-              const toolResultContent = JSON.stringify(availabilityData);
-              
-              if (chatModelConfig.provider === 'anthropic') {
-                llmMessages.push({
-                  role: 'assistant',
-                  content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
-                });
-                llmMessages.push({
-                  role: 'user',
-                  content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
-                });
-              } else {
-                llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
-                llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
-              }
-              
-              llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
-                maxTokens: 1024,
-                temperature: 0.7
-              });
-              continue;
-            }
-            
-            const numAdults = parseInt(args.adults) || 1;
-            const numChildren = parseInt(args.children) || 0;
-            const totalGuests = numAdults + numChildren;
-            
-            // Check for existing accommodations
-            const existingAccommodations = await prisma.accommodations.findMany({
-              where: { venue: venue_id }
-            });
-            
-            let isAvailable = true;
-            for (const acc of existingAccommodations) {
-              const accDate = new Date(acc.date);
-              const durationSeconds = parseInt(acc.duration) || 43200;
-              const accEndDate = new Date(accDate.getTime() + durationSeconds * 1000);
-              
-              const accStartDay = new Date(accDate.getUTCFullYear(), accDate.getUTCMonth(), accDate.getUTCDate());
-              const accEndDay = new Date(accEndDate.getUTCFullYear(), accEndDate.getUTCMonth(), accEndDate.getUTCDate());
-              const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
-              const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
-              
-              if (accStartDay <= checkOutDay && accEndDay >= checkInDay) {
-                isAvailable = false;
-                break;
-              }
-            }
-            
-            // Check suitable plans
-            const suitablePlans = plans.filter(p => {
-              const planMin = p.min_guests || 1;
-              const planMax = p.max_capacity || 999;
-              return totalGuests >= planMin && totalGuests <= planMax;
-            }).map(p => ({
-              name: p.name,
-              plan_type: p.plan_type,
-              adult_price: p.adult_price,
-              child_price: p.child_price
-            }));
-            
-            // Get next available dates if not available
-            let nextAvailableDates = [];
-            if (!isAvailable) {
-              // Determine if user is looking for weekends (check_in is Sat/Sun)
-              const checkInDayOfWeek = checkInDate.getDay();
-              const preferWeekends = checkInDayOfWeek === 0 || checkInDayOfWeek === 6;
-              // Calculate stay length in days
-              const stayLength = Math.max(1, Math.ceil((checkOutDay - checkInDay) / (1000 * 60 * 60 * 24)) + 1);
-              
-              nextAvailableDates = llmService.getNextAvailableDates(existingAccommodations, checkInDate, {
-                preferWeekends,
-                stayLength,
-                numDays: 30
-              });
-            }
-            
-            const availabilityData = {
-              venue_name: venue.name,
-              check_in: args.check_in,
-              check_out: args.check_out || args.check_in,
-              adults: numAdults,
-              children: numChildren,
-              total_guests: totalGuests,
-              is_available: isAvailable,
-              suitable_plans: suitablePlans,
-              next_available_dates: nextAvailableDates,
-              message: isAvailable 
-                ? (suitablePlans.length > 0 
-                    ? `La cabaña está disponible para ${totalGuests} persona(s). Hay ${suitablePlans.length} plan(es) disponible(s).`
-                    : `La cabaña está disponible pero no hay planes para ${totalGuests} persona(s).`)
-                : `La cabaña no está disponible para esas fechas. ${nextAvailableDates.length > 0 ? `Fechas próximas disponibles: ${nextAvailableDates.map(d => d.date + ' (' + d.day_of_week + ')').join(', ')}.` : ''}`
-            };
-            
-            const toolResultContent = JSON.stringify(availabilityData);
-            
-            // Handle differently for Anthropic vs OpenAI
-            if (chatModelConfig.provider === 'anthropic') {
-              // For Anthropic, add assistant message with tool_use and user message with tool_result
-              llmMessages.push({
-                role: 'assistant',
-                content: [
-                  ...(llmResponse.content ? [{ type: 'text', text: llmResponse.content }] : []),
-                  {
-                    type: 'tool_use',
-                    id: toolCall.id,
-                    name: toolCall.function.name,
-                    input: args
-                  }
-                ]
-              });
-              
-              llmMessages.push({
-                role: 'user',
-                content: [{
-                  type: 'tool_result',
-                  tool_use_id: toolCall.id,
-                  content: toolResultContent
-                }]
-              });
-            } else {
-              // For OpenAI-compatible, use standard tool message format
-              llmMessages.push({
-                role: 'assistant',
-                content: llmResponse.content || null,
-                tool_calls: llmResponse.tool_calls
-              });
-              
-              llmMessages.push({
-                role: 'tool',
-                tool_call_id: toolCall.id,
-                content: toolResultContent
-              });
-            }
-            
-            // Get final response with tool results
-            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
-              maxTokens: 1024,
-              temperature: 0.7
-            });
-            
-            // Track that we used check_availability tool (for rate limiting)
-            llmResponse.tools_used = llmResponse.tools_used || [];
-            llmResponse.tools_used.push('check_availability');
-          } else if (toolCall.function.name === 'get_venue_info') {
-            // Get venue with amenities
-            const venueAmenities = await prisma.venue_amenities.findMany({
-              where: { venue_id }
-            });
-            const amenityIds = venueAmenities.map(va => va.amenity_id);
-            const amenities = amenityIds.length > 0 ? await prisma.amenities.findMany({
-              where: { id: { in: amenityIds }, is_active: true }
-            }) : [];
-            
-            const venueInfoData = {
-              name: venue.name,
-              address: venue.address,
-              city: venue.city,
-              department: venue.department,
-              address_reference: venue.address_reference,
-              whatsapp: venue.whatsapp,
-              instagram: venue.instagram,
-              wifi_ssid: venue.wifi_ssid,
-              wifi_password: venue.wifi_password,
-              venue_info: venue.venue_info,
-              delivery_info: venue.delivery_info,
-              waze_link: venue.waze_link,
-              google_maps_link: venue.google_maps_link,
-              amenities: amenities.map(a => ({
-                name: a.name,
-                description: a.description,
-                category: a.category
-              }))
-            };
-            
-            const toolResultContent = JSON.stringify(venueInfoData);
-            
-            if (chatModelConfig.provider === 'anthropic') {
-              llmMessages.push({
-                role: 'assistant',
-                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: {} }]
-              });
-              llmMessages.push({
-                role: 'user',
-                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
-              });
-            } else {
-              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
-              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
-            }
-            
-            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
-              maxTokens: 1024,
-              temperature: 0.7
-            });
-            
-            llmResponse.tools_used = llmResponse.tools_used || [];
-            llmResponse.tools_used.push('get_venue_info');
-          } else if (toolCall.function.name === 'get_plans') {
-            // Get plans with their amenities
-            const planAmenities = await prisma.plan_amenities.findMany({
-              where: { plan_id: { in: plans.map(p => p.id) } }
-            });
-            const planAmenityIds = [...new Set(planAmenities.map(pa => pa.amenity_id))];
-            const planAmenitiesData = planAmenityIds.length > 0 ? await prisma.amenities.findMany({
-              where: { id: { in: planAmenityIds }, is_active: true }
-            }) : [];
-            const amenityMap = {};
-            planAmenitiesData.forEach(a => { amenityMap[a.id] = a; });
-            
-            const plansWithAmenities = plans.map(p => {
-              const pAmenities = planAmenities.filter(pa => pa.plan_id === p.id);
-              return {
-                id: p.id,
-                name: p.name,
-                plan_type: p.plan_type,
-                description: p.description,
-                adult_price: p.adult_price,
-                child_price: p.child_price,
-                min_guests: p.min_guests,
-                max_capacity: p.max_capacity,
-                check_in_time: p.check_in_time,
-                check_out_time: p.check_out_time,
-                includes_food: p.includes_food,
-                food_description: p.food_description,
-                includes_beverages: p.includes_beverages,
-                includes_overnight: p.includes_overnight,
-                includes_rooms: p.includes_rooms,
-                amenities: pAmenities.map(pa => {
-                  const am = amenityMap[pa.amenity_id];
-                  return am ? { name: am.name, description: am.description } : null;
-                }).filter(Boolean)
-              };
-            });
-            
-            const toolResultContent = JSON.stringify({ plans: plansWithAmenities });
-            
-            if (chatModelConfig.provider === 'anthropic') {
-              llmMessages.push({
-                role: 'assistant',
-                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: {} }]
-              });
-              llmMessages.push({
-                role: 'user',
-                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
-              });
-            } else {
-              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
-              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
-            }
-            
-            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
-              maxTokens: 1024,
-              temperature: 0.7
-            });
-            
-            llmResponse.tools_used = llmResponse.tools_used || [];
-            llmResponse.tools_used.push('get_plans');
-          } else if (toolCall.function.name === 'create_estimate') {
-            const args = JSON.parse(toolCall.function.arguments);
-            
-            // Find matching plan by name
-            const matchingPlan = plans.find(p => 
-              p.name.toLowerCase().includes(args.plan_name.toLowerCase()) ||
-              args.plan_name.toLowerCase().includes(p.name.toLowerCase())
-            );
-            
-            // Calculate price if plan found
-            let calculatedPrice = null;
-            if (matchingPlan) {
-              const adults = args.adults || 0;
-              const children = args.children || 0;
-              calculatedPrice = (parseFloat(matchingPlan.adult_price) * adults) + 
-                               (parseFloat(matchingPlan.child_price) * children);
-            }
-            
-            // Create the estimate
-            const estimate = await prisma.estimates.create({
-              data: {
-                venue_id,
-                plan_id: matchingPlan?.id || null,
-                customer_name: args.customer_name,
-                contact_type: contact_type || 'whatsapp',
-                contact_value: contact_value || '',
-                check_in: args.check_in ? new Date(args.check_in) : null,
-                check_out: args.check_out ? new Date(args.check_out) : (args.check_in ? new Date(args.check_in) : null),
-                adults: args.adults || 0,
-                children: args.children || 0,
-                calculated_price: calculatedPrice,
-                notes: args.notes || null,
-                conversation_id: conversation.id,
-                status: 'pending',
-                created_by: 'chat_ai'
-              }
-            });
-            
-            const estimateResult = {
-              success: true,
-              estimate_id: estimate.id,
-              customer_name: args.customer_name,
-              plan: matchingPlan?.name || args.plan_name,
-              check_in: args.check_in,
-              check_out: args.check_out || args.check_in,
-              adults: args.adults,
-              children: args.children || 0,
-              calculated_price: calculatedPrice,
-              message: `Cotización creada exitosamente. El cliente ${args.customer_name} recibirá confirmación pronto.`
-            };
-            
-            const toolResultContent = JSON.stringify(estimateResult);
-            
-            if (chatModelConfig.provider === 'anthropic') {
-              llmMessages.push({
-                role: 'assistant',
-                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
-              });
-              llmMessages.push({
-                role: 'user',
-                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
-              });
-            } else {
-              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
-              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
-            }
-            
-            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
-              maxTokens: 1024,
-              temperature: 0.7
-            });
-            
-            llmResponse.tools_used = llmResponse.tools_used || [];
-            llmResponse.tools_used.push('create_estimate');
-          } else if (toolCall.function.name === 'get_payment_methods') {
-            // Get active payment methods for this venue
-            const paymentMethods = await prisma.venue_payment_methods.findMany({
-              where: { venue_id, is_active: true },
-              orderBy: { sort_order: 'asc' },
-              select: { id: true, method_type: true, label: true, account_info: true, holder_name: true, instructions: true, qr_image_url: true }
-            });
-
-            const paymentResult = {
-              methods: paymentMethods.map(m => ({
-                id: m.id,
-                type: m.method_type,
-                name: m.label,
-                account_info: m.account_info,
-                holder_name: m.holder_name,
-                has_qr: !!m.qr_image_url,
-                instructions: m.instructions
-              })),
-              message: paymentMethods.length > 0
-                ? `Hay ${paymentMethods.length} método(s) de pago disponible(s).`
-                : 'No hay métodos de pago configurados. El cliente deberá coordinar el pago directamente con el venue.'
-            };
-
-            const toolResultContent = JSON.stringify(paymentResult);
-
-            if (chatModelConfig.provider === 'anthropic') {
-              llmMessages.push({
-                role: 'assistant',
-                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: {} }]
-              });
-              llmMessages.push({
-                role: 'user',
-                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
-              });
-            } else {
-              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
-              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
-            }
-
-            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
-              maxTokens: 1024,
-              temperature: 0.7,
-              tools: llmService.CHAT_TOOLS
-            });
-
-            llmResponse.tools_used = llmResponse.tools_used || [];
-            llmResponse.tools_used.push('get_payment_methods');
-          } else if (toolCall.function.name === 'send_payment_info') {
-            const args = JSON.parse(toolCall.function.arguments);
-
-            // Fetch the payment method
-            const paymentMethod = args.payment_method_id
-              ? await prisma.venue_payment_methods.findUnique({ where: { id: args.payment_method_id } })
-              : null;
-
-            let sendResult;
-            if (!paymentMethod) {
-              sendResult = { success: false, message: 'Método de pago no encontrado.' };
-            } else {
-              // Update estimate
-              if (args.estimate_id) {
-                await prisma.estimates.update({
-                  where: { id: args.estimate_id },
-                  data: {
-                    payment_status: 'qr_sent',
-                    payment_method_id: paymentMethod.id,
-                    updated_at: new Date()
-                  }
-                });
-              }
-
-              // Build caption
-              const amount = args.payment_amount || 0;
-              let caption = `💳 *Pago - ${paymentMethod.label}*\n`;
-              if (amount) caption += `\n💰 *Monto:* $${Number(amount).toLocaleString('es-CO')}\n`;
-              if (paymentMethod.account_info) caption += `\n📱 *Cuenta/Número:* ${paymentMethod.account_info}`;
-              if (paymentMethod.holder_name) caption += `\n👤 *Titular:* ${paymentMethod.holder_name}`;
-              if (paymentMethod.instructions) caption += `\n\n📝 ${paymentMethod.instructions}`;
-              caption += '\n\n📸 Una vez realices el pago, envía la foto del comprobante por este chat.';
-
-              // Send QR image or text via WhatsApp if source is baileys
-              if (source === 'baileys' && conversation.phone && whatsappClient.isAvailable()) {
-                try {
-                  if (paymentMethod.qr_image_url) {
-                    await whatsappClient.sendImage(venue_id, conversation.phone, paymentMethod.qr_image_url, caption);
-                  } else {
-                    await whatsappClient.sendMessage(venue_id, conversation.phone, caption);
-                  }
-                } catch (sendErr) {
-                  console.error('[payment] Failed to send payment info via WhatsApp:', sendErr.message);
-                }
-              }
-
-              sendResult = {
-                success: true,
-                method_name: paymentMethod.label,
-                has_qr: !!paymentMethod.qr_image_url,
-                message: paymentMethod.qr_image_url
-                  ? `Se envió el QR de ${paymentMethod.label} al cliente con los datos de pago.`
-                  : `Se enviaron los datos de pago de ${paymentMethod.label} al cliente.`
-              };
-            }
-
-            const toolResultContent = JSON.stringify(sendResult);
-
-            if (chatModelConfig.provider === 'anthropic') {
-              llmMessages.push({
-                role: 'assistant',
-                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
-              });
-              llmMessages.push({
-                role: 'user',
-                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
-              });
-            } else {
-              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
-              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
-            }
-
-            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
-              maxTokens: 1024,
-              temperature: 0.7
-            });
-
-            llmResponse.tools_used = llmResponse.tools_used || [];
-            llmResponse.tools_used.push('send_payment_info');
-          } else if (toolCall.function.name === 'escalate_to_human') {
-            const args = JSON.parse(toolCall.function.arguments);
-
-            // Check if escalation is enabled for this venue
-            const waConn = await prisma.whatsapp_connections.findUnique({
-              where: { venue_id }
-            });
-            const escConfig = waConn?.escalation_config || {};
-            const reason = args.reason || 'ai_decided';
-
-            // Verify the trigger is enabled
-            let escalationAllowed = true;
-            if (reason === 'client_requested' && escConfig.client_request_enabled === false) {
-              escalationAllowed = false;
-            }
-            if (reason === 'ai_decided' && escConfig.ai_escalation_enabled === false) {
-              escalationAllowed = false;
-            }
-
-            let escalateResult;
-            if (escalationAllowed) {
-              // Calculate resume_at (next 3 AM in America/Bogota if auto_resume enabled)
-              const autoResumeEnabled = escConfig.auto_resume_enabled !== false;
-              const autoResumeHour = escConfig.auto_resume_hour || 3;
-              let resumeAt = null;
-              if (autoResumeEnabled) {
-                resumeAt = getNextResumeTime(autoResumeHour);
-              }
-
-              // Mark conversation as human_attention
-              await prisma.chat_conversations.update({
-                where: { id: conversation.id },
-                data: {
-                  status: 'human_attention',
-                  escalated_at: new Date(),
-                  escalated_reason: reason,
-                  resume_at: resumeAt,
-                  updated_at: new Date()
-                }
-              });
-
-              // Send notification via system WhatsApp
-              const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
-              if (notificationPhone && whatsappClient.isAvailable()) {
-                try {
-                  const clientPhone = conversation.phone || 'desconocido';
-                  const clientName = conversation.name || 'Cliente';
-                  const resumeNote = autoResumeEnabled
-                    ? `Si no me dices nada, retomo mañana a las ${autoResumeHour}:00 AM automáticamente.`
-                    : 'Respóndeme "ya puedes seguir" cuando quieras que CabanIA retome.';
-
-                  const notificationMsg = `🔔 *Escalación CabanIA - ${venue.name || 'Venue'}*\n\n*Resumen:* ${args.summary}\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Link directo:* https://wa.me/${clientPhone}\n\nPara continuar la conversación, contacta al cliente directamente.\nCuando quieras que CabanIA retome, respóndeme: "ya puedes seguir"\n${resumeNote}`;
-
-                  await whatsappClient.sendSystemMessage(notificationPhone, notificationMsg);
-                  console.log(`[escalation] Notification sent to ${notificationPhone} for venue ${venue_id}`);
-                } catch (notifErr) {
-                  console.error('[escalation] Failed to send notification:', notifErr.message);
-                }
-              }
-
-              escalateResult = {
-                success: true,
-                message: 'Conversación escalada a un humano. El propietario ha sido notificado.',
-                reason
-              };
-            } else {
-              escalateResult = {
-                success: false,
-                message: 'El escalamiento no está habilitado para este tipo de solicitud. Continúa asistiendo al cliente.',
-                reason
-              };
-            }
-
-            const toolResultContent = JSON.stringify(escalateResult);
-
-            if (chatModelConfig.provider === 'anthropic') {
-              llmMessages.push({
-                role: 'assistant',
-                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
-              });
-              llmMessages.push({
-                role: 'user',
-                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
-              });
-            } else {
-              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
-              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
-            }
-
-            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
-              maxTokens: 1024,
-              temperature: 0.7
-            });
-
-            llmResponse.tools_used = llmResponse.tools_used || [];
-            llmResponse.tools_used.push('escalate_to_human');
-          }
-        }
-      }
-
-      // Check message limit escalation (before responding, after tool calls)
-      if (source === 'baileys' && conversation.phone) {
-        const waConn = await prisma.whatsapp_connections.findUnique({
-          where: { venue_id }
-        });
-        const escConfig = waConn?.escalation_config || {};
-        if (escConfig.message_limit_enabled && escConfig.message_limit > 0) {
-          const userMsgCount = await prisma.chat_messages.count({
-            where: { conversation_id: conversation.id, role: 'user' }
-          });
-          // Check if estimate was created for this conversation
-          const hasEstimate = await prisma.estimates.count({
-            where: { conversation_id: conversation.id }
-          });
-          if (userMsgCount >= escConfig.message_limit && hasEstimate === 0 && conversation.status !== 'human_attention') {
-            // Force escalation by message limit
-            const autoResumeEnabled = escConfig.auto_resume_enabled !== false;
-            const autoResumeHour = escConfig.auto_resume_hour || 3;
-            let resumeAt = autoResumeEnabled ? getNextResumeTime(autoResumeHour) : null;
-
-            await prisma.chat_conversations.update({
-              where: { id: conversation.id },
-              data: {
-                status: 'human_attention',
-                escalated_at: new Date(),
-                escalated_reason: 'message_limit',
-                resume_at: resumeAt,
-                updated_at: new Date()
-              }
-            });
-
-            // Notify owner
-            const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
-            if (notificationPhone && whatsappClient.isAvailable()) {
-              try {
-                const clientPhone = conversation.phone || 'desconocido';
-                const clientName = conversation.name || 'Cliente';
-                const notificationMsg = `🔔 *Escalación CabanIA - ${venue.name || 'Venue'}*\n\n*Motivo:* Límite de ${escConfig.message_limit} mensajes alcanzado sin cotización\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Link directo:* https://wa.me/${clientPhone}\n\nEl cliente lleva ${userMsgCount} mensajes sin generar cotización. Puede necesitar atención personalizada.\nResponde "ya puedes seguir" para reactivar CabanIA.`;
-
-                await whatsappClient.sendSystemMessage(notificationPhone, notificationMsg);
-              } catch (notifErr) {
-                console.error('[escalation] Failed to send limit notification:', notifErr.message);
-              }
-            }
-          }
-        }
-      }
-
-      // Track if we used a tool in this request (for rate limiting)
-      const toolsUsed = llmResponse.tools_used || [];
-      
-      // Save assistant response with tool metadata if applicable
-      const messageContent = toolsUsed.length > 0 
-        ? `${llmResponse.content}\n<!-- {"tool":"${toolsUsed[0]}"} -->`
-        : llmResponse.content;
-      
-      const assistantMessage = await prisma.chat_messages.create({
-        data: {
-          conversation_id: conversation.id,
-          role: 'assistant',
-          content: messageContent,
-          provider: chatProviderCode,
-          model: llmResponse.model,
-          tokens_used: llmResponse.usage?.total_tokens,
-          status: source === 'baileys' ? 'pending' : null
-        }
-      });
-      
-      // Update conversation timestamp
-      await prisma.chat_conversations.update({
-        where: { id: conversation.id },
-        data: { updated_at: new Date() }
+      // Process chat with LLM
+      const result = await processChat({
+        venue_id,
+        userMessage,
+        conversation,
+        source,
+        media_url,
+        media_type,
+        contact_type,
+        contact_value,
+        userId: req.user?.id
       });
 
       // Count user messages for limit tracking
@@ -7883,39 +7923,106 @@ REGLAS:
         where: { setting_key: 'public_chat_free_limit' }
       });
 
-      // Audit log for chat
-      chatTotalInputTokens += llmResponse.usage?.prompt_tokens || 0;
-      chatTotalOutputTokens += llmResponse.usage?.completion_tokens || 0;
-      logAICall({
-        venue_id,
-        feature: 'chat',
-        provider_code: chatProviderCode,
-        model: llmResponse.model || chatProviderCode,
-        system_prompt: systemPrompt,
-        user_prompt: userMessage,
-        response_content: llmResponse.content,
-        input_tokens: chatTotalInputTokens,
-        output_tokens: chatTotalOutputTokens,
-        response_time_ms: Date.now() - chatLlmStart,
-        user_id: req.user?.id,
-        conversation_id: conversation.id,
-        metadata: { tools_used: toolsUsed, source }
-      });
-
       res.json({
         conversation_id: conversation.id,
-        assistant_message_id: assistantMessage.id,
-        message: llmResponse.content,
-        provider: chatProviderCode,
-        model: llmResponse.model,
-        tokens_used: llmResponse.usage?.total_tokens,
+        assistant_message_id: result.assistantMessage.id,
+        user_message_id: userMsg.id,
+        message: result.llmResponse.content,
+        provider: result.chatProviderCode,
+        model: result.llmResponse.model,
+        tokens_used: result.llmResponse.usage?.total_tokens,
         message_count: updatedMsgCount,
         free_limit: parseInt(limitSetting2?.setting_value) || 20,
         is_verified: conversation.metadata?.verified === true
       });
     } catch (error) {
       console.error('Chat error:', error);
-      res.status(500).json({ error: error.message });
+      const status = error.statusCode || 500;
+      res.status(status).json({ error: error.message });
+    }
+  });
+
+  // POST /api/chat/:venue_id/messages/:message_id/reprocess - Reprocess a user message through AI
+  app.post('/api/chat/:venue_id/messages/:message_id/reprocess', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, message_id } = req.params;
+
+      // Find the user message
+      const targetMessage = await prisma.chat_messages.findUnique({
+        where: { id: message_id },
+        include: { conversation: true }
+      });
+
+      if (!targetMessage) {
+        return res.status(404).json({ error: 'Mensaje no encontrado' });
+      }
+
+      if (targetMessage.role !== 'user') {
+        return res.status(400).json({ error: 'Solo se pueden reprocesar mensajes del usuario' });
+      }
+
+      if (targetMessage.conversation.venue_id !== venue_id) {
+        return res.status(403).json({ error: 'El mensaje no pertenece a este venue' });
+      }
+
+      // Load conversation history up to and including the target message
+      const historyMessages = await prisma.chat_messages.findMany({
+        where: {
+          conversation_id: targetMessage.conversation_id,
+          created_at: { lt: targetMessage.created_at }
+        },
+        orderBy: { created_at: 'asc' },
+        take: 20
+      });
+
+      // Build conversation object with history (excluding the target message itself — it will be the "current" message)
+      const conversation = {
+        ...targetMessage.conversation,
+        messages: historyMessages
+      };
+
+      const source = conversation.source || 'web';
+
+      // Process chat with LLM
+      const result = await processChat({
+        venue_id,
+        userMessage: targetMessage.content,
+        conversation,
+        source,
+        media_url: targetMessage.media_url,
+        media_type: targetMessage.media_type,
+        userId: req.user?.id
+      });
+
+      // If source is baileys, send the response via WhatsApp
+      if (source === 'baileys' && conversation.phone && whatsappClient.isAvailable()) {
+        try {
+          await whatsappClient.sendMessage(venue_id, conversation.phone, result.llmResponse.content);
+          // Update status to sent
+          await prisma.chat_messages.update({
+            where: { id: result.assistantMessage.id },
+            data: { status: 'sent' }
+          });
+        } catch (sendErr) {
+          console.error('[reprocess] Failed to send via WhatsApp:', sendErr.message);
+          await prisma.chat_messages.update({
+            where: { id: result.assistantMessage.id },
+            data: { status: 'failed', error_details: sendErr.message }
+          });
+        }
+      }
+
+      res.json({
+        assistant_message_id: result.assistantMessage.id,
+        response: result.llmResponse.content,
+        model: result.llmResponse.model,
+        tokens_used: result.llmResponse.usage?.total_tokens,
+        status: result.assistantMessage.status
+      });
+    } catch (error) {
+      console.error('Reprocess error:', error);
+      const status = error.statusCode || 500;
+      res.status(status).json({ error: error.message });
     }
   });
 

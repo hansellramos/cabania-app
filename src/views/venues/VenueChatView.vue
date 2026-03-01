@@ -72,6 +72,16 @@
                       <span v-else-if="message.status === 'read'" class="status-read">&#10003;&#10003;</span>
                       <span v-else-if="message.status === 'failed'" class="text-danger">&#10007;</span>
                     </span>
+                    <button
+                      v-if="message.role === 'user' && message.id && conversationId"
+                      class="btn-reprocess ms-1"
+                      :disabled="reprocessingId === message.id"
+                      :title="'Reprocesar mensaje'"
+                      @click="reprocessMessage(message)"
+                    >
+                      <CSpinner v-if="reprocessingId === message.id" size="sm" style="width: 0.7rem; height: 0.7rem;" />
+                      <span v-else>&#8635;</span>
+                    </button>
                   </div>
                   <div v-if="isDev && message.role === 'assistant' && message.meta" class="message-meta">
                     <small class="text-muted">
@@ -232,6 +242,7 @@ const loadingConversations = ref(false)
 const estimateId = ref(null)
 const arrivedWithConversation = ref(false)
 const resumingConvId = ref(null)
+const reprocessingId = ref(null)
 const imageModalUrl = ref(null)
 const activeConvSource = ref(null) // source of the active conversation (baileys, web, etc.)
 const activeConvPhone = ref(null)
@@ -290,7 +301,7 @@ const sendMessage = async () => {
   if (!newMessage.value.trim() || !selectedProviderId.value || sending.value) return
   
   const userMessage = newMessage.value.trim()
-  messages.value.push({ role: 'user', content: userMessage })
+  messages.value.push({ id: null, role: 'user', content: userMessage })
   newMessage.value = ''
   sending.value = true
   scrollToBottom()
@@ -317,11 +328,18 @@ const sendMessage = async () => {
         conversationId.value = result.conversation_id
       }
       
+      // Update user message with ID from backend
+      if (result.user_message_id) {
+        const lastUserMsg = messages.value.findLast(m => m.role === 'user')
+        if (lastUserMsg) lastUserMsg.id = result.user_message_id
+      }
+
       // Remove tool marker from displayed content if present
       let displayContent = result.response || result.message || ''
       displayContent = displayContent.replace(/\n<!-- \{.*?\} -->/g, '')
-      
+
       messages.value.push({
+        id: result.assistant_message_id || null,
         role: 'assistant',
         content: displayContent,
         meta: {
@@ -378,6 +396,7 @@ const resumeConversation = async (conv) => {
       activeConvPhone.value = data.phone || null
       activeConvName.value = data.name || null
       messages.value = data.messages.map(m => ({
+        id: m.id,
         role: m.role,
         content: (m.content || '').replace(/\n?<!-- \{.*?\} -->/g, ''),
         media_url: m.media_url || null,
@@ -413,6 +432,36 @@ const resumeBotForConversation = async (conv) => {
     showToast('Error al reanudar el bot', 'danger')
   } finally {
     resumingConvId.value = null
+  }
+}
+
+const reprocessMessage = async (message) => {
+  reprocessingId.value = message.id
+  try {
+    const response = await fetch(`/api/chat/${route.params.id}/messages/${message.id}/reprocess`, {
+      method: 'POST',
+      credentials: 'include'
+    })
+    const result = await response.json()
+    if (response.ok) {
+      let displayContent = result.response || ''
+      displayContent = displayContent.replace(/\n?<!-- \{.*?\} -->/g, '')
+      messages.value.push({
+        id: result.assistant_message_id,
+        role: 'assistant',
+        content: displayContent,
+        created_at: new Date().toISOString(),
+        status: result.status || null,
+        meta: { model: result.model, tokens: result.tokens_used }
+      })
+      showToast('Mensaje reprocesado exitosamente')
+    } else {
+      showToast(result.error || 'Error al reprocesar', 'danger')
+    }
+  } catch {
+    showToast('Error al reprocesar el mensaje', 'danger')
+  } finally {
+    reprocessingId.value = null
   }
 }
 
@@ -460,6 +509,7 @@ const pollConversations = async () => {
       if (response.ok) {
         const data = await response.json()
         const newMessages = data.messages.map(m => ({
+          id: m.id,
           role: m.role,
           content: (m.content || '').replace(/\n?<!-- \{.*?\} -->/g, ''),
           media_url: m.media_url || null,
@@ -612,5 +662,30 @@ onUnmounted(() => {
 }
 .bubble-user .status-read {
   color: #a0d8ef;
+}
+
+.btn-reprocess {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+  color: inherit;
+  line-height: 1;
+}
+.btn-reprocess:hover {
+  opacity: 1;
+}
+.btn-reprocess:disabled {
+  cursor: not-allowed;
+  opacity: 0.3;
+}
+.bubble-user .btn-reprocess {
+  color: rgba(255,255,255,0.7);
+}
+.bubble-user .btn-reprocess:hover {
+  color: white;
 }
 </style>
