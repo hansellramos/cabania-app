@@ -186,6 +186,15 @@ async function sendMessage(venueId, phone, text) {
   await entry.socket.sendMessage(jid, { text });
 }
 
+async function sendImage(venueId, phone, imageUrl, caption) {
+  const entry = connections.get(venueId);
+  if (!entry?.socket) {
+    throw new Error('No active WhatsApp connection for this venue');
+  }
+  const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
+  await entry.socket.sendMessage(jid, { image: { url: imageUrl }, caption: caption || '' });
+}
+
 async function restoreAllConnections() {
   try {
     const activeConnections = await prisma.whatsapp_connections.findMany({
@@ -215,6 +224,7 @@ module.exports = {
   disconnectVenue,
   getStatus,
   sendMessage,
+  sendImage,
   restoreAllConnections,
   connections
 };

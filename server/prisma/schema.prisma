@@ -249,7 +249,9 @@ model venues {
   brand_color_primary           String?   @db.VarChar(7)
   brand_color_secondary         String?   @db.VarChar(7)
   logo_url                      String?
+  commission_percentage Decimal?  @db.Decimal(5, 2)
   venue_plans          venue_plans[]
+  payment_methods      venue_payment_methods[]
 }
 
 model sessions {
@@ -507,6 +509,8 @@ model chat_messages {
   model           String?            @db.VarChar(100)
   tokens_used     Int?
   cost            Decimal?           @db.Decimal
+  media_url       String?
+  media_type      String?            @db.VarChar(30)
   created_at      DateTime           @default(now()) @db.Timestamptz(6)
   conversation    chat_conversations @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
 }
@@ -525,14 +529,18 @@ model estimates {
   calculated_price Decimal?  @db.Decimal
   notes            String?
   status           String    @default("pending") @db.VarChar(50)
-  conversation_id  String?   @db.Uuid
-  created_by       String?   @db.VarChar(255)
-  created_at       DateTime  @default(now()) @db.Timestamptz(6)
-  updated_at       DateTime? @db.Timestamptz(6)
-  converted_at     DateTime? @db.Timestamptz(6)
-  accommodation_id String?   @db.Uuid
-  agreed_price     Decimal?  @db.Decimal
-  discount_note    String?
+  conversation_id   String?   @db.Uuid
+  created_by        String?   @db.VarChar(255)
+  created_at        DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime? @db.Timestamptz(6)
+  converted_at      DateTime? @db.Timestamptz(6)
+  accommodation_id  String?   @db.Uuid
+  agreed_price      Decimal?  @db.Decimal
+  discount_note     String?
+  payment_status    String?   @default("none") @db.VarChar(30)
+  payment_id        String?   @db.Uuid
+  receipt_url       String?
+  payment_method_id String?   @db.Uuid
 }
 
 model inventory_categories {
@@ -722,6 +730,26 @@ model pending_task_images {
   sort_order      Int           @default(0)
   created_at      DateTime      @default(now()) @db.Timestamptz(6)
   pending_task    pending_tasks @relation(fields: [pending_task_id], references: [id], onDelete: Cascade)
+}
+
+// ========================================
+// VENUE PAYMENT METHODS
+// ========================================
+
+model venue_payment_methods {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id     String    @db.Uuid
+  method_type  String    @db.VarChar(50)
+  label        String    @db.VarChar(100)
+  account_info String?   @db.VarChar(255)
+  holder_name  String?   @db.VarChar(255)
+  qr_image_url String?
+  instructions String?
+  is_active    Boolean   @default(true)
+  sort_order   Int       @default(0)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime? @db.Timestamptz(6)
+  venue        venues    @relation(fields: [venue_id], references: [id], onDelete: Cascade)
 }
 
 // ========================================

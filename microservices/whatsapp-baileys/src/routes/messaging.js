@@ -18,6 +18,21 @@ router.post('/send/venue', async (req, res) => {
   }
 });
 
+// POST /api/send/venue/image — send image from a venue's WhatsApp
+router.post('/send/venue/image', async (req, res) => {
+  try {
+    const { venueId, phone, imageUrl, caption } = req.body;
+    if (!venueId || !phone || !imageUrl) {
+      return res.status(400).json({ error: 'Missing venueId, phone, or imageUrl' });
+    }
+    await baileysService.sendImage(venueId, phone, imageUrl, caption);
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[messaging] Venue image send error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST /api/send/system — send message from system WhatsApp
 router.post('/send/system', async (req, res) => {
   try {

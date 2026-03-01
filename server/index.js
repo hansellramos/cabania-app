@@ -364,6 +364,26 @@ async function startServer() {
     }
   });
 
+  // Upload chat media (internal key auth for microservice, or authenticated user)
+  app.post('/api/uploads/chat-media', upload.single('file'), async (req, res) => {
+    try {
+      // Auth: either internal key or authenticated user
+      const internalKey = req.headers['x-internal-key'];
+      const isInternalAuth = internalKey && internalKey === process.env.WHATSAPP_INTERNAL_KEY;
+      if (!isInternalAuth && !req.user) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+      if (!req.file) {
+        return res.status(400).json({ error: 'No file provided' });
+      }
+      const result = await uploadImage(req.file.buffer, { type: 'chat_media', mimetype: req.file.mimetype });
+      res.json({ url: result.secure_url });
+    } catch (error) {
+      console.error('Error uploading chat media:', error);
+      res.status(500).json({ error: 'Error uploading image' });
+    }
+  });
+
   app.get('/api/organizations', async (req, res) => {
     try {
       const viewAll = req.query.viewAll === 'true';
@@ -559,8 +579,8 @@ async function startServer() {
         return res.status(404).json({ error: 'Venue not found' });
       }
 
-      // Load images, amenities, and plans in parallel
-      const [images, venueAmenityLinks, plans] = await Promise.all([
+      // Load images, amenities, plans, and payment methods in parallel
+      const [images, venueAmenityLinks, plans, paymentMethods] = await Promise.all([
         prisma.venue_images.findMany({
           where: { venue_id: venue.id },
           orderBy: { sort_order: 'asc' }
@@ -571,6 +591,11 @@ async function startServer() {
         prisma.venue_plans.findMany({
           where: { venue_id: venue.id, is_active: true },
           orderBy: { name: 'asc' }
+        }),
+        prisma.venue_payment_methods.findMany({
+          where: { venue_id: venue.id, is_active: true },
+          orderBy: { sort_order: 'asc' },
+          select: { id: true, method_type: true, label: true, account_info: true, holder_name: true, qr_image_url: true, instructions: true }
         })
       ]);
 
@@ -616,7 +641,8 @@ async function startServer() {
         },
         images,
         amenities,
-        plans: plansWithAmenities
+        plans: plansWithAmenities,
+        paymentMethods
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -961,6 +987,9 @@ async function startServer() {
       if (data.deposit_refund_hours !== undefined) {
         data.deposit_refund_hours = data.deposit_refund_hours ? parseInt(data.deposit_refund_hours, 10) : null;
       }
+      if (data.commission_percentage !== undefined) {
+        data.commission_percentage = data.commission_percentage ? parseFloat(data.commission_percentage) : null;
+      }
 
       // Auto-generate slug when is_public=true and slug is empty
       if (data.is_public && !data.slug && data.name) {
@@ -1039,6 +1068,156 @@ async function startServer() {
       }
       
       res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ========================================
+  // VENUE PAYMENT METHODS
+  // ========================================
+
+  const PAYMENT_METHOD_CATALOG = [
+    { type: 'nequi', label: 'Nequi', icon: 'cil-phone' },
+    { type: 'daviplata', label: 'Daviplata', icon: 'cil-phone' },
+    { type: 'bancolombia', label: 'Bancolombia', icon: 'cil-institution' },
+    { type: 'davivienda', label: 'Davivienda', icon: 'cil-institution' },
+    { type: 'breb', label: 'Bre-B', icon: 'cil-mobile' },
+    { type: 'pse', label: 'PSE', icon: 'cil-laptop' },
+    { type: 'credit_card_national', label: 'Tarjeta de Crédito Nacional', icon: 'cil-credit-card' },
+    { type: 'credit_card_international', label: 'Tarjeta de Crédito Internacional', icon: 'cil-credit-card' },
+    { type: 'cash', label: 'Efectivo', icon: 'cil-dollar' },
+    { type: 'custom', label: 'Otro', icon: 'cil-options' }
+  ];
+
+  app.get('/api/venues/:id/payment-methods/catalog', isAuthenticated, async (req, res) => {
+    res.json(PAYMENT_METHOD_CATALOG);
+  });
+
+  app.get('/api/venues/:id/payment-methods', isAuthenticated, async (req, res) => {
+    try {
+      const methods = await prisma.venue_payment_methods.findMany({
+        where: { venue_id: req.params.id },
+        orderBy: { sort_order: 'asc' }
+      });
+      res.json(methods);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/venues/:id/payment-methods', isAuthenticated, upload.single('qr_image'), async (req, res) => {
+    try {
+      const { method_type, label, account_info, holder_name, instructions, is_active } = req.body;
+      let qr_image_url = req.body.qr_image_url || null;
+
+      if (req.file) {
+        const result = await uploadImage(req.file.buffer, { type: 'payment_method', mimetype: req.file.mimetype });
+        qr_image_url = result.secure_url;
+      }
+
+      const maxOrder = await prisma.venue_payment_methods.aggregate({
+        where: { venue_id: req.params.id },
+        _max: { sort_order: true }
+      });
+
+      const method = await prisma.venue_payment_methods.create({
+        data: {
+          venue_id: req.params.id,
+          method_type,
+          label,
+          account_info: account_info || null,
+          holder_name: holder_name || null,
+          qr_image_url,
+          instructions: instructions || null,
+          is_active: is_active !== 'false',
+          sort_order: (maxOrder._max.sort_order || 0) + 1
+        }
+      });
+      res.json(method);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/venues/:id/payment-methods/:methodId', isAuthenticated, upload.single('qr_image'), async (req, res) => {
+    try {
+      const { method_type, label, account_info, holder_name, instructions, is_active } = req.body;
+      const data = {
+        method_type,
+        label,
+        account_info: account_info || null,
+        holder_name: holder_name || null,
+        instructions: instructions || null,
+        is_active: is_active !== 'false',
+        updated_at: new Date()
+      };
+
+      if (req.file) {
+        // Delete old QR if exists
+        const existing = await prisma.venue_payment_methods.findUnique({ where: { id: req.params.methodId } });
+        if (existing?.qr_image_url) {
+          const oldPublicId = extractPublicId(existing.qr_image_url);
+          if (oldPublicId) await deleteImage(oldPublicId);
+        }
+        const result = await uploadImage(req.file.buffer, { type: 'payment_method', mimetype: req.file.mimetype });
+        data.qr_image_url = result.secure_url;
+      } else if (req.body.qr_image_url !== undefined) {
+        data.qr_image_url = req.body.qr_image_url || null;
+      }
+
+      const method = await prisma.venue_payment_methods.update({
+        where: { id: req.params.methodId },
+        data
+      });
+      res.json(method);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/venues/:id/payment-methods/reorder', isAuthenticated, async (req, res) => {
+    try {
+      const { order } = req.body; // Array of { id, sort_order }
+      for (const item of order) {
+        await prisma.venue_payment_methods.update({
+          where: { id: item.id },
+          data: { sort_order: item.sort_order }
+        });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/venues/:id/payment-methods/:methodId', isAuthenticated, async (req, res) => {
+    try {
+      const method = await prisma.venue_payment_methods.findUnique({ where: { id: req.params.methodId } });
+      if (method?.qr_image_url) {
+        const publicId = extractPublicId(method.qr_image_url);
+        if (publicId) await deleteImage(publicId);
+      }
+      await prisma.venue_payment_methods.delete({ where: { id: req.params.methodId } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Public payment methods (no auth)
+  app.get('/api/public/venues/:slug/payment-methods', async (req, res) => {
+    try {
+      const venue = await prisma.venues.findUnique({ where: { slug: req.params.slug } });
+      if (!venue || !venue.is_public) {
+        return res.status(404).json({ error: 'Venue not found' });
+      }
+      const methods = await prisma.venue_payment_methods.findMany({
+        where: { venue_id: venue.id, is_active: true },
+        orderBy: { sort_order: 'asc' },
+        select: { id: true, method_type: true, label: true, account_info: true, holder_name: true, qr_image_url: true, instructions: true }
+      });
+      res.json(methods);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -1710,7 +1889,47 @@ async function startServer() {
           where: { payment_id: paymentId }
         });
       }
-      
+
+      // Update linked estimate and notify client via WhatsApp
+      if (verified === true) {
+        const linkedEstimate = await prisma.estimates.findFirst({
+          where: { payment_id: paymentId }
+        });
+        if (linkedEstimate) {
+          await prisma.estimates.update({
+            where: { id: linkedEstimate.id },
+            data: { payment_status: 'verified', updated_at: new Date() }
+          });
+
+          // Notify client via WhatsApp
+          if (linkedEstimate.conversation_id) {
+            const conv = await prisma.chat_conversations.findUnique({
+              where: { id: linkedEstimate.conversation_id }
+            });
+            if (conv?.phone && conv?.venue_id && whatsappClient.isAvailable()) {
+              try {
+                const venueForNotif = await prisma.venues.findUnique({ where: { id: conv.venue_id } });
+                const confirmMsg = `✅ *¡Pago Verificado!*\n\n¡Hola ${conv.name || ''}! Tu pago ha sido verificado exitosamente. Tu reserva en *${venueForNotif?.name || 'la cabaña'}* está confirmada.\n\n¡Te esperamos! 🎉`;
+                await whatsappClient.sendMessage(conv.venue_id, conv.phone, confirmMsg);
+              } catch (notifErr) {
+                console.error('[payment-verify] Failed to notify client:', notifErr.message);
+              }
+            }
+          }
+        }
+      } else if (verified === false) {
+        // Reject linked estimate
+        const linkedEstimate = await prisma.estimates.findFirst({
+          where: { payment_id: paymentId }
+        });
+        if (linkedEstimate) {
+          await prisma.estimates.update({
+            where: { id: linkedEstimate.id },
+            data: { payment_status: 'rejected', updated_at: new Date() }
+          });
+        }
+      }
+
       res.json(payment);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -4550,10 +4769,20 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       const planMap = {};
       plans.forEach(p => { planMap[p.id] = p; });
       
+      // Resolve payment method labels
+      const paymentMethodIds = [...new Set(estimates.filter(e => e.payment_method_id).map(e => e.payment_method_id))];
+      const paymentMethods = paymentMethodIds.length > 0 ? await prisma.venue_payment_methods.findMany({
+        where: { id: { in: paymentMethodIds } },
+        select: { id: true, label: true }
+      }) : [];
+      const pmMap = {};
+      paymentMethods.forEach(pm => { pmMap[pm.id] = pm.label; });
+
       const enriched = estimates.map(e => ({
         ...e,
         venue: venueMap[e.venue_id] || null,
-        plan: e.plan_id ? (planMap[e.plan_id] || null) : null
+        plan: e.plan_id ? (planMap[e.plan_id] || null) : null,
+        payment_method_label: e.payment_method_id ? (pmMap[e.payment_method_id] || null) : null
       }));
       
       res.json(enriched);
@@ -4574,8 +4803,9 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       
       const venue = await prisma.venues.findUnique({ where: { id: estimate.venue_id } });
       const plan = estimate.plan_id ? await prisma.venue_plans.findUnique({ where: { id: estimate.plan_id } }) : null;
-      
-      res.json({ ...estimate, venue, plan });
+      const paymentMethod = estimate.payment_method_id ? await prisma.venue_payment_methods.findUnique({ where: { id: estimate.payment_method_id } }) : null;
+
+      res.json({ ...estimate, venue, plan, payment_method_label: paymentMethod?.label || null });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -6414,7 +6644,7 @@ REGLAS:
   app.post('/api/chat/:venue_id', async (req, res) => {
     try {
       const { venue_id } = req.params;
-      const { message, conversation_id, provider_id, source = 'web', contact_type, contact_value } = req.body;
+      const { message, conversation_id, provider_id, source = 'web', contact_type, contact_value, media_url, media_type } = req.body;
 
       // Validate internal key for Baileys microservice callbacks
       if (source === 'baileys' && process.env.WHATSAPP_INTERNAL_KEY) {
@@ -6560,9 +6790,73 @@ REGLAS:
         data: {
           conversation_id: conversation.id,
           role: 'user',
-          content: userMessage
+          content: userMessage,
+          media_url: media_url || null,
+          media_type: media_type || null
         }
       });
+
+      // Auto-detect payment receipt: if image + estimate with payment_status 'qr_sent'
+      let receiptContext = null;
+      if (media_url && media_type === 'image') {
+        const pendingEstimate = await prisma.estimates.findFirst({
+          where: {
+            conversation_id: conversation.id,
+            payment_status: 'qr_sent'
+          },
+          orderBy: { created_at: 'desc' }
+        });
+        if (pendingEstimate) {
+          // Update estimate with receipt
+          await prisma.estimates.update({
+            where: { id: pendingEstimate.id },
+            data: {
+              payment_status: 'receipt_received',
+              receipt_url: media_url,
+              updated_at: new Date()
+            }
+          });
+
+          // Create payment record
+          const paymentMethodRecord = pendingEstimate.payment_method_id
+            ? await prisma.venue_payment_methods.findUnique({ where: { id: pendingEstimate.payment_method_id } })
+            : null;
+
+          const payment = await prisma.payments.create({
+            data: {
+              amount: pendingEstimate.agreed_price || pendingEstimate.calculated_price,
+              payment_method: paymentMethodRecord?.label || 'WhatsApp',
+              receipt_url: media_url,
+              verified: false,
+              created_by: 'chat_ai',
+              type: 'accommodation'
+            }
+          });
+
+          await prisma.estimates.update({
+            where: { id: pendingEstimate.id },
+            data: { payment_id: payment.id, updated_at: new Date() }
+          });
+
+          // Notify venue owner via system WhatsApp
+          const waConn = await prisma.whatsapp_connections.findUnique({ where: { venue_id } });
+          const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
+          if (notificationPhone && whatsappClient.isAvailable()) {
+            try {
+              const clientName = conversation.name || 'Cliente';
+              const clientPhone = conversation.phone || 'desconocido';
+              const amount = pendingEstimate.agreed_price || pendingEstimate.calculated_price || 'N/A';
+              const methodName = paymentMethodRecord?.label || 'N/A';
+              const notifMsg = `💰 *Comprobante de Pago Recibido - ${venue.name || 'Venue'}*\n\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Monto:* $${amount}\n*Método:* ${methodName}\n\n🔗 Verifica el pago en el sistema para confirmar la reserva.`;
+              await whatsappClient.sendSystemMessage(notificationPhone, notifMsg);
+            } catch (notifErr) {
+              console.error('[payment] Failed to send receipt notification:', notifErr.message);
+            }
+          }
+
+          receiptContext = '[El cliente envió un comprobante de pago. El sistema ya lo registró automáticamente. Confirma al cliente que recibiste su comprobante y que será verificado por el equipo pronto.]';
+        }
+      }
       
       // Build context and messages
       const context = llmService.buildVenueContext(venue, templates, plans);
@@ -6578,8 +6872,9 @@ REGLAS:
         llmMessages.push({ role: msg.role, content: msg.content });
       }
       
-      // Add current message
-      llmMessages.push({ role: 'user', content: userMessage });
+      // Add current message (with receipt context if applicable)
+      const finalUserMessage = receiptContext ? `${userMessage}\n\n${receiptContext}` : userMessage;
+      llmMessages.push({ role: 'user', content: finalUserMessage });
       
       // Call LLM using configured model with tools
       const chatLlmStart = Date.now();
@@ -6991,6 +7286,132 @@ REGLAS:
             
             llmResponse.tools_used = llmResponse.tools_used || [];
             llmResponse.tools_used.push('create_estimate');
+          } else if (toolCall.function.name === 'get_payment_methods') {
+            // Get active payment methods for this venue
+            const paymentMethods = await prisma.venue_payment_methods.findMany({
+              where: { venue_id, is_active: true },
+              orderBy: { sort_order: 'asc' },
+              select: { id: true, method_type: true, label: true, account_info: true, holder_name: true, instructions: true, qr_image_url: true }
+            });
+
+            const paymentResult = {
+              methods: paymentMethods.map(m => ({
+                id: m.id,
+                type: m.method_type,
+                name: m.label,
+                account_info: m.account_info,
+                holder_name: m.holder_name,
+                has_qr: !!m.qr_image_url,
+                instructions: m.instructions
+              })),
+              message: paymentMethods.length > 0
+                ? `Hay ${paymentMethods.length} método(s) de pago disponible(s).`
+                : 'No hay métodos de pago configurados. El cliente deberá coordinar el pago directamente con el venue.'
+            };
+
+            const toolResultContent = JSON.stringify(paymentResult);
+
+            if (chatModelConfig.provider === 'anthropic') {
+              llmMessages.push({
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: {} }]
+              });
+              llmMessages.push({
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+              });
+            } else {
+              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+            }
+
+            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+              maxTokens: 1024,
+              temperature: 0.7,
+              tools: llmService.CHAT_TOOLS
+            });
+
+            llmResponse.tools_used = llmResponse.tools_used || [];
+            llmResponse.tools_used.push('get_payment_methods');
+          } else if (toolCall.function.name === 'send_payment_info') {
+            const args = JSON.parse(toolCall.function.arguments);
+
+            // Fetch the payment method
+            const paymentMethod = args.payment_method_id
+              ? await prisma.venue_payment_methods.findUnique({ where: { id: args.payment_method_id } })
+              : null;
+
+            let sendResult;
+            if (!paymentMethod) {
+              sendResult = { success: false, message: 'Método de pago no encontrado.' };
+            } else {
+              // Update estimate
+              if (args.estimate_id) {
+                await prisma.estimates.update({
+                  where: { id: args.estimate_id },
+                  data: {
+                    payment_status: 'qr_sent',
+                    payment_method_id: paymentMethod.id,
+                    updated_at: new Date()
+                  }
+                });
+              }
+
+              // Build caption
+              const amount = args.payment_amount || 0;
+              let caption = `💳 *Pago - ${paymentMethod.label}*\n`;
+              if (amount) caption += `\n💰 *Monto:* $${Number(amount).toLocaleString('es-CO')}\n`;
+              if (paymentMethod.account_info) caption += `\n📱 *Cuenta/Número:* ${paymentMethod.account_info}`;
+              if (paymentMethod.holder_name) caption += `\n👤 *Titular:* ${paymentMethod.holder_name}`;
+              if (paymentMethod.instructions) caption += `\n\n📝 ${paymentMethod.instructions}`;
+              caption += '\n\n📸 Una vez realices el pago, envía la foto del comprobante por este chat.';
+
+              // Send QR image or text via WhatsApp if source is baileys
+              if (source === 'baileys' && conversation.phone && whatsappClient.isAvailable()) {
+                try {
+                  if (paymentMethod.qr_image_url) {
+                    await whatsappClient.sendImage(venue_id, conversation.phone, paymentMethod.qr_image_url, caption);
+                  } else {
+                    await whatsappClient.sendMessage(venue_id, conversation.phone, caption);
+                  }
+                } catch (sendErr) {
+                  console.error('[payment] Failed to send payment info via WhatsApp:', sendErr.message);
+                }
+              }
+
+              sendResult = {
+                success: true,
+                method_name: paymentMethod.label,
+                has_qr: !!paymentMethod.qr_image_url,
+                message: paymentMethod.qr_image_url
+                  ? `Se envió el QR de ${paymentMethod.label} al cliente con los datos de pago.`
+                  : `Se enviaron los datos de pago de ${paymentMethod.label} al cliente.`
+              };
+            }
+
+            const toolResultContent = JSON.stringify(sendResult);
+
+            if (chatModelConfig.provider === 'anthropic') {
+              llmMessages.push({
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
+              });
+              llmMessages.push({
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+              });
+            } else {
+              llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+              llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+            }
+
+            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+              maxTokens: 1024,
+              temperature: 0.7
+            });
+
+            llmResponse.tools_used = llmResponse.tools_used || [];
+            llmResponse.tools_used.push('send_payment_info');
           } else if (toolCall.function.name === 'escalate_to_human') {
             const args = JSON.parse(toolCall.function.arguments);
 

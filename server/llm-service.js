@@ -330,6 +330,8 @@ HERRAMIENTAS DISPONIBLES:
 - "get_plans": Para consultar planes disponibles con precios y lo que incluyen
 - "check_availability": Para verificar disponibilidad en fechas específicas
 - "create_estimate": Para crear una cotización cuando el cliente quiera reservar
+- "get_payment_methods": Para obtener los métodos de pago disponibles del venue
+- "send_payment_info": Para enviar al cliente los datos de pago del método elegido (QR, número de cuenta, etc.)
 - "escalate_to_human": Para escalar la conversación a un humano real
 
 FLUJO DE CONVERSACIÓN:
@@ -372,6 +374,15 @@ CONFIRMACIÓN DE RESERVA:
   5. Número de niños (puede ser 0)
 - Si falta información, pregunta específicamente por lo que falta.
 - Una vez creada la cotización, confirma los detalles al cliente.
+
+FLUJO DE PAGO (después de crear cotización):
+1. Una vez creada la cotización, usa "get_payment_methods" para obtener los métodos de pago disponibles
+2. Presenta las opciones al cliente de forma clara (ej: "Puedes pagar por Nequi, Daviplata o Bancolombia")
+3. Cuando el cliente elija un método, usa "send_payment_info" con el estimate_id y el payment_method_id elegido
+4. El sistema enviará automáticamente el QR o datos de la cuenta al cliente
+5. Cuando el cliente envíe una imagen (comprobante), el sistema la procesará automáticamente
+6. NO confirmes el pago tú mismo — solo el venue puede verificar pagos
+7. Informa al cliente que su comprobante fue recibido y será verificado pronto
 
 ESCALAMIENTO A HUMANO:
 - Si el cliente pide hablar con un humano, una persona real, un encargado, el dueño, o similar → usa escalate_to_human con reason "client_requested"
@@ -538,6 +549,43 @@ const CHAT_TOOLS = [
           }
         },
         required: ['customer_name', 'plan_name', 'check_in', 'adults']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_payment_methods',
+      description: 'Obtiene los métodos de pago disponibles del venue (Nequi, Daviplata, Bancolombia, etc.). Usar después de crear una cotización para ofrecer al cliente las opciones de pago.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: []
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'send_payment_info',
+      description: 'Envía al cliente la información de pago del método elegido (datos de cuenta, QR si existe). Usar cuando el cliente ya eligió un método de pago. Actualiza la cotización con el estado de pago.',
+      parameters: {
+        type: 'object',
+        properties: {
+          estimate_id: {
+            type: 'string',
+            description: 'ID de la cotización/estimate'
+          },
+          payment_method_id: {
+            type: 'string',
+            description: 'ID del método de pago elegido por el cliente'
+          },
+          payment_amount: {
+            type: 'number',
+            description: 'Monto a pagar'
+          }
+        },
+        required: ['estimate_id', 'payment_method_id']
       }
     }
   },

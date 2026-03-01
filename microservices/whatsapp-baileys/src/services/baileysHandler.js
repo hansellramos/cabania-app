@@ -4,6 +4,7 @@
  * Calls the main app's chat API via MAIN_APP_URL instead of localhost.
  */
 
+const { downloadMediaMessage } = require('baileys');
 const { prisma } = require('../db');
 const config = require('../config');
 
@@ -20,8 +21,43 @@ async function handleMessage(venueId, socket, message) {
     if (remoteJid.endsWith('@g.us')) return;
     if (msg.key?.fromMe) return;
 
+    // Handle image messages
+    let mediaUrl = null;
+    let mediaType = null;
+    if (msg.message?.imageMessage) {
+      try {
+        const buffer = await downloadMediaMessage(msg, 'buffer', {});
+        // Upload to main app
+        const uploadUrl = `${config.MAIN_APP_URL}/api/uploads/chat-media`;
+        const formData = new FormData();
+        formData.append('file', new Blob([buffer], { type: 'image/jpeg' }), 'image.jpg');
+
+        const uploadHeaders = {};
+        if (config.MAIN_APP_INTERNAL_KEY) {
+          uploadHeaders['X-Internal-Key'] = config.MAIN_APP_INTERNAL_KEY;
+        }
+
+        const uploadRes = await fetch(uploadUrl, {
+          method: 'POST',
+          headers: uploadHeaders,
+          body: formData
+        });
+
+        if (uploadRes.ok) {
+          const uploadData = await uploadRes.json();
+          mediaUrl = uploadData.url;
+          mediaType = 'image';
+          console.log(`[baileys] Image uploaded for venue ${venueId}: ${mediaUrl}`);
+        } else {
+          console.error('[baileys] Failed to upload image:', await uploadRes.text());
+        }
+      } catch (imgErr) {
+        console.error('[baileys] Error downloading/uploading image:', imgErr.message);
+      }
+    }
+
     const messageText = extractText(msg.message);
-    if (!messageText) return;
+    if (!messageText && !mediaUrl) return;
 
     const senderPhone = remoteJid.replace('@s.whatsapp.net', '');
     const pushName = msg.pushName || null;
@@ -60,11 +96,13 @@ async function handleMessage(venueId, socket, message) {
     // Call the main app's chat API via HTTP
     const chatUrl = `${config.MAIN_APP_URL}/api/chat/${venueId}`;
     const body = {
-      message: messageText,
+      message: messageText || (mediaUrl ? '[Imagen]' : ''),
       source: 'baileys',
       visitor_phone: senderPhone,
       visitor_name: pushName,
-      conversation_id: conversationId
+      conversation_id: conversationId,
+      media_url: mediaUrl || undefined,
+      media_type: mediaType || undefined
     };
 
     const headers = { 'Content-Type': 'application/json' };

@@ -246,6 +246,19 @@
       </div>
     </div>
     <div class="mb-3">
+      <CFormLabel for="commissionPercentage">Comisión del Venue (%)</CFormLabel>
+      <CFormInput
+        id="commissionPercentage"
+        v-model="form.commission_percentage"
+        type="number"
+        step="0.01"
+        min="0"
+        max="100"
+        placeholder="Ej: 10.00"
+      />
+      <div class="form-text">Porcentaje de comisión que cobra la plataforma sobre reservas.</div>
+    </div>
+    <div class="mb-3">
       <CFormCheck
         id="venueIsPublic"
         v-model="form.is_public"
