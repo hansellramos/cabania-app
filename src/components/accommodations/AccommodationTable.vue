@@ -47,7 +47,7 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="item in paginatedAccommodations" :key="item.id">
+        <tr v-for="item in paginatedAccommodations" :key="item.id" :class="{ 'table-secondary': item._redacted }">
           <td>
             <router-link v-if="item.venue_data?.id" :to="`/business/venues/${item.venue_data.id}/read`" class="text-decoration-none">
               {{ item.venue_data.name }}
@@ -55,23 +55,30 @@
             <span v-else>—</span>
           </td>
           <td class="d-mobile-none">
-            <router-link v-if="item.venue_data?.organization_data?.id" :to="`/business/organizations/${item.venue_data.organization_data.id}/read`" class="text-decoration-none">
+            <template v-if="item._redacted">—</template>
+            <router-link v-else-if="item.venue_data?.organization_data?.id" :to="`/business/organizations/${item.venue_data.organization_data.id}/read`" class="text-decoration-none">
               {{ item.venue_data.organization_data.name }}
             </router-link>
             <span v-else>—</span>
           </td>
           <td>{{ formatDate(item.date) }}</td>
           <td class="d-mobile-none">{{ formatDuration(item.duration) }}</td>
-          <td class="d-mobile-none">{{ formatTime(item.time) }}</td>
-          <td class="d-mobile-none">{{ calcCheckout(item.time, item.duration, item.date) }}</td>
+          <td class="d-mobile-none">{{ item._redacted ? '—' : formatTime(item.time) }}</td>
+          <td class="d-mobile-none">{{ item._redacted ? '—' : calcCheckout(item.time, item.duration, item.date) }}</td>
           <td>
-            <router-link v-if="item.customer_data?.id" :to="`/business/contacts/${item.customer_data.id}/read`" class="text-decoration-none">
-              {{ item.customer_data.fullname || item.customer_data.user_data?.email }}
-            </router-link>
-            <span v-else>—</span>
+            <template v-if="item._redacted">
+              <span class="text-muted fst-italic">Reservado</span>
+            </template>
+            <template v-else>
+              <router-link v-if="item.customer_data?.id" :to="`/business/contacts/${item.customer_data.id}/read`" class="text-decoration-none">
+                {{ item.customer_data.fullname || item.customer_data.user_data?.email }}
+              </router-link>
+              <span v-else>—</span>
+            </template>
           </td>
           <td class="d-mobile-none">
-            <template v-if="getAgreedPrice(item) > 0">
+            <template v-if="item._redacted">—</template>
+            <template v-else-if="getAgreedPrice(item) > 0">
               <span class="fw-bold">${{ formatCurrency(getAgreedPrice(item)) }}</span>
               <template v-if="pricesDiffer(item)">
                 <br>
@@ -84,11 +91,15 @@
             <span v-else>—</span>
           </td>
           <td class="d-mobile-none">
-            <span v-if="item.total_paid > 0" class="text-success fw-bold">${{ formatCurrency(item.total_paid) }}</span>
-            <span v-else class="text-muted">$0</span>
+            <template v-if="item._redacted">—</template>
+            <template v-else>
+              <span v-if="item.total_paid > 0" class="text-success fw-bold">${{ formatCurrency(item.total_paid) }}</span>
+              <span v-else class="text-muted">$0</span>
+            </template>
           </td>
           <td>
-            <template v-if="getAgreedPrice(item) > 0">
+            <template v-if="item._redacted">—</template>
+            <template v-else-if="getAgreedPrice(item) > 0">
               <span v-if="item.pending_balance > 0" class="text-danger fw-bold">${{ formatCurrency(item.pending_balance) }}</span>
               <span v-else-if="item.pending_balance === 0" :class="['badge', colorMode === 'dark' ? 'border border-success text-success' : 'bg-success text-white']">Pagado</span>
               <span v-else class="text-warning">${{ formatCurrency(item.pending_balance) }}</span>
@@ -96,7 +107,7 @@
             <span v-else>—</span>
           </td>
           <td>
-            <div class="d-flex gap-1 flex-nowrap">
+            <div v-if="!item._redacted" class="d-flex gap-1 flex-nowrap">
               <CButton size="sm" color="info" variant="ghost" @click="$router.push(`/business/accommodations/${item.id}`)" title="Ver">
                 <CIcon icon="cil-zoom-in" />
               </CButton>

@@ -24,6 +24,26 @@ const data = [
     ],
     is_system: true,
   },
+  {
+    code: 'organization:partner',
+    name: 'Aliado',
+    description: 'Puede ver disponibilidad, ver agenda sin detalles, y crear/gestionar sus propias reservas en organizaciones asignadas',
+    permissions: [
+      'organizations:view',
+      'venues:view',
+      'accommodations:view:own',     // ve agenda como bloques ocupados + detalles solo de lo suyo
+      'accommodations:create',       // puede crear reservas (created_by se guarda automáticamente)
+      'accommodations:edit:own',     // puede editar solo lo suyo
+      'accommodations:delete:own',   // puede eliminar solo lo suyo
+      'contacts:view:own',           // solo contactos de sus reservas (protección de base de datos)
+      'contacts:create',             // puede crear contactos al reservar
+      'payments:view:own',           // solo pagos de sus reservas
+      'payments:create',             // puede registrar pagos en sus reservas
+      'payments:verify:own',         // puede verificar pagos de sus reservas
+      'deposits:view:own',           // solo depósitos de sus reservas
+    ],
+    is_system: true,
+  },
 ];
 
 async function seed(prisma) {

@@ -89,9 +89,35 @@ async function getAccessibleVenueIds(userPermissions) {
   return venues.map(v => v.id);
 }
 
+/**
+ * Verifica si el usuario tiene la versión :own de un permiso
+ * pero NO la versión completa. Esto significa que solo puede
+ * acceder a datos que él creó (created_by === userId).
+ *
+ * Ejemplo: hasOwnOnly(perms, 'accommodations:view')
+ * → true si tiene 'accommodations:view:own' pero NO 'accommodations:view'
+ */
+function hasOwnOnly(userPermissions, basePermission) {
+  if (!userPermissions?.permissions) return false;
+  if (userPermissions.isSuperAdmin) return false;
+  const perms = userPermissions.permissions;
+  return perms.includes(`${basePermission}:own`) && !perms.includes(basePermission);
+}
+
+/**
+ * Verifica si el usuario tiene alguno de los permisos listados.
+ */
+function hasAnyPermission(userPermissions, permissions) {
+  if (!userPermissions?.permissions) return false;
+  if (userPermissions.isSuperAdmin) return true;
+  return permissions.some(p => userPermissions.permissions.includes(p));
+}
+
 module.exports = {
   getUserPermissions,
   hasPermission,
+  hasOwnOnly,
+  hasAnyPermission,
   canViewAllOrganizations,
   requirePermission,
   loadUserPermissions,

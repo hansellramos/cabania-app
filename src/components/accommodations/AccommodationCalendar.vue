@@ -109,18 +109,21 @@ const events = computed(() => {
     const durationSec = Number(acc.duration) || 86400
     const end = new Date(start.getTime() + durationSec * 1000)
     
-    const customerName = acc.customer_data?.fullname || acc.customer_data?.user_data?.email || 'Sin cliente'
+    const isRedacted = acc._redacted === true
+    const customerName = isRedacted ? 'Reservado' : (acc.customer_data?.fullname || acc.customer_data?.user_data?.email || 'Sin cliente')
     const venueName = acc.venue_data?.name || 'Sin venue'
-    const orgName = acc.venue_data?.organization_data?.name || ''
-    const attendees = formatAttendees(acc.adults, acc.children)
-    
+    const orgName = isRedacted ? '' : (acc.venue_data?.organization_data?.name || '')
+    const attendees = isRedacted ? '' : formatAttendees(acc.adults, acc.children)
+
     return {
       id: acc.id,
-      title: `${attendees ? attendees + ' ' : ''}${customerName} - ${venueName}${orgName ? ' (' + orgName + ')' : ''}`,
+      title: isRedacted
+        ? `Reservado - ${venueName}`
+        : `${attendees ? attendees + ' ' : ''}${customerName} - ${venueName}${orgName ? ' (' + orgName + ')' : ''}`,
       start: start.toISOString(),
       end: end.toISOString(),
-      classNames: [getVenueClass(acc.venue)],
-      extendedProps: { accommodation: acc }
+      classNames: isRedacted ? ['fc-event--redacted'] : [getVenueClass(acc.venue)],
+      extendedProps: { accommodation: acc, redacted: isRedacted }
     }
   }).filter(Boolean)
 })
@@ -139,6 +142,7 @@ function getVenueClass(venueId) {
 }
 
 function handleEventClick(info) {
+  if (info.event.extendedProps?.redacted) return
   const accId = info.event.id
   router.push(`/business/accommodations/${accId}`)
 }
@@ -174,5 +178,11 @@ onMounted(load)
 }
 .fc-event {
   cursor: pointer;
+}
+.fc-event--redacted {
+  background-color: #9e9e9e !important;
+  border-color: #757575 !important;
+  opacity: 0.7;
+  cursor: default;
 }
 </style>
