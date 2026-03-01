@@ -20,6 +20,38 @@
       </CCard>
     </CCol>
     
+    <CCol :xs="12">
+      <CCard class="mb-4">
+        <CCardHeader>
+          <strong>Sistema</strong>
+        </CCardHeader>
+        <CCardBody>
+          <div class="d-flex gap-2 flex-wrap">
+            <RouterLink to="/admin/system-whatsapp">
+              <CButton color="success" variant="outline">
+                <CIcon name="cil-phone" class="me-1" /> WhatsApp Sistema
+              </CButton>
+            </RouterLink>
+            <RouterLink to="/admin/ai-settings">
+              <CButton color="info" variant="outline">
+                <CIcon name="cil-bolt" class="me-1" /> Configuración IA
+              </CButton>
+            </RouterLink>
+            <RouterLink to="/admin/ai-usage">
+              <CButton color="secondary" variant="outline">
+                <CIcon name="cil-chart" class="me-1" /> Uso de IA
+              </CButton>
+            </RouterLink>
+            <RouterLink to="/admin/message-templates">
+              <CButton color="warning" variant="outline">
+                <CIcon name="cil-speech" class="me-1" /> Templates de Mensajes
+              </CButton>
+            </RouterLink>
+          </div>
+        </CCardBody>
+      </CCard>
+    </CCol>
+
     <CCol :xs="12" v-if="user?.is_super_admin">
       <CCard class="mb-4 border-warning">
         <CCardHeader class="bg-warning bg-opacity-25">

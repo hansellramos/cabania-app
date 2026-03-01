@@ -20,6 +20,9 @@
             <RouterLink :to="{ path: '/next', query: { venues: venue.id } }">
               <CButton color="info" size="sm">Próximos</CButton>
             </RouterLink>
+            <RouterLink :to="`/business/venues/${venue.id}/whatsapp`">
+              <CButton color="success" size="sm" variant="outline">WhatsApp</CButton>
+            </RouterLink>
             <RouterLink :to="`/venues/${venue.id}/chat`">
               <CButton color="dark" size="sm">Chat IA</CButton>
             </RouterLink>
