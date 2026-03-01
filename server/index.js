@@ -7,7 +7,7 @@ const multer = require('multer');
 const { uploadImage, deleteImage, extractPublicId } = require('./upload-service');
 const { prisma } = require('./db');
 const { setupAuth, isAuthenticated } = require('./auth/replitAuth');
-const { loadUserPermissions, hasPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
+const { loadUserPermissions, hasPermission, hasOwnOnly, hasAnyPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
 const llmService = require('./llm-service');
 
 // Baileys WhatsApp service (only available outside Vercel)
@@ -1052,6 +1052,19 @@ async function startServer() {
         });
       }
       
+      // :own pattern — only show contacts linked to user's own accommodations
+      if (hasOwnOnly(req.userPermissions, 'contacts:view')) {
+        const currentUserId = req.user ? String(req.user.claims?.sub) : null;
+        if (!currentUserId) return res.json([]);
+        const ownAccommodations = await prisma.accommodations.findMany({
+          where: { created_by: currentUserId, customer: { not: null } },
+          select: { customer: true }
+        });
+        const ownContactIds = [...new Set(ownAccommodations.map(a => a.customer))];
+        const filtered = contacts.filter(c => ownContactIds.includes(c.id));
+        return res.json(filtered);
+      }
+
       res.json(contacts);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -1265,7 +1278,36 @@ async function startServer() {
           pending_balance: agreedPrice - totalPaid
         };
       });
-      
+
+      // :own pattern — redact details for accommodations not created by this user
+      if (hasOwnOnly(req.userPermissions, 'accommodations:view')) {
+        const currentUserId = req.user ? String(req.user.claims?.sub) : null;
+        const result = enriched.map(a => {
+          if (a.created_by === currentUserId) return a;
+          return {
+            id: a.id,
+            venue: a.venue,
+            date: a.date,
+            duration: a.duration,
+            time: a.time,
+            plan_id: a.plan_id,
+            created_at: a.created_at,
+            venue_data: a.venue_data ? { id: a.venue_data.id, name: a.venue_data.name } : null,
+            customer: null,
+            customer_data: null,
+            adults: null,
+            children: null,
+            agreed_price: null,
+            calculated_price: null,
+            total_paid: null,
+            pending_balance: null,
+            created_by: null,
+            _redacted: true,
+          };
+        });
+        return res.json(result);
+      }
+
       res.json(enriched);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -1310,6 +1352,28 @@ async function startServer() {
         }
       }
       
+      // :own pattern — redact if user only has accommodations:view:own and this isn't theirs
+      if (hasOwnOnly(req.userPermissions, 'accommodations:view')) {
+        const currentUserId = req.user ? String(req.user.claims?.sub) : null;
+        if (accommodation.created_by !== currentUserId) {
+          return res.json({
+            id: accommodation.id,
+            venue: accommodation.venue,
+            date: accommodation.date,
+            duration: accommodation.duration,
+            time: accommodation.time,
+            plan_id: accommodation.plan_id,
+            created_at: accommodation.created_at,
+            venue_data: venue_data ? { id: venue_data.id, name: venue_data.name } : null,
+            customer: null, customer_data: null,
+            adults: null, children: null,
+            agreed_price: null, calculated_price: null,
+            created_by: null,
+            _redacted: true,
+          });
+        }
+      }
+
       res.json({ ...accommodation, venue_data, customer_data });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -1342,7 +1406,10 @@ async function startServer() {
         data.time = new Date(time);
       }
       data.customer = customer === '' ? null : customer;
-      
+      if (req.user) {
+        data.created_by = String(req.user.claims?.sub);
+      }
+
       const accommodation = await prisma.accommodations.create({ data });
       res.json(accommodation);
     } catch (error) {
@@ -1352,9 +1419,18 @@ async function startServer() {
 
   app.put('/api/accommodations/:id', isAuthenticated, async (req, res) => {
     try {
+      // :own pattern — only allow editing own accommodations
+      if (hasOwnOnly(req.userPermissions, 'accommodations:edit')) {
+        const existing = await prisma.accommodations.findUnique({ where: { id: req.params.id }, select: { created_by: true } });
+        const currentUserId = String(req.user.claims?.sub);
+        if (!existing || existing.created_by !== currentUserId) {
+          return res.status(403).json({ error: 'Solo puede editar reservas que usted creó' });
+        }
+      }
+
       const { venue, date, time, duration, customer, adults, children, plan_id, calculated_price, agreed_price } = req.body;
       const parseFloatOrNull = (val) => val === '' || val === null || val === undefined ? null : parseFloat(val);
-      
+
       const data = {
         venue,
         duration: parseFloat(duration) || null,
@@ -1391,6 +1467,15 @@ async function startServer() {
 
   app.delete('/api/accommodations/:id', isAuthenticated, async (req, res) => {
     try {
+      // :own pattern — only allow deleting own accommodations
+      if (hasOwnOnly(req.userPermissions, 'accommodations:delete')) {
+        const existing = await prisma.accommodations.findUnique({ where: { id: req.params.id }, select: { created_by: true } });
+        const currentUserId = String(req.user.claims?.sub);
+        if (!existing || existing.created_by !== currentUserId) {
+          return res.status(403).json({ error: 'Solo puede eliminar reservas que usted creó' });
+        }
+      }
+
       await prisma.accommodations.delete({
         where: { id: req.params.id }
       });
@@ -1496,7 +1581,19 @@ async function startServer() {
         created_by_user: p.created_by ? usersMap[p.created_by] : null,
         accommodation_data: p.accommodation ? accMap[p.accommodation] : null
       }));
-      
+
+      // :own pattern — only show payments for user's own accommodations
+      if (hasOwnOnly(req.userPermissions, 'payments:view')) {
+        const currentUserId = req.user ? String(req.user.claims?.sub) : null;
+        if (!currentUserId) return res.json([]);
+        const ownAccIds = await prisma.accommodations.findMany({
+          where: { created_by: currentUserId },
+          select: { id: true }
+        });
+        const ownAccIdSet = new Set(ownAccIds.map(a => a.id));
+        return res.json(enriched.filter(p => p.accommodation && ownAccIdSet.has(p.accommodation)));
+      }
+
       res.json(enriched);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -1603,16 +1700,27 @@ async function startServer() {
     try {
       const { verified } = req.body;
       const paymentId = req.params.id;
-      
+
       // Get current payment to access accommodation info
       const currentPayment = await prisma.payments.findUnique({
         where: { id: paymentId }
       });
-      
+
       if (!currentPayment) {
         return res.status(404).json({ error: 'Payment not found' });
       }
-      
+
+      // :own pattern — only allow verifying payments for own accommodations
+      if (hasOwnOnly(req.userPermissions, 'payments:verify')) {
+        const currentUserId = String(req.user.claims?.sub);
+        if (currentPayment.accommodation) {
+          const acc = await prisma.accommodations.findUnique({ where: { id: currentPayment.accommodation }, select: { created_by: true } });
+          if (!acc || acc.created_by !== currentUserId) {
+            return res.status(403).json({ error: 'Solo puede verificar pagos de sus propias reservas' });
+          }
+        }
+      }
+
       // Look up the user by their Replit ID (which is the primary key in users table)
       const replitId = String(req.user?.claims?.sub);
       const dbUser = await prisma.users.findUnique({
@@ -3659,7 +3767,18 @@ async function startServer() {
         venue_data: e.venue_id ? venuesMap[e.venue_id] : null,
         organization_data: e.organization_id ? orgsMap[e.organization_id] : null
       }));
-      
+
+      // :own pattern — only show expenses linked to user's own accommodations
+      if (hasOwnOnly(req.userPermissions, 'deposits:view')) {
+        const currentUserId = String(req.user.claims?.sub);
+        const ownAccIds = await prisma.accommodations.findMany({
+          where: { created_by: currentUserId },
+          select: { id: true }
+        });
+        const ownAccIdSet = new Set(ownAccIds.map(a => a.id));
+        return res.json(enriched.filter(e => e.accommodation_id && ownAccIdSet.has(e.accommodation_id)));
+      }
+
       res.json(enriched);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -4127,7 +4246,18 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
           venue_data: d.venue_id ? venuesMap[d.venue_id] : null
         };
       });
-      
+
+      // :own pattern — only show deposits for user's own accommodations
+      if (hasOwnOnly(req.userPermissions, 'deposits:view')) {
+        const currentUserId = String(req.user.claims?.sub);
+        const ownAccIds = await prisma.accommodations.findMany({
+          where: { created_by: currentUserId },
+          select: { id: true }
+        });
+        const ownAccIdSet = new Set(ownAccIds.map(a => a.id));
+        return res.json(enriched.filter(d => d.accommodation_id && ownAccIdSet.has(d.accommodation_id)));
+      }
+
       res.json(enriched);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -8475,7 +8605,7 @@ REGLAS:
       if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:send')) {
         return res.status(403).json({ error: 'No tiene permiso para enviar invitaciones' });
       }
-      const { email, phone, channel, organization_id, role, message } = req.body;
+      const { email, phone, channel, organization_id, role, message, profile_code } = req.body;
 
       if (!channel || !['email', 'whatsapp'].includes(channel)) {
         return res.status(400).json({ error: 'Canal inválido. Use "email" o "whatsapp"' });
@@ -8506,6 +8636,7 @@ REGLAS:
           organization_id: organization_id || null,
           role: role || 'user',
           message: message || null,
+          profile_code: profile_code || null,
           expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
         },
         include: {
@@ -8694,9 +8825,9 @@ REGLAS:
         return res.status(409).json({ error: 'Ya existe una cuenta con este correo electrónico' });
       }
 
-      // Get default profile
-      const defaultProfileCode = process.env.DEFAULT_PROFILE_CODE || 'owner';
-      const profile = await prisma.profiles.findUnique({ where: { code: defaultProfileCode } });
+      // Get profile — use invitation's profile_code if specified, otherwise default
+      const profileCode = invitation.profile_code || process.env.DEFAULT_PROFILE_CODE || 'organization:admin';
+      const profile = await prisma.profiles.findUnique({ where: { code: profileCode } });
 
       const password_hash = await bcryptInv.hash(password, 10);
       const userId = `inv_${crypto.randomUUID().split('-')[0]}_${Date.now()}`;

@@ -5,7 +5,7 @@
         <CCardHeader class="d-flex justify-content-between align-items-center">
           <strong>Invitaciones</strong>
           <CButton color="primary" size="sm" @click="openModal">
-            <CIcon :icon="cilPlus" class="me-1" /> Invitar propietario
+            <CIcon :icon="cilPlus" class="me-1" /> Invitar usuario
           </CButton>
         </CCardHeader>
         <CCardBody>
@@ -95,7 +95,7 @@
   <!-- Invite Modal -->
   <CModal :visible="showModal" @close="closeModal" size="lg">
     <CModalHeader>
-      <CModalTitle>Invitar propietario</CModalTitle>
+      <CModalTitle>Invitar usuario</CModalTitle>
     </CModalHeader>
     <CModalBody>
       <CForm @submit.prevent="sendInvitation">
@@ -138,10 +138,11 @@
             />
           </CCol>
           <CCol :md="6">
-            <CFormLabel>Rol</CFormLabel>
-            <CFormSelect v-model="form.role">
-              <option value="user">Usuario</option>
-              <option value="admin">Administrador</option>
+            <CFormLabel>Perfil</CFormLabel>
+            <CFormSelect v-model="form.profile_code">
+              <option value="organization:admin">Administrador</option>
+              <option value="organization:view">Solo lectura</option>
+              <option value="organization:partner">Aliado (acceso limitado)</option>
             </CFormSelect>
           </CCol>
         </CRow>
@@ -192,6 +193,7 @@ const form = ref({
   phone: '',
   organization_id: '',
   role: 'user',
+  profile_code: 'organization:admin',
   message: '',
 })
 
@@ -236,7 +238,7 @@ async function loadOrganizations() {
 }
 
 function openModal() {
-  form.value = { channel: 'email', email: '', phone: '', organization_id: '', role: 'user', message: '' }
+  form.value = { channel: 'email', email: '', phone: '', organization_id: '', role: 'user', profile_code: 'organization:admin', message: '' }
   formError.value = ''
   showModal.value = true
 }

@@ -23,6 +23,9 @@
             <RouterLink :to="`/venues/${venue.id}/chat`">
               <CButton color="dark" size="sm">Chat IA</CButton>
             </RouterLink>
+            <RouterLink :to="`/business/venues/${venue.id}/whatsapp`">
+              <CButton color="success" size="sm" variant="outline">WhatsApp</CButton>
+            </RouterLink>
             <CButton color="danger" size="sm" @click="onDelete">Eliminar</CButton>
             <RouterLink to="/business/venues">
               <CButton color="secondary" size="sm" variant="outline">Volver</CButton>
