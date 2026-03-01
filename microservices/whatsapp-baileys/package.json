@@ -1,0 +1,24 @@
+{
+  "name": "whatsapp-baileys-service",
+  "version": "1.0.0",
+  "description": "WhatsApp Baileys microservice for Cabanero",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "prisma:generate": "npx prisma generate"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@prisma/adapter-pg": "^6.5.0",
+    "@prisma/client": "^6.5.0",
+    "baileys": "^6.7.16",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "prisma": "^6.5.0"
+  }
+}

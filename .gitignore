@@ -39,6 +39,10 @@ coverage
 /cypress/screenshots/
 __screenshots__/
 .playwright-mcp/
+test-results/
+
+# Screenshots (Playwright, debug, etc.)
+*.png
 
 # Claude / AI
 .claude/settings.local.json
