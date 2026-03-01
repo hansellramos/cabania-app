@@ -92,6 +92,13 @@
                   <CBadge :color="getStatusColor(estimate.status)">
                     {{ getStatusLabel(estimate.status) }}
                   </CBadge>
+                  <CBadge
+                    v-if="estimate.payment_status && estimate.payment_status !== 'none'"
+                    :color="getPaymentStatusColor(estimate.payment_status)"
+                    class="ms-1"
+                  >
+                    {{ getPaymentStatusLabel(estimate.payment_status) }}
+                  </CBadge>
                 </CTableDataCell>
                 <CTableDataCell>
                   <CButton
@@ -342,6 +349,26 @@ const getStatusLabel = (status) => {
     case 'confirmed': return 'Confirmada'
     case 'converted': return 'Convertida'
     case 'cancelled': return 'Cancelada'
+    default: return status
+  }
+}
+
+const getPaymentStatusColor = (status) => {
+  switch (status) {
+    case 'qr_sent': return 'info'
+    case 'receipt_received': return 'warning'
+    case 'verified': return 'success'
+    case 'rejected': return 'danger'
+    default: return 'secondary'
+  }
+}
+
+const getPaymentStatusLabel = (status) => {
+  switch (status) {
+    case 'qr_sent': return 'QR Enviado'
+    case 'receipt_received': return 'Comprobante'
+    case 'verified': return 'Pagado'
+    case 'rejected': return 'Rechazado'
     default: return status
   }
 }

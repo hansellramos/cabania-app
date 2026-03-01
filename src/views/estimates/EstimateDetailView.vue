@@ -71,6 +71,42 @@
               </CCol>
             </CRow>
 
+            <div v-if="estimate.payment_status && estimate.payment_status !== 'none'" class="mb-3">
+              <CRow>
+                <CCol :md="6">
+                  <div class="p-3 border rounded">
+                    <h6 class="text-muted mb-2">Estado de Pago</h6>
+                    <CBadge :color="getPaymentStatusColor(estimate.payment_status)" class="fs-6">
+                      {{ getPaymentStatusLabel(estimate.payment_status) }}
+                    </CBadge>
+                    <p v-if="estimate.payment_method_label" class="mt-2 mb-0">
+                      <strong>Método:</strong> <span class="text-body-secondary">{{ estimate.payment_method_label }}</span>
+                    </p>
+                  </div>
+                </CCol>
+                <CCol :md="6" v-if="estimate.receipt_url">
+                  <div class="p-3 border rounded">
+                    <h6 class="text-muted mb-2">Comprobante</h6>
+                    <img
+                      :src="estimate.receipt_url"
+                      class="img-thumbnail"
+                      style="max-width: 200px; cursor: pointer;"
+                      alt="Comprobante"
+                      @click="receiptModalVisible = true"
+                    />
+                    <div class="mt-2" v-if="estimate.payment_status === 'receipt_received' && estimate.payment_id">
+                      <CButton color="success" size="sm" @click="verifyPayment(true)">
+                        <CIcon :icon="cilCheckCircle" class="me-1" /> Verificar Pago
+                      </CButton>
+                      <CButton color="danger" size="sm" variant="outline" class="ms-2" @click="verifyPayment(false)">
+                        Rechazar
+                      </CButton>
+                    </div>
+                  </div>
+                </CCol>
+              </CRow>
+            </div>
+
             <div v-if="estimate.notes" class="mb-3">
               <p><strong>Notas:</strong></p>
               <p class="text-body-secondary" style="white-space: pre-wrap;">{{ estimate.notes }}</p>
@@ -115,6 +151,12 @@
     </CCol>
   </CRow>
 
+  <CModal :visible="receiptModalVisible" @close="receiptModalVisible = false" size="lg" alignment="center">
+    <CModalBody class="text-center p-0">
+      <img v-if="estimate?.receipt_url" :src="estimate.receipt_url" class="img-fluid" alt="Comprobante completo" />
+    </CModalBody>
+  </CModal>
+
   <CToaster placement="top-end">
     <CToast v-if="toast.visible" :color="toast.color" class="text-white" :autohide="true" :delay="3000" @close="toast.visible = false">
       <CToastBody>{{ toast.message }}</CToastBody>
@@ -126,6 +168,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
+import { CModal, CModalBody } from '@coreui/vue'
 import { cilPencil, cilCheckCircle, cilPhone, cilUser } from '@coreui/icons'
 import { getEstimateById, convertEstimate } from '@/services/estimateService'
 import { useBreadcrumbStore } from '@/stores/breadcrumb.js'
@@ -134,6 +177,7 @@ const route = useRoute()
 const router = useRouter()
 const breadcrumbStore = useBreadcrumbStore()
 const estimate = ref(null)
+const receiptModalVisible = ref(false)
 
 const toast = ref({
   visible: false,
@@ -186,6 +230,50 @@ const getStatusColor = (status) => {
     case 'converted': return 'success'
     case 'cancelled': return 'danger'
     default: return 'secondary'
+  }
+}
+
+const getPaymentStatusColor = (status) => {
+  switch (status) {
+    case 'qr_sent': return 'info'
+    case 'receipt_received': return 'warning'
+    case 'verified': return 'success'
+    case 'rejected': return 'danger'
+    default: return 'secondary'
+  }
+}
+
+const getPaymentStatusLabel = (status) => {
+  switch (status) {
+    case 'none': return 'Sin pago'
+    case 'qr_sent': return 'QR Enviado'
+    case 'receipt_received': return 'Comprobante Recibido'
+    case 'verified': return 'Pago Verificado'
+    case 'rejected': return 'Pago Rechazado'
+    default: return status
+  }
+}
+
+const verifyPayment = async (verified) => {
+  if (!estimate.value?.payment_id) return
+  const action = verified ? 'verificar' : 'rechazar'
+  if (!confirm(`¿Estás seguro de ${action} este pago?`)) return
+  try {
+    const response = await fetch(`/api/payments/${estimate.value.payment_id}/verify`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ verified })
+    })
+    if (response.ok) {
+      showToast(verified ? 'Pago verificado exitosamente' : 'Pago rechazado', verified ? 'success' : 'warning')
+      loadEstimate()
+    } else {
+      const data = await response.json()
+      showToast(data.error || 'Error al procesar', 'danger')
+    }
+  } catch (error) {
+    showToast('Error al procesar pago', 'danger')
   }
 }
 

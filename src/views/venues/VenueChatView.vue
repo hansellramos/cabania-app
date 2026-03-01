@@ -54,10 +54,28 @@
                 :class="['message-wrapper', message.role === 'user' ? 'message-user' : 'message-assistant']"
               >
                 <div :class="['message-bubble', message.role === 'user' ? 'bubble-user' : 'bubble-assistant']">
+                  <div v-if="message.media_url" class="message-media mb-2">
+                    <img
+                      :src="message.media_url"
+                      class="chat-image"
+                      alt="Imagen"
+                      @click="openImageModal(message.media_url)"
+                    />
+                  </div>
                   <div class="message-content">{{ message.content }}</div>
+                  <div class="message-footer">
+                    <small v-if="message.created_at" class="message-time">{{ formatTime(message.created_at) }}</small>
+                    <span v-if="message.role === 'assistant' && message.status" class="message-status ms-1" :title="message.status === 'failed' ? (message.error_details || 'Error de envío') : message.status">
+                      <span v-if="message.status === 'pending'" class="text-muted">&#9203;</span>
+                      <span v-else-if="message.status === 'sent'" class="text-muted">&#10003;</span>
+                      <span v-else-if="message.status === 'delivered'" class="text-muted">&#10003;&#10003;</span>
+                      <span v-else-if="message.status === 'read'" class="status-read">&#10003;&#10003;</span>
+                      <span v-else-if="message.status === 'failed'" class="text-danger">&#10007;</span>
+                    </span>
+                  </div>
                   <div v-if="isDev && message.role === 'assistant' && message.meta" class="message-meta">
                     <small class="text-muted">
-                      {{ message.meta.model }} 
+                      {{ message.meta.model }}
                       <span v-if="message.meta.tokens">| {{ message.meta.tokens }} tokens</span>
                     </small>
                   </div>
@@ -172,6 +190,12 @@
       <CToastBody>{{ toast.message }}</CToastBody>
     </CToast>
   </CToaster>
+
+  <CModal :visible="!!imageModalUrl" @close="imageModalUrl = null" size="lg" alignment="center">
+    <CModalBody class="text-center p-0">
+      <img v-if="imageModalUrl" :src="imageModalUrl" class="img-fluid" alt="Imagen completa" />
+    </CModalBody>
+  </CModal>
 </template>
 
 <script setup>
@@ -182,7 +206,7 @@ import {
   CFormSelect, CFormInput, CInputGroup,
   CToaster, CToast, CToastBody,
   CTable, CTableHead, CTableBody, CTableRow, CTableHeaderCell, CTableDataCell,
-  CBadge
+  CBadge, CModal, CModalBody
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 import { getVenueById } from '@/services/venueService'
@@ -208,6 +232,7 @@ const loadingConversations = ref(false)
 const estimateId = ref(null)
 const arrivedWithConversation = ref(false)
 const resumingConvId = ref(null)
+const imageModalUrl = ref(null)
 const activeConvSource = ref(null) // source of the active conversation (baileys, web, etc.)
 const activeConvPhone = ref(null)
 const activeConvName = ref(null)
@@ -355,6 +380,10 @@ const resumeConversation = async (conv) => {
       messages.value = data.messages.map(m => ({
         role: m.role,
         content: (m.content || '').replace(/\n?<!-- \{.*?\} -->/g, ''),
+        media_url: m.media_url || null,
+        created_at: m.created_at || null,
+        status: m.status || null,
+        error_details: m.error_details || null,
         meta: m.role === 'assistant' ? { model: m.model, tokens: m.tokens_used } : undefined
       }))
     }
@@ -394,10 +423,21 @@ const formatDate = (dateStr) => {
   })
 }
 
+const formatTime = (dateStr) => {
+  if (!dateStr) return ''
+  return new Date(dateStr).toLocaleString('es-CO', {
+    hour: '2-digit', minute: '2-digit'
+  })
+}
+
 // Alias para nombres de servicios (cambiar aquí si se quiere renombrar)
 const SOURCE_ALIASES = { baileys: 'Ave', twilio: 'Twilio', web: 'Web', whatsapp: 'WhatsApp', meta: 'Meta' }
 
 const getSourceLabel = (source) => SOURCE_ALIASES[source] || source
+
+const openImageModal = (url) => {
+  imageModalUrl.value = url
+}
 
 const getSourceColor = (source) => {
   const colors = { web: 'primary', whatsapp: 'success', baileys: 'success', twilio: 'info', meta: 'dark' }
@@ -422,6 +462,10 @@ const pollConversations = async () => {
         const newMessages = data.messages.map(m => ({
           role: m.role,
           content: (m.content || '').replace(/\n?<!-- \{.*?\} -->/g, ''),
+          media_url: m.media_url || null,
+          created_at: m.created_at || null,
+          status: m.status || null,
+          error_details: m.error_details || null,
           meta: m.role === 'assistant' ? { model: m.model, tokens: m.tokens_used } : undefined
         }))
         // Only update if message count changed (avoid flicker)
@@ -523,5 +567,50 @@ onUnmounted(() => {
   margin-top: 0.5rem;
   padding-top: 0.5rem;
   border-top: 1px solid rgba(0,0,0,0.1);
+}
+
+.chat-image {
+  max-width: 200px;
+  max-height: 200px;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  object-fit: cover;
+  transition: opacity 0.2s;
+}
+.chat-image:hover {
+  opacity: 0.85;
+}
+
+.message-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+  gap: 0.15rem;
+}
+
+.message-time {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.bubble-user .message-time {
+  color: rgba(255,255,255,0.7);
+}
+
+.message-status {
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.status-read {
+  color: #53bdeb;
+}
+
+.bubble-user .message-status {
+  color: rgba(255,255,255,0.7);
+}
+.bubble-user .status-read {
+  color: #a0d8ef;
 }
 </style>

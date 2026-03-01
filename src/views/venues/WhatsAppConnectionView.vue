@@ -242,6 +242,77 @@
         </CCardBody>
       </CCard>
 
+      <!-- Message Stats -->
+      <CCard v-if="status === 'connected' || status === 'disconnected'" class="mb-4">
+        <CCardHeader>
+          <strong>Estadísticas de Mensajes</strong>
+        </CCardHeader>
+        <CCardBody>
+          <CSpinner v-if="loadingStats" size="sm" />
+          <div v-else>
+            <div class="row text-center mb-3">
+              <div class="col">
+                <div class="fs-4 fw-semibold">{{ stats.total_sent }}</div>
+                <small class="text-body-secondary">Enviados</small>
+              </div>
+              <div class="col">
+                <div class="fs-4 fw-semibold">{{ stats.total_delivered }}</div>
+                <small class="text-body-secondary">Entregados</small>
+              </div>
+              <div class="col">
+                <div class="fs-4 fw-semibold">{{ stats.total_read }}</div>
+                <small class="text-body-secondary">Leídos</small>
+              </div>
+              <div class="col">
+                <div class="fs-4 fw-semibold" :class="{ 'text-danger': stats.total_failed > 0 }">{{ stats.total_failed }}</div>
+                <small class="text-body-secondary">Fallidos</small>
+              </div>
+              <div class="col">
+                <div class="fs-4 fw-semibold" :class="{ 'text-warning': stats.total_pending > 0 }">{{ stats.total_pending }}</div>
+                <small class="text-body-secondary">Pendientes</small>
+              </div>
+            </div>
+            <p v-if="stats.last_message_at" class="text-body-secondary small mb-0">
+              Último mensaje: {{ formatDate(stats.last_message_at) }}
+            </p>
+            <CAlert v-if="stats.total_failed > 0" color="danger" class="mt-2 small py-2 mb-0">
+              Hay {{ stats.total_failed }} mensaje(s) fallido(s). Revisa el historial de eventos para más detalles.
+            </CAlert>
+          </div>
+        </CCardBody>
+      </CCard>
+
+      <!-- Event History -->
+      <CCard v-if="status === 'connected' || status === 'disconnected'" class="mb-4">
+        <CCardHeader class="d-flex justify-content-between align-items-center">
+          <strong>Historial de Conexión</strong>
+          <CButton color="secondary" variant="ghost" size="sm" @click="fetchEvents">
+            Actualizar
+          </CButton>
+        </CCardHeader>
+        <CCardBody>
+          <CSpinner v-if="loadingEvents" size="sm" />
+          <div v-else-if="events.length === 0" class="text-body-secondary text-center py-3">
+            No hay eventos registrados
+          </div>
+          <div v-else class="event-list" style="max-height: 300px; overflow-y: auto;">
+            <div v-for="evt in events" :key="evt.id" class="d-flex align-items-start gap-2 py-2 border-bottom">
+              <span class="event-dot" :class="eventDotClass(evt.event_type)"></span>
+              <div class="flex-grow-1">
+                <div class="small">
+                  <strong>{{ eventLabel(evt.event_type) }}</strong>
+                  <span v-if="evt.phone" class="text-body-secondary ms-1">{{ evt.phone }}</span>
+                </div>
+                <div v-if="evt.details" class="text-body-secondary small text-truncate" style="max-width: 400px;" :title="evt.details">
+                  {{ evt.details }}
+                </div>
+              </div>
+              <small class="text-body-secondary text-nowrap">{{ formatDate(evt.created_at) }}</small>
+            </div>
+          </div>
+        </CCardBody>
+      </CCard>
+
       <!-- Conversations list link -->
       <CCard v-if="status === 'connected'" class="mb-4">
         <CCardHeader><strong>Conversaciones WhatsApp</strong></CCardHeader>
@@ -282,6 +353,12 @@ const qrCanvas = ref(null)
 const excludedPhones = ref([])
 const newPhone = ref('')
 const newLabel = ref('')
+
+// Stats & Events
+const stats = ref({ total_sent: 0, total_delivered: 0, total_read: 0, total_failed: 0, total_pending: 0, last_message_at: null })
+const loadingStats = ref(false)
+const events = ref([])
+const loadingEvents = ref(false)
 
 // Escalation config
 const escConfig = ref({
@@ -490,6 +567,65 @@ async function saveEscalationConfig() {
   }
 }
 
+async function fetchStats() {
+  loadingStats.value = true
+  try {
+    const res = await fetch(`/api/venues/${venueId}/whatsapp/stats`, { credentials: 'include' })
+    if (res.ok) {
+      stats.value = await res.json()
+    }
+  } catch (err) {
+    console.error('[whatsapp-ui] Error fetching stats:', err)
+  } finally {
+    loadingStats.value = false
+  }
+}
+
+async function fetchEvents() {
+  loadingEvents.value = true
+  try {
+    const res = await fetch(`/api/venues/${venueId}/whatsapp/events?limit=50`, { credentials: 'include' })
+    if (res.ok) {
+      events.value = await res.json()
+    }
+  } catch (err) {
+    console.error('[whatsapp-ui] Error fetching events:', err)
+  } finally {
+    loadingEvents.value = false
+  }
+}
+
+const EVENT_LABELS = {
+  connected: 'Conectado',
+  disconnected: 'Desconectado',
+  qr_generated: 'QR generado',
+  message_received: 'Mensaje recibido',
+  message_sent: 'Mensaje enviado',
+  message_failed: 'Mensaje fallido',
+  error: 'Error',
+  reconnect_attempt: 'Intento de reconexión',
+  max_retries_reached: 'Reintentos agotados'
+}
+
+function eventLabel(type) {
+  return EVENT_LABELS[type] || type
+}
+
+function eventDotClass(type) {
+  const map = {
+    connected: 'dot-success',
+    disconnected: 'dot-danger',
+    message_sent: 'dot-success',
+    message_received: 'dot-info',
+    message_failed: 'dot-danger',
+    error: 'dot-danger',
+    qr_generated: 'dot-warning',
+    reconnect_attempt: 'dot-warning',
+    max_retries_reached: 'dot-danger'
+  }
+  return map[type] || 'dot-secondary'
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return ''
   return new Date(dateStr).toLocaleString('es-CO', {
@@ -513,6 +649,8 @@ onMounted(async () => {
   await fetchStatus()
   await fetchExcludedPhones()
   await fetchEscalationConfig()
+  fetchStats()
+  fetchEvents()
   // Start polling if QR pending
   if (status.value === 'qr_pending') {
     startPolling()
@@ -536,4 +674,17 @@ onUnmounted(() => {
   display: block;
   margin: 0 auto;
 }
+
+.event-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-top: 6px;
+  flex-shrink: 0;
+}
+.dot-success { background-color: #2eb85c; }
+.dot-danger { background-color: #e55353; }
+.dot-warning { background-color: #f9b115; }
+.dot-info { background-color: #3399ff; }
+.dot-secondary { background-color: #9da5b1; }
 </style>

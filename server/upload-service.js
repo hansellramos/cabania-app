@@ -3,7 +3,7 @@ const cloudinary = require('./cloudinary');
 
 const FOLDER_PREFIX = process.env.CLOUDINARY_FOLDER_PREFIX || 'cabanero-dev';
 
-const ALLOWED_TYPES = ['receipt', 'venue', 'plan', 'deposit', 'inventory', 'maintenance'];
+const ALLOWED_TYPES = ['receipt', 'venue', 'plan', 'deposit', 'inventory', 'maintenance', 'chat_media', 'payment_method'];
 
 async function uploadImage(fileBuffer, { type, mimetype }) {
   if (!ALLOWED_TYPES.includes(type)) {

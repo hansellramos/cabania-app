@@ -9,7 +9,7 @@ const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion } = r
 const { Boom } = require('@hapi/boom');
 const { prisma } = require('../db');
 const { useDBAuthState } = require('../stores/baileysStore');
-const { handleMessage } = require('./baileysHandler');
+const { handleMessage, logEvent } = require('./baileysHandler');
 
 const connections = new Map();
 const retryCounts = new Map();
@@ -58,6 +58,7 @@ async function connectVenue(venueId) {
         where: { venue_id: venueId },
         data: { qr_code: qr, status: 'qr_pending', updated_at: new Date() }
       });
+      logEvent(venueId, 'qr_generated').catch(() => {});
     }
 
     if (connection === 'open') {
@@ -79,12 +80,14 @@ async function connectVenue(venueId) {
       const entry = connections.get(venueId);
       if (entry) entry.phoneNumber = phoneNumber;
       retryCounts.set(venueId, 0);
+      logEvent(venueId, 'connected', null, phoneNumber).catch(() => {});
     }
 
     if (connection === 'close') {
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       console.log(`[baileys] Connection closed for venue ${venueId}, code: ${statusCode}, reconnect: ${shouldReconnect}`);
+      logEvent(venueId, 'disconnected', JSON.stringify({ statusCode, reason: lastDisconnect?.error?.message })).catch(() => {});
 
       if (statusCode === DisconnectReason.loggedOut) {
         await prisma.whatsapp_connections.update({
@@ -109,6 +112,7 @@ async function connectVenue(venueId) {
           setTimeout(() => connectVenue(venueId), delay);
         } else {
           console.error(`[baileys] Max retries reached for venue ${venueId}`);
+          logEvent(venueId, 'max_retries_reached', JSON.stringify({ retries: MAX_RETRIES })).catch(() => {});
           await prisma.whatsapp_connections.update({
             where: { venue_id: venueId },
             data: { status: 'disconnected', qr_code: null, updated_at: new Date() }
@@ -126,6 +130,24 @@ async function connectVenue(venueId) {
     if (type !== 'notify') return;
     for (const msg of msgs) {
       await handleMessage(venueId, socket, msg);
+    }
+  });
+
+  // Track message delivery/read status updates from WhatsApp
+  socket.ev.on('messages.update', async (updates) => {
+    for (const update of updates) {
+      try {
+        const waStatus = update.update?.status;
+        const statusMap = { 2: 'sent', 3: 'delivered', 4: 'read' };
+        if (statusMap[waStatus] && update.key?.id) {
+          await prisma.chat_messages.updateMany({
+            where: { external_id: update.key.id },
+            data: { status: statusMap[waStatus] }
+          });
+        }
+      } catch (err) {
+        // Silently ignore — external_id may not exist for non-tracked messages
+      }
     }
   });
 
@@ -186,6 +208,15 @@ async function sendMessage(venueId, phone, text) {
   await entry.socket.sendMessage(jid, { text });
 }
 
+async function sendImage(venueId, phone, imageUrl, caption) {
+  const entry = connections.get(venueId);
+  if (!entry?.socket) {
+    throw new Error('No active WhatsApp connection for this venue');
+  }
+  const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
+  await entry.socket.sendMessage(jid, { image: { url: imageUrl }, caption: caption || '' });
+}
+
 async function restoreAllConnections() {
   try {
     const activeConnections = await prisma.whatsapp_connections.findMany({
@@ -215,6 +246,7 @@ module.exports = {
   disconnectVenue,
   getStatus,
   sendMessage,
+  sendImage,
   restoreAllConnections,
   connections
 };

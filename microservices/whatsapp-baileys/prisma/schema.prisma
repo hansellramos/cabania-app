@@ -53,6 +53,31 @@ model chat_conversations {
   updated_at       DateTime? @db.Timestamptz(6)
 }
 
+model chat_messages {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversation_id String   @db.Uuid
+  role            String   @db.VarChar(20)
+  content         String
+  status          String?  @db.VarChar(20)
+  error_details   String?
+  external_id     String?  @db.VarChar(255)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model whatsapp_event_log {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id   String?  @db.Uuid
+  event_type String   @db.VarChar(50)
+  details    String?
+  phone      String?  @db.VarChar(50)
+  message_id String?  @db.Uuid
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([venue_id])
+  @@index([event_type])
+  @@index([created_at])
+}
+
 model venues {
   id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name     String?  @db.VarChar

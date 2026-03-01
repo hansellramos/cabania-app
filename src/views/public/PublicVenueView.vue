@@ -150,6 +150,39 @@
       </div>
     </section>
 
+    <!-- Payment Methods Section -->
+    <section class="payment-methods-section container-narrow" v-if="paymentMethods.length > 0">
+      <h2 class="section-title">Metodos de Pago</h2>
+      <div class="payment-methods-grid">
+        <div v-for="pm in paymentMethods" :key="pm.id" class="pm-card">
+          <div class="pm-icon">
+            {{ getPaymentIcon(pm.method_type) }}
+          </div>
+          <div class="pm-info">
+            <div class="pm-name">{{ pm.label }}</div>
+            <div v-if="pm.account_info" class="pm-account">{{ pm.account_info }}</div>
+            <div v-if="pm.holder_name" class="pm-holder">{{ pm.holder_name }}</div>
+          </div>
+          <div v-if="pm.qr_image_url" class="pm-qr">
+            <img
+              :src="pm.qr_image_url"
+              alt="QR"
+              class="pm-qr-img"
+              @click="pmPreview = pm.qr_image_url"
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- QR Preview Modal -->
+    <div v-if="pmPreview" class="pm-modal-overlay" @click="pmPreview = null">
+      <div class="pm-modal-content" @click.stop>
+        <img :src="pmPreview" alt="QR" class="img-fluid" />
+        <button class="pm-modal-close" @click="pmPreview = null">&times;</button>
+      </div>
+    </div>
+
     <!-- Booking Panel Widget -->
     <BookingPanelWidget
       v-if="venue.id"
@@ -183,6 +216,8 @@ const venue = ref({})
 const images = ref([])
 const amenities = ref([])
 const plans = ref([])
+const paymentMethods = ref([])
+const pmPreview = ref(null)
 const activeImageIdx = ref(0)
 
 // Provide venue brand colors to parent layout (for orbs)
@@ -272,6 +307,7 @@ const loadVenue = async () => {
     images.value = data.images || []
     amenities.value = data.amenities || []
     plans.value = data.plans || []
+    paymentMethods.value = data.paymentMethods || []
 
     // Set cover image as default
     const coverIdx = images.value.findIndex(i => i.is_cover)
@@ -284,6 +320,15 @@ const loadVenue = async () => {
   } finally {
     loading.value = false
   }
+}
+
+const getPaymentIcon = (type) => {
+  const icons = {
+    nequi: '📱', daviplata: '📱', bancolombia: '🏦', davivienda: '🏦',
+    breb: '📲', pse: '💻', credit_card_national: '💳', credit_card_international: '💳',
+    cash: '💵', custom: '💰'
+  }
+  return icons[type] || '💰'
 }
 
 const planTypeLabel = (type) => {
@@ -670,6 +715,85 @@ onMounted(async () => {
   transform: translateY(-2px);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   color: #fff;
+}
+
+/* Payment Methods */
+.payment-methods-section {
+  margin-bottom: 2rem;
+}
+.payment-methods-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+.pm-card {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  background: rgba(255,255,255,0.08);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 12px;
+}
+.pm-icon {
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+.pm-info {
+  flex-grow: 1;
+  min-width: 0;
+}
+.pm-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+.pm-account, .pm-holder {
+  font-size: 0.82rem;
+  opacity: 0.75;
+}
+.pm-qr-img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+.pm-qr-img:hover {
+  transform: scale(1.1);
+}
+.pm-modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.8);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pm-modal-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+}
+.pm-modal-content img {
+  max-width: 100%;
+  max-height: 85vh;
+  border-radius: 8px;
+}
+.pm-modal-close {
+  position: absolute;
+  top: -12px; right: -12px;
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: #fff;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* Plans */

@@ -35,6 +35,7 @@ module.exports = {
   disconnectVenue: (venueId) => callService('POST', `/api/venues/${venueId}/disconnect`),
   getStatus: (venueId) => callService('GET', `/api/venues/${venueId}/status`),
   sendMessage: (venueId, phone, text) => callService('POST', '/api/send/venue', { venueId, phone, text }),
+  sendImage: (venueId, phone, imageUrl, caption) => callService('POST', '/api/send/venue/image', { venueId, phone, imageUrl, caption }),
 
   // System connection
   connectSystem: () => callService('POST', '/api/system/connect'),
