@@ -556,14 +556,16 @@ async function setupAuth(app) {
 
       // Best-effort: also send via system WhatsApp if available
       try {
-        const { getSystemStatus, sendSystemMessage } = require('../services/baileys/systemBaileysService');
-        const systemStatus = await getSystemStatus();
-        if (systemStatus.status === 'connected') {
-          const contact = await prisma.contacts.findFirst({ where: { user: user.id } });
-          const phone = contact?.whatsapp ? String(contact.whatsapp) : null;
-          if (phone) {
-            const waMsg = loginCodeWhatsAppMessage({ code, userName, expiresMinutes: 10 });
-            await sendSystemMessage(phone, waMsg);
+        const whatsappClient = require('../services/whatsappClient');
+        if (whatsappClient.isAvailable()) {
+          const systemStatus = await whatsappClient.getSystemStatus();
+          if (systemStatus?.status === 'connected') {
+            const contact = await prisma.contacts.findFirst({ where: { user: user.id } });
+            const phone = contact?.whatsapp ? String(contact.whatsapp) : null;
+            if (phone) {
+              const waMsg = loginCodeWhatsAppMessage({ code, userName, expiresMinutes: 10 });
+              await whatsappClient.sendSystemMessage(phone, waMsg);
+            }
           }
         }
       } catch (waErr) {

@@ -10,21 +10,8 @@ const { setupAuth, isAuthenticated } = require('./auth/replitAuth');
 const { loadUserPermissions, hasPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
 const llmService = require('./llm-service');
 
-// Baileys WhatsApp service (only available outside Vercel)
-let baileysService = null;
-let systemBaileysService = null;
-if (!process.env.VERCEL) {
-  try {
-    baileysService = require('./services/baileys/baileysService');
-  } catch (err) {
-    console.warn('[baileys] Baileys not available:', err.message);
-  }
-  try {
-    systemBaileysService = require('./services/baileys/systemBaileysService');
-  } catch (err) {
-    console.warn('[baileys-system] System Baileys not available:', err.message);
-  }
-}
+// WhatsApp service — proxied to external Baileys microservice via HTTP
+const whatsappClient = require('./services/whatsappClient');
 
 /**
  * Calculate the next resume time at given hour in America/Bogota timezone.
@@ -309,6 +296,59 @@ async function startServer() {
   await setupAuth(app);
   
   app.use(loadUserPermissions);
+
+  // ==================== Health Check (no auth — for external monitors) ====================
+  app.get('/api/health', async (req, res) => {
+    const components = {};
+    let allHealthy = true;
+    let dbUp = true;
+
+    // 1. Database
+    try {
+      const start = Date.now();
+      await prisma.$queryRaw`SELECT 1`;
+      components.database = { status: 'up', latency_ms: Date.now() - start };
+    } catch (err) {
+      components.database = { status: 'down', error: err.message };
+      allHealthy = false;
+      dbUp = false;
+    }
+
+    // 2. WhatsApp microservice
+    if (process.env.WHATSAPP_SERVICE_URL) {
+      try {
+        const start = Date.now();
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        const resp = await fetch(`${process.env.WHATSAPP_SERVICE_URL}/api/health`, { signal: controller.signal });
+        clearTimeout(timeout);
+        if (resp.ok) {
+          const data = await resp.json();
+          components.whatsapp_service = {
+            status: 'up',
+            latency_ms: Date.now() - start,
+            venue_connections: data.venue_connections ?? null
+          };
+        } else {
+          components.whatsapp_service = { status: 'down', error: `HTTP ${resp.status}` };
+          allHealthy = false;
+        }
+      } catch (err) {
+        components.whatsapp_service = { status: 'down', error: err.message };
+        allHealthy = false;
+      }
+    }
+
+    const status = !dbUp ? 'unhealthy' : !allHealthy ? 'degraded' : 'healthy';
+    const httpCode = !dbUp ? 503 : 200;
+
+    res.status(httpCode).json({
+      status,
+      uptime: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+      components
+    });
+  });
 
   // Upload endpoints - Cloudinary
   app.post('/api/uploads/receipt', isAuthenticated, upload.single('file'), async (req, res) => {
@@ -798,15 +838,16 @@ async function startServer() {
         }
       });
 
-      // Send code via system WhatsApp (Baileys)
+      // Send code via system WhatsApp (microservice)
       let codeSent = false;
       try {
-        const { getSystemStatus, sendSystemMessage } = require('./services/baileys/systemBaileysService');
-        const systemStatus = await getSystemStatus();
-        if (systemStatus.status === 'connected') {
-          const waMsg = `🔐 *CabanIA* — Código de verificación\n\nTu código es: *${code}*\n\nExpira en 10 minutos. No compartas este código.`;
-          const sent = await sendSystemMessage(phone, waMsg);
-          if (sent) codeSent = true;
+        if (whatsappClient.isAvailable()) {
+          const systemStatus = await whatsappClient.getSystemStatus();
+          if (systemStatus?.status === 'connected') {
+            const waMsg = `🔐 *CabanIA* — Código de verificación\n\nTu código es: *${code}*\n\nExpira en 10 minutos. No compartas este código.`;
+            const result = await whatsappClient.sendSystemMessage(phone, waMsg);
+            if (result?.success) codeSent = true;
+          }
         }
       } catch (waErr) {
         console.warn('[chat-verify] WhatsApp send failed:', waErr.message);
@@ -6042,7 +6083,7 @@ REGLAS:
   // POST /api/venues/:id/whatsapp/connect - Start WhatsApp connection (generates QR)
   app.post('/api/venues/:id/whatsapp/connect', isAuthenticated, async (req, res) => {
     try {
-      if (!baileysService || !baileysService.isAvailable()) {
+      if (!whatsappClient || !whatsappClient.isAvailable()) {
         return res.status(503).json({ error: 'WhatsApp no disponible en este entorno' });
       }
 
@@ -6054,7 +6095,7 @@ REGLAS:
         return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
       }
 
-      const result = await baileysService.connectVenue(venueId);
+      const result = await whatsappClient.connectVenue(venueId);
       res.json({ success: true, ...result });
     } catch (error) {
       console.error('[whatsapp] Connect error:', error);
@@ -6065,7 +6106,7 @@ REGLAS:
   // POST /api/venues/:id/whatsapp/disconnect - Disconnect WhatsApp
   app.post('/api/venues/:id/whatsapp/disconnect', isAuthenticated, async (req, res) => {
     try {
-      if (!baileysService || !baileysService.isAvailable()) {
+      if (!whatsappClient || !whatsappClient.isAvailable()) {
         return res.status(503).json({ error: 'WhatsApp no disponible en este entorno' });
       }
 
@@ -6076,7 +6117,7 @@ REGLAS:
         return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
       }
 
-      await baileysService.disconnectVenue(venueId);
+      await whatsappClient.disconnectVenue(venueId);
       res.json({ success: true, status: 'disconnected' });
     } catch (error) {
       console.error('[whatsapp] Disconnect error:', error);
@@ -6094,11 +6135,11 @@ REGLAS:
         return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
       }
 
-      if (!baileysService || !baileysService.isAvailable()) {
+      if (!whatsappClient || !whatsappClient.isAvailable()) {
         return res.json({ status: 'unavailable', qr_code: null, phone_number: null });
       }
 
-      const status = await baileysService.getStatus(venueId);
+      const status = await whatsappClient.getStatus(venueId);
       res.json(status);
     } catch (error) {
       console.error('[whatsapp] Status error:', error);
@@ -6293,9 +6334,9 @@ REGLAS:
       });
 
       // Send greeting to client if baileys conversation
-      if (conversation.phone && conversation.source === 'baileys' && baileysService) {
+      if (conversation.phone && conversation.source === 'baileys' && whatsappClient.isAvailable()) {
         try {
-          await baileysService.sendMessage(
+          await whatsappClient.sendMessage(
             venue_id,
             conversation.phone,
             '¡Hola! 👋 CabanIA está disponible nuevamente para ayudarte. ¿En qué puedo asistirte?'
@@ -6321,10 +6362,10 @@ REGLAS:
       if (!currentUser?.is_super_admin) {
         return res.status(403).json({ error: 'Solo administradores' });
       }
-      if (!systemBaileysService) {
+      if (!whatsappClient.isAvailable()) {
         return res.json({ status: 'unavailable' });
       }
-      const status = await systemBaileysService.getSystemStatus();
+      const status = await whatsappClient.getSystemStatus();
       res.json(status);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -6339,10 +6380,10 @@ REGLAS:
       if (!currentUser?.is_super_admin) {
         return res.status(403).json({ error: 'Solo administradores' });
       }
-      if (!systemBaileysService) {
+      if (!whatsappClient.isAvailable()) {
         return res.status(400).json({ error: 'Servicio de WhatsApp del sistema no disponible' });
       }
-      const result = await systemBaileysService.connectSystem();
+      const result = await whatsappClient.connectSystem();
       res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -6357,10 +6398,10 @@ REGLAS:
       if (!currentUser?.is_super_admin) {
         return res.status(403).json({ error: 'Solo administradores' });
       }
-      if (!systemBaileysService) {
+      if (!whatsappClient.isAvailable()) {
         return res.status(400).json({ error: 'Servicio de WhatsApp del sistema no disponible' });
       }
-      await systemBaileysService.disconnectSystem();
+      await whatsappClient.disconnectSystem();
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -6374,6 +6415,14 @@ REGLAS:
     try {
       const { venue_id } = req.params;
       const { message, conversation_id, provider_id, source = 'web', contact_type, contact_value } = req.body;
+
+      // Validate internal key for Baileys microservice callbacks
+      if (source === 'baileys' && process.env.WHATSAPP_INTERNAL_KEY) {
+        const internalKey = req.headers['x-internal-key'];
+        if (internalKey !== process.env.WHATSAPP_INTERNAL_KEY) {
+          return res.status(401).json({ error: 'Invalid internal key' });
+        }
+      }
       
       // For Twilio/Meta webhooks, extract message from their format
       let userMessage = message;
@@ -6985,7 +7034,7 @@ REGLAS:
 
               // Send notification via system WhatsApp
               const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
-              if (notificationPhone && systemBaileysService) {
+              if (notificationPhone && whatsappClient.isAvailable()) {
                 try {
                   const clientPhone = conversation.phone || 'desconocido';
                   const clientName = conversation.name || 'Cliente';
@@ -6995,7 +7044,7 @@ REGLAS:
 
                   const notificationMsg = `🔔 *Escalación CabanIA - ${venue.name || 'Venue'}*\n\n*Resumen:* ${args.summary}\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Link directo:* https://wa.me/${clientPhone}\n\nPara continuar la conversación, contacta al cliente directamente.\nCuando quieras que CabanIA retome, respóndeme: "ya puedes seguir"\n${resumeNote}`;
 
-                  await systemBaileysService.sendSystemMessage(notificationPhone, notificationMsg);
+                  await whatsappClient.sendSystemMessage(notificationPhone, notificationMsg);
                   console.log(`[escalation] Notification sent to ${notificationPhone} for venue ${venue_id}`);
                 } catch (notifErr) {
                   console.error('[escalation] Failed to send notification:', notifErr.message);
@@ -7075,13 +7124,13 @@ REGLAS:
 
             // Notify owner
             const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
-            if (notificationPhone && systemBaileysService) {
+            if (notificationPhone && whatsappClient.isAvailable()) {
               try {
                 const clientPhone = conversation.phone || 'desconocido';
                 const clientName = conversation.name || 'Cliente';
                 const notificationMsg = `🔔 *Escalación CabanIA - ${venue.name || 'Venue'}*\n\n*Motivo:* Límite de ${escConfig.message_limit} mensajes alcanzado sin cotización\n*Cliente:* ${clientName}\n*Teléfono:* ${clientPhone}\n*Link directo:* https://wa.me/${clientPhone}\n\nEl cliente lleva ${userMsgCount} mensajes sin generar cotización. Puede necesitar atención personalizada.\nResponde "ya puedes seguir" para reactivar CabanIA.`;
 
-                await systemBaileysService.sendSystemMessage(notificationPhone, notificationMsg);
+                await whatsappClient.sendSystemMessage(notificationPhone, notificationMsg);
               } catch (notifErr) {
                 console.error('[escalation] Failed to send limit notification:', notifErr.message);
               }
@@ -8428,18 +8477,19 @@ REGLAS:
   const bcryptInv = require('bcryptjs');
   const crypto = require('crypto');
 
-  // Helper: send WhatsApp via Baileys first, fallback to Twilio
+  // Helper: send WhatsApp via microservice first, fallback to Twilio
   async function sendInvitationWhatsApp(phone, body) {
     try {
-      const { getSystemStatus, sendSystemMessage } = require('./services/baileys/systemBaileysService');
-      const systemStatus = await getSystemStatus();
-      if (systemStatus.status === 'connected') {
-        const cleanPhone = phone.replace('whatsapp:', '');
-        const sent = await sendSystemMessage(cleanPhone, body);
-        if (sent) return { success: true, channel: 'baileys' };
+      if (whatsappClient.isAvailable()) {
+        const systemStatus = await whatsappClient.getSystemStatus();
+        if (systemStatus?.status === 'connected') {
+          const cleanPhone = phone.replace('whatsapp:', '');
+          const sent = await whatsappClient.sendSystemMessage(cleanPhone, body);
+          if (sent?.success) return { success: true, channel: 'baileys' };
+        }
       }
     } catch (err) {
-      console.warn('[invitation] Baileys send failed, trying Twilio:', err.message);
+      console.warn('[invitation] WhatsApp service send failed, trying Twilio:', err.message);
     }
     return sendWhatsApp({ to: phone, body });
   }
@@ -9038,69 +9088,7 @@ REGLAS:
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
 
-    // Restore WhatsApp connections after server is listening
-    if (baileysService && baileysService.isAvailable()) {
-      baileysService.restoreAllConnections().catch(err => {
-        console.error('[baileys] Error restoring connections on startup:', err.message);
-      });
-    }
-
-    // Restore system WhatsApp connection
-    if (systemBaileysService) {
-      systemBaileysService.restoreSystemConnection().catch(err => {
-        console.error('[baileys-system] Error restoring system connection on startup:', err.message);
-      });
-    }
-
-    // Auto-resume escalated conversations — check every 5 minutes
-    if (!process.env.VERCEL) {
-      setInterval(async () => {
-        try {
-          const now = new Date();
-          const toResume = await prisma.chat_conversations.findMany({
-            where: {
-              status: 'human_attention',
-              resume_at: { lte: now }
-            }
-          });
-
-          if (toResume.length === 0) return;
-
-          console.log(`[auto-resume] Resuming ${toResume.length} conversation(s)`);
-
-          await prisma.chat_conversations.updateMany({
-            where: {
-              status: 'human_attention',
-              resume_at: { lte: now }
-            },
-            data: {
-              status: 'active',
-              escalated_at: null,
-              escalated_reason: null,
-              resume_at: null,
-              updated_at: now
-            }
-          });
-
-          // Send greeting to baileys conversations
-          for (const conv of toResume) {
-            if (conv.phone && conv.source === 'baileys' && baileysService) {
-              try {
-                await baileysService.sendMessage(
-                  conv.venue_id,
-                  conv.phone,
-                  '¡Hola! 👋 CabanIA está disponible nuevamente para ayudarte. ¿En qué puedo asistirte?'
-                );
-              } catch (err) {
-                // Connection may not be active
-              }
-            }
-          }
-        } catch (err) {
-          console.error('[auto-resume] Error:', err.message);
-        }
-      }, 5 * 60 * 1000); // Every 5 minutes
-    }
+    // WhatsApp connections restore and auto-resume are handled by the external microservice
   });
 }
 
