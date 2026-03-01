@@ -6582,6 +6582,164 @@ REGLAS:
     }
   });
 
+  // ==================== WhatsApp Message Tracking & Events ====================
+
+  // PATCH /api/chat/messages/:id/status - Update message delivery status (internal key auth)
+  app.patch('/api/chat/messages/:id/status', async (req, res) => {
+    try {
+      const internalKey = req.headers['x-internal-key'];
+      if (!internalKey || internalKey !== process.env.WHATSAPP_INTERNAL_KEY) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { id } = req.params;
+      const { status, external_id, error_details } = req.body;
+
+      if (!status) {
+        return res.status(400).json({ error: 'status is required' });
+      }
+
+      const validStatuses = ['pending', 'sent', 'delivered', 'read', 'failed'];
+      if (!validStatuses.includes(status)) {
+        return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+      }
+
+      const updateData = { status };
+      if (external_id) updateData.external_id = external_id;
+      if (error_details) updateData.error_details = error_details;
+
+      await prisma.chat_messages.update({
+        where: { id },
+        data: updateData
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('[message-status] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/whatsapp/events - Log WhatsApp events (internal key auth)
+  app.post('/api/whatsapp/events', async (req, res) => {
+    try {
+      const internalKey = req.headers['x-internal-key'];
+      if (!internalKey || internalKey !== process.env.WHATSAPP_INTERNAL_KEY) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { venue_id, event_type, details, phone, message_id } = req.body;
+
+      if (!event_type) {
+        return res.status(400).json({ error: 'event_type is required' });
+      }
+
+      await prisma.whatsapp_event_log.create({
+        data: {
+          venue_id: venue_id || null,
+          event_type,
+          details: details ? (typeof details === 'string' ? details : JSON.stringify(details)) : null,
+          phone: phone || null,
+          message_id: message_id || null
+        }
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      console.error('[whatsapp-events] Error:', error.message);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/venues/:id/whatsapp/events - Get recent WhatsApp events for a venue
+  app.get('/api/venues/:id/whatsapp/events', isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const limit = parseInt(req.query.limit) || 50;
+
+      const events = await prisma.whatsapp_event_log.findMany({
+        where: { venue_id: id },
+        orderBy: { created_at: 'desc' },
+        take: Math.min(limit, 200)
+      });
+
+      res.json(events);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/venues/:id/whatsapp/stats - Get message stats for a venue
+  app.get('/api/venues/:id/whatsapp/stats', isAuthenticated, async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Get conversations for this venue with source baileys
+      const conversations = await prisma.chat_conversations.findMany({
+        where: { venue_id: id, source: 'baileys' },
+        select: { id: true }
+      });
+      const convIds = conversations.map(c => c.id);
+
+      if (convIds.length === 0) {
+        return res.json({
+          total_sent: 0, total_delivered: 0, total_read: 0,
+          total_failed: 0, total_pending: 0,
+          last_message_at: null, failed_details: []
+        });
+      }
+
+      // Count messages by status for assistant messages (outbound)
+      const statusCounts = await prisma.chat_messages.groupBy({
+        by: ['status'],
+        where: {
+          conversation_id: { in: convIds },
+          role: 'assistant',
+          status: { not: null }
+        },
+        _count: { id: true }
+      });
+
+      const counts = {};
+      for (const sc of statusCounts) {
+        counts[sc.status] = sc._count.id;
+      }
+
+      // Last message
+      const lastMessage = await prisma.chat_messages.findFirst({
+        where: { conversation_id: { in: convIds }, role: 'assistant' },
+        orderBy: { created_at: 'desc' },
+        select: { created_at: true, status: true }
+      });
+
+      // Recent failed messages (last 24h)
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const failedMessages = await prisma.chat_messages.findMany({
+        where: {
+          conversation_id: { in: convIds },
+          role: 'assistant',
+          status: 'failed',
+          created_at: { gte: oneDayAgo }
+        },
+        select: { id: true, error_details: true, created_at: true },
+        orderBy: { created_at: 'desc' },
+        take: 10
+      });
+
+      res.json({
+        total_sent: counts.sent || 0,
+        total_delivered: counts.delivered || 0,
+        total_read: counts.read || 0,
+        total_failed: counts.failed || 0,
+        total_pending: counts.pending || 0,
+        last_message_at: lastMessage?.created_at || null,
+        failed_details: failedMessages
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ==================== System WhatsApp (Admin) ====================
 
   // GET /api/admin/system-whatsapp/status
@@ -6792,7 +6950,8 @@ REGLAS:
           role: 'user',
           content: userMessage,
           media_url: media_url || null,
-          media_type: media_type || null
+          media_type: media_type || null,
+          status: source === 'baileys' ? 'delivered' : null
         }
       });
 
@@ -7575,7 +7734,8 @@ REGLAS:
           content: messageContent,
           provider: chatProviderCode,
           model: llmResponse.model,
-          tokens_used: llmResponse.usage?.total_tokens
+          tokens_used: llmResponse.usage?.total_tokens,
+          status: source === 'baileys' ? 'pending' : null
         }
       });
       
@@ -7614,6 +7774,7 @@ REGLAS:
 
       res.json({
         conversation_id: conversation.id,
+        assistant_message_id: assistantMessage.id,
         message: llmResponse.content,
         provider: chatProviderCode,
         model: llmResponse.model,

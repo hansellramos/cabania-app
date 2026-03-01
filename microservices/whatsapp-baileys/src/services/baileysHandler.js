@@ -124,14 +124,37 @@ async function handleMessage(venueId, socket, message) {
 
     const data = await response.json();
     const replyText = data.response || data.message;
+    const assistantMessageId = data.assistant_message_id;
 
     if (!replyText) {
       console.warn(`[baileys] No response text from chat API for venue ${venueId}`);
       return;
     }
 
-    await socket.sendMessage(remoteJid, { text: replyText });
-    console.log(`[baileys] Replied to ${senderPhone} for venue ${venueId}`);
+    try {
+      const sentMsg = await socket.sendMessage(remoteJid, { text: replyText });
+      console.log(`[baileys] Replied to ${senderPhone} for venue ${venueId}`);
+
+      // Report 'sent' status + external_id to main app
+      if (assistantMessageId && config.MAIN_APP_INTERNAL_KEY) {
+        updateMessageStatus(assistantMessageId, 'sent', sentMsg?.key?.id).catch(err =>
+          console.error('[baileys] Failed to report sent status:', err.message)
+        );
+        logEvent(venueId, 'message_sent', null, senderPhone).catch(() => {});
+      }
+    } catch (sendErr) {
+      console.error(`[baileys] Failed to send message for venue ${venueId}:`, sendErr.message);
+      // Report 'failed' status
+      if (assistantMessageId && config.MAIN_APP_INTERNAL_KEY) {
+        updateMessageStatus(assistantMessageId, 'failed', null, sendErr.message).catch(err =>
+          console.error('[baileys] Failed to report failed status:', err.message)
+        );
+        logEvent(venueId, 'message_failed', sendErr.message, senderPhone).catch(() => {});
+      }
+    }
+
+    // Log incoming message event
+    logEvent(venueId, 'message_received', null, senderPhone).catch(() => {});
   } catch (err) {
     console.error('[baileys] Error handling message:', err);
   }
@@ -147,4 +170,46 @@ function extractText(message) {
   return null;
 }
 
-module.exports = { handleMessage, extractText };
+/**
+ * Update message delivery status on the main app.
+ */
+async function updateMessageStatus(messageId, status, externalId, errorDetails) {
+  const url = `${config.MAIN_APP_URL}/api/chat/messages/${messageId}/status`;
+  const body = { status };
+  if (externalId) body.external_id = externalId;
+  if (errorDetails) body.error_details = errorDetails;
+
+  await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.MAIN_APP_INTERNAL_KEY
+    },
+    body: JSON.stringify(body)
+  });
+}
+
+/**
+ * Log a WhatsApp event to the main app.
+ */
+async function logEvent(venueId, eventType, details, phone, messageId) {
+  const url = `${config.MAIN_APP_URL}/api/whatsapp/events`;
+  const body = {
+    venue_id: venueId,
+    event_type: eventType,
+    details: details || undefined,
+    phone: phone || undefined,
+    message_id: messageId || undefined
+  };
+
+  await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Internal-Key': config.MAIN_APP_INTERNAL_KEY
+    },
+    body: JSON.stringify(body)
+  });
+}
+
+module.exports = { handleMessage, extractText, updateMessageStatus, logEvent };

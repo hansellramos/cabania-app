@@ -63,9 +63,19 @@
                     />
                   </div>
                   <div class="message-content">{{ message.content }}</div>
+                  <div class="message-footer">
+                    <small v-if="message.created_at" class="message-time">{{ formatTime(message.created_at) }}</small>
+                    <span v-if="message.role === 'assistant' && message.status" class="message-status ms-1" :title="message.status === 'failed' ? (message.error_details || 'Error de envío') : message.status">
+                      <span v-if="message.status === 'pending'" class="text-muted">&#9203;</span>
+                      <span v-else-if="message.status === 'sent'" class="text-muted">&#10003;</span>
+                      <span v-else-if="message.status === 'delivered'" class="text-muted">&#10003;&#10003;</span>
+                      <span v-else-if="message.status === 'read'" class="status-read">&#10003;&#10003;</span>
+                      <span v-else-if="message.status === 'failed'" class="text-danger">&#10007;</span>
+                    </span>
+                  </div>
                   <div v-if="isDev && message.role === 'assistant' && message.meta" class="message-meta">
                     <small class="text-muted">
-                      {{ message.meta.model }} 
+                      {{ message.meta.model }}
                       <span v-if="message.meta.tokens">| {{ message.meta.tokens }} tokens</span>
                     </small>
                   </div>
@@ -371,6 +381,9 @@ const resumeConversation = async (conv) => {
         role: m.role,
         content: (m.content || '').replace(/\n?<!-- \{.*?\} -->/g, ''),
         media_url: m.media_url || null,
+        created_at: m.created_at || null,
+        status: m.status || null,
+        error_details: m.error_details || null,
         meta: m.role === 'assistant' ? { model: m.model, tokens: m.tokens_used } : undefined
       }))
     }
@@ -410,6 +423,13 @@ const formatDate = (dateStr) => {
   })
 }
 
+const formatTime = (dateStr) => {
+  if (!dateStr) return ''
+  return new Date(dateStr).toLocaleString('es-CO', {
+    hour: '2-digit', minute: '2-digit'
+  })
+}
+
 // Alias para nombres de servicios (cambiar aquí si se quiere renombrar)
 const SOURCE_ALIASES = { baileys: 'Ave', twilio: 'Twilio', web: 'Web', whatsapp: 'WhatsApp', meta: 'Meta' }
 
@@ -443,6 +463,9 @@ const pollConversations = async () => {
           role: m.role,
           content: (m.content || '').replace(/\n?<!-- \{.*?\} -->/g, ''),
           media_url: m.media_url || null,
+          created_at: m.created_at || null,
+          status: m.status || null,
+          error_details: m.error_details || null,
           meta: m.role === 'assistant' ? { model: m.model, tokens: m.tokens_used } : undefined
         }))
         // Only update if message count changed (avoid flicker)
@@ -556,5 +579,38 @@ onUnmounted(() => {
 }
 .chat-image:hover {
   opacity: 0.85;
+}
+
+.message-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin-top: 0.25rem;
+  gap: 0.15rem;
+}
+
+.message-time {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.bubble-user .message-time {
+  color: rgba(255,255,255,0.7);
+}
+
+.message-status {
+  font-size: 0.7rem;
+  line-height: 1;
+}
+
+.status-read {
+  color: #53bdeb;
+}
+
+.bubble-user .message-status {
+  color: rgba(255,255,255,0.7);
+}
+.bubble-user .status-read {
+  color: #a0d8ef;
 }
 </style>
