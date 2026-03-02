@@ -1,5 +1,13 @@
 <template>
   <!-- Floating bubble button -->
+  <div :class="['chat-bubble-float', { 'is-open': isOpen }]" @mouseenter="onBubbleHover" @mouseleave="onBubbleLeave">
+    <!-- Hint tooltip -->
+    <Transition name="hint-fade">
+      <div v-if="showHint && !isOpen" class="chat-hint" @click="dismissHint">
+        <span>Tienes dudas? Preguntame aqui</span>
+        <button class="chat-hint-close" @click.stop="dismissHint">&times;</button>
+      </div>
+    </Transition>
   <button :class="['chat-bubble-btn', { 'is-open': isOpen }]" @click="togglePanel">
     <svg v-if="!isOpen" viewBox="0 0 24 24" fill="none" width="48" height="48" style="margin-top: 4px">
       <!-- Chat bubble outline -->
@@ -14,6 +22,7 @@
       <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
     </svg>
   </button>
+  </div>
 
   <!-- Panel -->
   <Transition name="chat-panel">
@@ -99,6 +108,10 @@ const props = defineProps({
 })
 
 const isOpen = ref(false)
+const showHint = ref(false)
+const hintDismissed = ref(false)
+let hintTimer = null
+let hintAutoHideTimer = null
 const chatState = ref('contact_form') // contact_form | loading | chatting | limit_reached | verifying
 const messages = ref([])
 const sending = ref(false)
@@ -332,13 +345,41 @@ onMounted(() => {
       chatState.value = 'chatting' // Has contact info, go straight to chat
     }
   }
+
+  // Show hint after 3 seconds, auto-hide after 20 seconds total
+  hintTimer = setTimeout(() => { showHint.value = true }, 3000)
+  hintAutoHideTimer = setTimeout(() => { showHint.value = false }, 23000)
 })
+
+const dismissHint = () => {
+  showHint.value = false
+  hintDismissed.value = true
+  if (hintTimer) clearTimeout(hintTimer)
+  if (hintAutoHideTimer) clearTimeout(hintAutoHideTimer)
+}
+
+const onBubbleHover = () => {
+  if (!isOpen.value && !hintDismissed.value) {
+    showHint.value = true
+    hintFromHover.value = true
+  }
+}
+
+const hintFromHover = ref(false)
+
+const onBubbleLeave = () => {
+  if (hintFromHover.value) {
+    showHint.value = false
+    hintFromHover.value = false
+  }
+}
 
 // Lazy-load conversation when panel opens for the first time with a stored conversationId
 const hasRestored = ref(false)
 watch(isOpen, async (open) => {
   // Toggle body class for mobile header hiding
   document.body.classList.toggle('chat-panel-open', open)
+  if (open) dismissHint()
   if (open && !hasRestored.value && conversationId.value) {
     hasRestored.value = true
     await restoreConversation(conversationId.value)
@@ -347,15 +388,27 @@ watch(isOpen, async (open) => {
 
 onUnmounted(() => {
   document.body.classList.remove('chat-panel-open')
+  if (hintTimer) clearTimeout(hintTimer)
+  if (hintAutoHideTimer) clearTimeout(hintAutoHideTimer)
 })
 </script>
 
 <style scoped>
-/* Bubble button */
-.chat-bubble-btn {
+/* Bubble wrapper: fixed position + vertical float */
+.chat-bubble-float {
   position: fixed;
   bottom: 1.5rem;
   right: 1.5rem;
+  z-index: 10003;
+  animation: bubbleFloatY 4s ease-in-out infinite;
+}
+
+.chat-bubble-float.is-open {
+  animation: none;
+}
+
+/* Bubble button: horizontal float */
+.chat-bubble-btn {
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -365,21 +418,97 @@ onUnmounted(() => {
   font-size: 1.5rem;
   cursor: pointer;
   box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35);
-  z-index: 10003;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: transform 0.2s, box-shadow 0.2s;
+  animation: bubbleFloatX 5s ease-in-out infinite;
 }
 
 .chat-bubble-btn:hover {
   transform: scale(1.08);
   box-shadow: 0 6px 20px rgba(16, 185, 129, 0.45);
+  animation: none;
 }
 
 .chat-bubble-btn.is-open {
   background: #64748b;
   box-shadow: 0 4px 12px rgba(100, 116, 139, 0.3);
+  animation: none;
+}
+
+@keyframes bubbleFloatY {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+
+@keyframes bubbleFloatX {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(3px); }
+}
+
+/* Hint tooltip — glassmorphism */
+.chat-hint {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 0.75rem;
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: #1e293b;
+  padding: 0.6rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  font-size: 0.85rem;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.chat-hint::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  right: 22px;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  border: inherit;
+  border-top: none;
+  border-left: none;
+  transform: rotate(45deg);
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+
+.chat-hint-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.chat-hint-close:hover {
+  color: #64748b;
+}
+
+.hint-fade-enter-active {
+  animation: hintSlideIn 0.4s ease-out;
+}
+.hint-fade-leave-active {
+  animation: hintSlideIn 0.3s ease-in reverse;
+}
+
+@keyframes hintSlideIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* Panel */
@@ -556,9 +685,11 @@ onUnmounted(() => {
 
 /* Mobile */
 @media (max-width: 640px) {
-  .chat-bubble-btn {
+  .chat-bubble-float {
     bottom: 1rem;
     right: 1rem;
+  }
+  .chat-bubble-btn {
     width: 50px;
     height: 50px;
     font-size: 1.3rem;
@@ -579,5 +710,21 @@ onUnmounted(() => {
   :global(body.chat-panel-open .public-header) {
     display: none;
   }
+}
+</style>
+
+<style>
+/* Dark mode overrides */
+[data-theme="dark"] .chat-hint {
+  background: rgba(30, 41, 59, 0.7);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+[data-theme="dark"] .chat-hint-close {
+  color: #64748b;
+}
+[data-theme="dark"] .chat-hint-close:hover {
+  color: #94a3b8;
 }
 </style>
