@@ -94,6 +94,17 @@
         </div>
       </div>
 
+      <div class="mb-3" v-if="!isPartner && venueAgents.length > 0">
+        <CFormLabel>Comisionista (opcional)</CFormLabel>
+        <CFormSelect v-model="form.commission_agent_id">
+          <option value="">Sin comisionista</option>
+          <option v-for="agent in venueAgents" :key="agent.id" :value="agent.id">
+            {{ agent.name }}{{ agent.provider?.name ? ` (${agent.provider.name})` : '' }}
+          </option>
+        </CFormSelect>
+        <div class="small text-muted mt-1">Asignar solo si un comisionista vendió este evento</div>
+      </div>
+
       <CButton type="submit" color="primary">{{ isEdit ? 'Actualizar' : 'Crear' }}</CButton>
       <CButton color="secondary" variant="outline" class="ms-2" @click="onCancel">Cancelar</CButton>
     </template>
@@ -108,6 +119,7 @@
 import { ref, watch, computed, defineProps, defineEmits } from 'vue'
 import VenueAutocomplete from './VenueAutocomplete.vue'
 import CustomerAutocomplete from './CustomerAutocomplete.vue'
+import { useAuth } from '@/composables/useAuth'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },
@@ -115,9 +127,13 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:modelValue', 'submit', 'cancel'])
 
+const { user } = useAuth()
+const isPartner = computed(() => user.value?.profile?.code === 'organization:partner')
+
 const form = ref({ ...props.modelValue })
 const selectedVenue = ref(null)
 const availablePlans = ref([])
+const venueAgents = ref([])
 const selectedVenueOrganization = computed(() => selectedVenue.value?.organization || null)
 const totalAttendees = computed(() => (form.value.adults || 0) + (form.value.children || 0))
 const priceBreakdown = ref('')
@@ -177,16 +193,34 @@ async function fetchPlansForVenue(venueId) {
   }
 }
 
+async function fetchAgentsForVenue(venueId) {
+  if (!venueId || isPartner.value) {
+    venueAgents.value = []
+    return
+  }
+  try {
+    const res = await fetch(`/api/commission-agents?venue_id=${venueId}&is_active=true`, { credentials: 'include' })
+    if (res.ok) {
+      venueAgents.value = await res.json()
+    }
+  } catch (e) {
+    console.error('Error fetching agents:', e)
+  }
+}
+
 function onVenueSelected(venue) {
   selectedVenue.value = venue
   if (venue?.id) {
     fetchPlansForVenue(venue.id)
+    fetchAgentsForVenue(venue.id)
   } else {
     availablePlans.value = []
+    venueAgents.value = []
   }
   form.value.plan_id = ''
   form.value.calculated_price = null
   form.value.agreed_price = null
+  form.value.commission_agent_id = ''
 }
 
 function calculatePrice() {
@@ -263,6 +297,10 @@ function handleSubmit() {
   if (data.agreed_price === null || data.agreed_price === undefined || data.agreed_price === '') {
     data.agreed_price = data.calculated_price
   }
+  // Only include commission_agent_id if not empty
+  if (!data.commission_agent_id) {
+    delete data.commission_agent_id
+  }
   emit('submit', data)
 }
 function onCancel() { emit('cancel') }
@@ -302,6 +340,7 @@ watch(() => form.value.venue, async (newVenueId) => {
     // Save plan_id before async fetch — the select resets it when options aren't loaded yet
     const savedPlanId = form.value.plan_id
     await fetchPlansForVenue(newVenueId)
+    fetchAgentsForVenue(newVenueId)
     if (savedPlanId && availablePlans.value.find(p => p.id === savedPlanId)) {
       form.value.plan_id = savedPlanId
     }

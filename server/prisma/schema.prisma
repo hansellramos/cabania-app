@@ -20,7 +20,8 @@ model accommodations {
   agreed_price     Decimal?  @db.Decimal
   calculated_price Decimal?  @db.Decimal
   plan_id          String?   @db.Uuid
-  created_by       String?   @db.VarChar(255)
+  created_by            String?   @db.VarChar(255)
+  commission_agent_id   String?   @db.Uuid
 }
 
 model payments {

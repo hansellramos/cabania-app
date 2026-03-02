@@ -19,10 +19,7 @@
 
           <!-- No agent assigned / no plan -->
           <CAlert v-else-if="result && result.no_agent" color="info">
-            {{ result.message || 'No hay comisionista asignado para esta sede.' }}
-            <RouterLink v-if="!result.message?.includes('plan')" to="/business/commissions/agents/create" class="alert-link ms-1">
-              Crear comisionista
-            </RouterLink>
+            {{ result.message || 'No hay comisionista asignado para este evento.' }}
           </CAlert>
 
           <!-- No rules configured -->

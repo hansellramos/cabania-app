@@ -1603,9 +1603,9 @@ async function startServer() {
 
   app.post('/api/accommodations', isAuthenticated, async (req, res) => {
     try {
-      const { venue, date, time, duration, customer, adults, children, plan_id, calculated_price, agreed_price } = req.body;
+      const { venue, date, time, duration, customer, adults, children, plan_id, calculated_price, agreed_price, commission_agent_id } = req.body;
       const parseFloatOrNull = (val) => val === '' || val === null || val === undefined ? null : parseFloat(val);
-      
+
       const data = {
         venue,
         duration: parseFloat(duration) || null,
@@ -1615,7 +1615,7 @@ async function startServer() {
         calculated_price: parseFloatOrNull(calculated_price),
         agreed_price: parseFloatOrNull(agreed_price)
       };
-      
+
       if (date && typeof date === 'string' && !date.includes('T')) {
         data.date = new Date(date + 'T00:00:00.000Z');
       } else if (date) {
@@ -1627,8 +1627,23 @@ async function startServer() {
         data.time = new Date(time);
       }
       data.customer = customer === '' ? null : customer;
-      if (req.user) {
-        data.created_by = String(req.user.claims?.sub);
+      const userId = req.user ? String(req.user.claims?.sub) : null;
+      if (userId) {
+        data.created_by = userId;
+      }
+
+      // Commission agent assignment
+      if (commission_agent_id) {
+        // Manual assignment from admin
+        data.commission_agent_id = commission_agent_id;
+      } else if (venue && userId) {
+        // Auto-assign if creator is linked to an agent for this venue
+        const linkedAgent = await prisma.commission_agents.findFirst({
+          where: { user_id: userId, venue_id: venue, is_active: true }
+        });
+        if (linkedAgent) {
+          data.commission_agent_id = linkedAgent.id;
+        }
       }
 
       const accommodation = await prisma.accommodations.create({ data });
@@ -1649,7 +1664,7 @@ async function startServer() {
         }
       }
 
-      const { venue, date, time, duration, customer, adults, children, plan_id, calculated_price, agreed_price } = req.body;
+      const { venue, date, time, duration, customer, adults, children, plan_id, calculated_price, agreed_price, commission_agent_id } = req.body;
       const parseFloatOrNull = (val) => val === '' || val === null || val === undefined ? null : parseFloat(val);
 
       const data = {
@@ -1661,21 +1676,26 @@ async function startServer() {
         calculated_price: parseFloatOrNull(calculated_price),
         agreed_price: parseFloatOrNull(agreed_price)
       };
-      
+
       if (date && typeof date === 'string' && !date.includes('T')) {
         data.date = new Date(date + 'T00:00:00.000Z');
       } else if (date) {
         data.date = new Date(date);
       }
-      
+
       if (time && typeof time === 'string' && !time.includes('T')) {
         data.time = new Date('1970-01-01T' + time + ':00.000Z');
       } else if (time) {
         data.time = new Date(time);
       }
-      
+
       data.customer = customer === '' ? null : customer;
-      
+
+      // Only admins (not :own-only users) can change commission_agent_id
+      if (!hasOwnOnly(req.userPermissions, 'accommodations:edit')) {
+        data.commission_agent_id = commission_agent_id || null;
+      }
+
       const accommodation = await prisma.accommodations.update({
         where: { id: req.params.id },
         data
@@ -8956,8 +8976,9 @@ REGLAS:
 
   app.get('/api/commission-agents', isAuthenticated, async (req, res) => {
     try {
-      const orgIds = await getAccessibleOrganizationIds(req.user);
-      const where = { organization_id: { in: orgIds } };
+      const orgIds = await getAccessibleOrganizationIds(req.userPermissions);
+      const where = {};
+      if (orgIds !== null) where.organization_id = { in: orgIds };
       if (req.query.venue_id) where.venue_id = req.query.venue_id;
       if (req.query.is_active !== undefined) where.is_active = req.query.is_active === 'true';
       if (req.query.search) where.name = { contains: req.query.search, mode: 'insensitive' };
@@ -8993,7 +9014,7 @@ REGLAS:
   app.post('/api/commission-agents', isAuthenticated, async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
-      const { provider_id, organization_id, venue_id, name, notes, is_active, rules } = req.body;
+      const { provider_id, organization_id, venue_id, name, notes, is_active, rules, user_id } = req.body;
 
       if (venue_id) {
         const existing = await prisma.commission_agents.findFirst({ where: { venue_id, is_active: true } });
@@ -9002,7 +9023,7 @@ REGLAS:
 
       const result = await prisma.$transaction(async (tx) => {
         const agent = await tx.commission_agents.create({
-          data: { provider_id, organization_id: organization_id || null, venue_id: venue_id || null, name, notes: notes || null, is_active: is_active !== false, created_by: userId }
+          data: { provider_id, organization_id: organization_id || null, venue_id: venue_id || null, name, notes: notes || null, is_active: is_active !== false, created_by: userId, user_id: user_id || null }
         });
         if (rules && rules.length > 0) {
           await tx.commission_rules.createMany({
@@ -9030,7 +9051,7 @@ REGLAS:
   app.put('/api/commission-agents/:id', isAuthenticated, async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
-      const { provider_id, organization_id, venue_id, name, notes, is_active, rules } = req.body;
+      const { provider_id, organization_id, venue_id, name, notes, is_active, rules, user_id } = req.body;
 
       if (venue_id) {
         const existing = await prisma.commission_agents.findFirst({ where: { venue_id, is_active: true, NOT: { id: req.params.id } } });
@@ -9040,7 +9061,7 @@ REGLAS:
       const result = await prisma.$transaction(async (tx) => {
         await tx.commission_agents.update({
           where: { id: req.params.id },
-          data: { provider_id, organization_id: organization_id || null, venue_id: venue_id || null, name, notes: notes || null, is_active: is_active !== false, updated_by: userId, updated_at: new Date() }
+          data: { provider_id, organization_id: organization_id || null, venue_id: venue_id || null, name, notes: notes || null, is_active: is_active !== false, updated_by: userId, updated_at: new Date(), user_id: user_id || null }
         });
         await tx.commission_rules.deleteMany({ where: { agent_id: req.params.id } });
         if (rules && rules.length > 0) {
@@ -9098,14 +9119,19 @@ REGLAS:
       const plan = await prisma.venue_plans.findUnique({ where: { id: accommodation.plan_id } });
       if (!plan) return res.json({ no_agent: true, message: 'Plan no encontrado' });
 
-      const agent = await prisma.commission_agents.findFirst({
-        where: { venue_id: accommodation.venue, is_active: true },
+      // Use explicitly assigned commission agent (not auto-find by venue)
+      if (!accommodation.commission_agent_id) {
+        return res.json({ no_agent: true, message: 'No hay comisionista asignado para este evento' });
+      }
+
+      const agent = await prisma.commission_agents.findUnique({
+        where: { id: accommodation.commission_agent_id },
         include: { provider: true, rules: { where: { plan_type: plan.plan_type }, orderBy: { sort_order: 'asc' } } }
       });
 
       const agentInfo = (a) => ({ id: a.id, name: a.name, provider_name: a.provider?.name || null });
 
-      if (!agent) return res.json({ no_agent: true, message: 'No hay comisionista asignado para esta sede' });
+      if (!agent) return res.json({ no_agent: true, message: 'Comisionista asignado no encontrado' });
       if (!agent.rules.length) return res.json({ agent: agentInfo(agent), no_rules: true, message: `No hay reglas configuradas para tipo "${plan.plan_type}"` });
 
       const adults = accommodation.adults || 0;
