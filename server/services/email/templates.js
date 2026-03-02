@@ -4,8 +4,8 @@
 
 const APP_URL = () => process.env.APP_URL || 'https://app.cabania.info'
 
-function invitationEmail({ inviterName, organizationName, token, message, expiresAt }) {
-  const onboardingUrl = `${APP_URL()}/#/onboarding?token=${token}`
+function invitationEmail({ inviterName, organizationName, token, message, expiresAt, acceptUrl }) {
+  const onboardingUrl = acceptUrl || `${APP_URL()}/#/onboarding?token=${token}`
   const expireDate = new Date(expiresAt).toLocaleDateString('es-CO', {
     year: 'numeric', month: 'long', day: 'numeric'
   })
@@ -72,8 +72,8 @@ function invitationEmail({ inviterName, organizationName, token, message, expire
   }
 }
 
-function invitationWhatsAppMessage({ inviterName, organizationName, token }) {
-  const onboardingUrl = `${APP_URL()}/#/onboarding?token=${token}`
+function invitationWhatsAppMessage({ inviterName, organizationName, token, acceptUrl }) {
+  const onboardingUrl = acceptUrl || `${APP_URL()}/#/onboarding?token=${token}`
   return `¡Hola! 👋 *${inviterName}* te invita a unirte a CabanIA${organizationName ? ` (${organizationName})` : ''} — la plataforma que centraliza reservas, pagos y operación de tus propiedades.\n\nRegístrate aquí: ${onboardingUrl}`
 }
 

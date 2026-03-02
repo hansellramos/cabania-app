@@ -5,6 +5,7 @@ import { cilExternalLink } from '@coreui/icons'
 import { CBadge, CSidebarNav, CNavItem, CNavGroup, CNavTitle } from '@coreui/vue'
 import nav from '@/_nav.js'
 import { useSettingsStore } from '@/stores/settings.js'
+import { useAuth } from '@/composables/useAuth'
 
 import simplebar from 'simplebar-vue'
 import 'simplebar-vue/dist/simplebar.min.css'
@@ -43,6 +44,16 @@ const isActiveItem = (route, item) => {
   return false
 }
 
+/**
+ * Check if user has a permission (supports :own suffix matching).
+ * e.g. user has 'accommodations:view:own' → matches required 'accommodations:view'
+ */
+function userHasPermission(userPerms, requiredPerm) {
+  if (!requiredPerm) return true
+  if (!userPerms || userPerms.length === 0) return false
+  return userPerms.some(p => p === requiredPerm || p.startsWith(requiredPerm + ':'))
+}
+
 const AppSidebarNav = defineComponent({
   name: 'AppSidebarNav',
   components: {
@@ -53,18 +64,27 @@ const AppSidebarNav = defineComponent({
   setup() {
     const route = useRoute()
     const settingsStore = useSettingsStore()
+    const { user } = useAuth()
     const firstRender = ref(true)
 
     onMounted(() => {
       firstRender.value = false
     })
 
+    const userPermissions = computed(() => user.value?.profile?.permissions || [])
+    const isSuperAdmin = computed(() => user.value?.is_super_admin === true)
+
     const filteredNav = computed(() => {
       if (settingsStore.developmentMode) {
         return nav
       }
+
+      // Super admins see everything (skip permission checks)
+      const checkPerms = !isSuperAdmin.value && userPermissions.value.length > 0
+
+      // First pass: filter by devOnly sections and permissions
       let skip = false
-      return nav.filter(item => {
+      const filtered = nav.filter(item => {
         if (item.devOnly) {
           return false
         }
@@ -75,8 +95,35 @@ const AppSidebarNav = defineComponent({
         if (item.component === 'CNavTitle' && !devOnlySections.includes(item.name)) {
           skip = false
         }
-        return !skip
+        if (skip) return false
+
+        // Permission check (only when user has a restricted profile)
+        if (checkPerms && item.permission) {
+          return userHasPermission(userPermissions.value, item.permission)
+        }
+
+        return true
       })
+
+      // Second pass: remove CNavTitle items that have no visible items after them
+      const result = []
+      for (let i = 0; i < filtered.length; i++) {
+        const item = filtered[i]
+        if (item.component === 'CNavTitle') {
+          // Check if there's at least one non-title item after this title before the next title
+          let hasItems = false
+          for (let j = i + 1; j < filtered.length; j++) {
+            if (filtered[j].component === 'CNavTitle') break
+            hasItems = true
+            break
+          }
+          if (hasItems) result.push(item)
+        } else {
+          result.push(item)
+        }
+      }
+
+      return result
     })
 
     const renderItem = (item) => {

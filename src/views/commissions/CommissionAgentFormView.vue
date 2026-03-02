@@ -82,6 +82,20 @@
               </CCol>
             </CRow>
             <CRow class="mb-3">
+              <CCol :md="6">
+                <CFormLabel>Usuario vinculado (aliado)</CFormLabel>
+                <CFormSelect v-model="form.user_id">
+                  <option value="">Sin vincular</option>
+                  <option v-for="u in organizationUsers" :key="u.id" :value="u.id">
+                    {{ u.display_name || u.email }}
+                  </option>
+                </CFormSelect>
+                <div class="small text-muted mt-1">
+                  Al vincular un usuario, los eventos que este cree se asignarán automáticamente a este comisionista.
+                </div>
+              </CCol>
+            </CRow>
+            <CRow class="mb-3">
               <CCol :md="12">
                 <CFormLabel>Notas</CFormLabel>
                 <CFormTextarea
@@ -221,6 +235,7 @@ const form = ref({
   provider_id: '',
   organization_id: '',
   venue_id: '',
+  user_id: '',
   notes: '',
   is_active: true
 })
@@ -232,6 +247,23 @@ const providerSearch = ref('')
 const providerSuggestions = ref([])
 const showProviderSuggestions = ref(false)
 const selectedProvider = ref(null)
+
+const organizationUsers = ref([])
+
+const loadOrganizationUsers = async (orgId) => {
+  if (!orgId) {
+    organizationUsers.value = []
+    return
+  }
+  try {
+    const response = await fetch(`/api/organizations/${orgId}/users`, { credentials: 'include' })
+    if (response.ok) {
+      organizationUsers.value = await response.json()
+    }
+  } catch (error) {
+    console.error('Error loading organization users:', error)
+  }
+}
 
 const filteredVenues = computed(() => {
   if (!form.value.organization_id) return venues.value
@@ -377,8 +409,12 @@ const loadAgent = async () => {
         provider_id: agent.provider_id || '',
         organization_id: agent.organization_id || '',
         venue_id: agent.venue_id || '',
+        user_id: agent.user_id || '',
         notes: agent.notes || '',
         is_active: agent.is_active !== undefined ? agent.is_active : true
+      }
+      if (agent.organization_id) {
+        await loadOrganizationUsers(agent.organization_id)
       }
       if (agent.provider) {
         selectedProvider.value = agent.provider
@@ -456,10 +492,12 @@ const saveAgent = async () => {
   }
 }
 
-watch(() => form.value.organization_id, () => {
+watch(() => form.value.organization_id, (newOrgId) => {
   if (!isEditing.value) {
     form.value.venue_id = ''
+    form.value.user_id = ''
   }
+  loadOrganizationUsers(newOrgId)
 })
 
 onMounted(async () => {
