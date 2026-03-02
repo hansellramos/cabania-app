@@ -521,7 +521,8 @@ async function startServer() {
           id: true,
           email: true,
           display_name: true,
-          avatar_url: true
+          avatar_url: true,
+          profile: { select: { code: true, name: true } }
         }
       });
       
@@ -2977,6 +2978,30 @@ async function startServer() {
         });
       }
       
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Remove user from organization
+  app.delete('/api/organizations/:orgId/users/:userId', isAuthenticated, async (req, res) => {
+    try {
+      const currentUserId = String(req.user.claims?.sub);
+      const currentUser = await prisma.users.findUnique({ where: { id: currentUserId } });
+      if (!currentUser?.is_super_admin && !hasPermission(req.userPermissions, 'users:edit')) {
+        return res.status(403).json({ error: 'No tiene permiso para gestionar accesos' });
+      }
+
+      // Prevent removing yourself
+      if (req.params.userId === currentUserId) {
+        return res.status(400).json({ error: 'No puedes remover tu propio acceso' });
+      }
+
+      await prisma.user_organizations.deleteMany({
+        where: { user_id: req.params.userId, organization_id: req.params.orgId }
+      });
+
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -9389,6 +9414,12 @@ REGLAS:
       const inviterName = invitation.inviter.display_name || invitation.inviter.email || 'Un administrador';
       const orgName = invitation.organization?.name || null;
 
+      // Partner invitations use a different acceptance page
+      const isPartnerInvitation = profile_code && profile_code !== 'organization:admin';
+      const acceptUrl = isPartnerInvitation
+        ? `${process.env.APP_URL || 'https://app.cabania.info'}/#/invitation/accept?token=${invitation.token}`
+        : null;
+
       if (channel === 'email') {
         const emailProvider = getEmailProvider();
         const template = invitationEmail({
@@ -9397,6 +9428,7 @@ REGLAS:
           token: invitation.token,
           message: invitation.message,
           expiresAt: invitation.expires_at,
+          acceptUrl,
         });
         const result = await emailProvider.send({
           to: email,
@@ -9412,6 +9444,7 @@ REGLAS:
           inviterName,
           organizationName: orgName,
           token: invitation.token,
+          acceptUrl,
         });
         const result = await sendInvitationWhatsApp(phone, body);
         if (!result.success) {
@@ -9527,6 +9560,7 @@ REGLAS:
         channel: invitation.channel,
         organization: invitation.organization,
         role: invitation.role,
+        profile_code: invitation.profile_code || null,
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -9569,10 +9603,13 @@ REGLAS:
       const profileCode = invitation.profile_code || process.env.DEFAULT_PROFILE_CODE || 'organization:admin';
       const profile = await prisma.profiles.findUnique({ where: { code: profileCode } });
 
+      // Partners skip onboarding (they don't create venues)
+      const isPartnerInvitation = profileCode !== 'organization:admin' && invitation.organization_id;
+
       const password_hash = await bcryptInv.hash(password, 10);
       const userId = `inv_${crypto.randomUUID().split('-')[0]}_${Date.now()}`;
 
-      // Create user + mark invitation accepted + create onboarding progress + referral reward
+      // Create user + mark invitation accepted + referral reward
       const transactionOps = [
         prisma.users.create({
           data: {
@@ -9589,9 +9626,6 @@ REGLAS:
           where: { id: invitation.id },
           data: { status: 'accepted', accepted_at: new Date() }
         }),
-        prisma.onboarding_progress.create({
-          data: { user_id: userId, current_step: 2, data: {} }
-        }),
         prisma.referral_rewards.create({
           data: {
             referrer_id: invitation.invited_by,
@@ -9603,6 +9637,16 @@ REGLAS:
           }
         }),
       ];
+
+      // Only create onboarding progress for non-partner invitations (new parceleros)
+      if (!isPartnerInvitation) {
+        transactionOps.push(
+          prisma.onboarding_progress.create({
+            data: { user_id: userId, current_step: 2, data: {} }
+          })
+        );
+      }
+
       const [user] = await prisma.$transaction(transactionOps);
 
       // Assign to organization if specified
@@ -9630,12 +9674,82 @@ REGLAS:
       req.login(loginUser, (err) => {
         if (err) {
           console.error('Auto-login error:', err);
-          return res.json({ success: true, user: { id: userId, email, display_name }, autoLogin: false });
+          return res.json({ success: true, user: { id: userId, email, display_name }, autoLogin: false, skipOnboarding: isPartnerInvitation });
         }
-        res.json({ success: true, user: { id: userId, email, display_name }, autoLogin: true });
+        res.json({ success: true, user: { id: userId, email, display_name }, autoLogin: true, skipOnboarding: isPartnerInvitation });
       });
     } catch (error) {
       console.error('Accept invitation error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Accept invitation for existing user (requires authentication)
+  app.post('/api/invitations/:token/accept-existing', isAuthenticated, async (req, res) => {
+    try {
+      const invitation = await prisma.invitations.findUnique({
+        where: { token: req.params.token },
+        include: { organization: { select: { id: true, name: true } } }
+      });
+
+      if (!invitation) return res.status(404).json({ error: 'Invitación no encontrada' });
+      if (invitation.status !== 'pending') {
+        return res.status(400).json({ error: 'Esta invitación ya fue utilizada o cancelada' });
+      }
+      if (new Date(invitation.expires_at) < new Date()) {
+        await prisma.invitations.update({ where: { id: invitation.id }, data: { status: 'expired' } });
+        return res.status(400).json({ error: 'Esta invitación ha expirado' });
+      }
+
+      const userId = String(req.user.claims?.sub);
+
+      // Link user to organization
+      if (invitation.organization_id) {
+        // Check if already linked
+        const existing = await prisma.user_organizations.findFirst({
+          where: { user_id: userId, organization_id: invitation.organization_id }
+        });
+        if (!existing) {
+          await prisma.user_organizations.create({
+            data: { user_id: userId, organization_id: invitation.organization_id }
+          });
+        }
+      }
+
+      // Update user profile if invitation specifies one and user doesn't have a higher-level profile
+      if (invitation.profile_code) {
+        const user = await prisma.users.findUnique({ where: { id: userId }, include: { profile: true } });
+        const currentProfileCode = user?.profile?.code;
+        // Only downgrade to partner if user has no profile or is already a partner
+        if (!currentProfileCode || currentProfileCode === 'organization:partner') {
+          const invProfile = await prisma.profiles.findUnique({ where: { code: invitation.profile_code } });
+          if (invProfile) {
+            await prisma.users.update({ where: { id: userId }, data: { profile_id: invProfile.id } });
+          }
+        }
+      }
+
+      // Mark invitation as accepted
+      await prisma.invitations.update({
+        where: { id: invitation.id },
+        data: { status: 'accepted', accepted_at: new Date() }
+      });
+
+      // Create referral reward
+      await prisma.referral_rewards.create({
+        data: {
+          referrer_id: invitation.invited_by,
+          referred_id: userId,
+          invitation_id: invitation.id,
+          reward_type: 'signup',
+          status: 'pending',
+          description: `Vinculación de usuario existente por invitación`,
+        }
+      }).catch(() => {}); // Ignore if duplicate
+
+      res.json({ success: true, organization: invitation.organization });
+    } catch (error) {
+      console.error('Accept existing invitation error:', error);
       res.status(500).json({ error: error.message });
     }
   });

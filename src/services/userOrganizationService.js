@@ -6,14 +6,14 @@ export async function fetchUsersByOrganization(orgId) {
   return response.json();
 }
 
-export async function addUserToOrganization(orgId, userId) {
-  return;
-}
-
-export async function addUserToOrganizationByEmail(orgId, email) {
-  return;
-}
-
 export async function removeUserFromOrganization(orgId, userId) {
-  return;
+  const response = await fetch(`/api/organizations/${orgId}/users/${userId}`, {
+    method: 'DELETE',
+    credentials: 'include',
+  });
+  if (!response.ok) {
+    const data = await response.json();
+    throw new Error(data.error || 'Error al remover usuario');
+  }
+  return response.json();
 }
