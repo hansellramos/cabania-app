@@ -6577,9 +6577,10 @@ REGLAS:
         entry.phone = entry.phone.replace(/\D/g, '');
       }
 
-      await prisma.whatsapp_connections.update({
+      await prisma.whatsapp_connections.upsert({
         where: { venue_id: venueId },
-        data: { excluded_phones, updated_at: new Date() }
+        update: { excluded_phones, updated_at: new Date() },
+        create: { venue_id: venueId, excluded_phones, status: 'disconnected' }
       });
 
       res.json({ success: true, excluded_phones });
