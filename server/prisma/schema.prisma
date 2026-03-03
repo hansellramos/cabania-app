@@ -252,6 +252,7 @@ model venues {
   brand_color_secondary         String?   @db.VarChar(7)
   logo_url                      String?
   commission_percentage Decimal?  @db.Decimal(5, 2)
+  excluded_phones      Json      @default("[]") @db.Json
   venue_plans          venue_plans[]
   payment_methods      venue_payment_methods[]
 }

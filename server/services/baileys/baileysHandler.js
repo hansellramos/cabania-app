@@ -35,11 +35,11 @@ async function handleMessage(venueId, socket, message) {
     const pushName = msg.pushName || null;
 
     // Check if sender is in the excluded phones list
-    const connection = await prisma.whatsapp_connections.findUnique({
-      where: { venue_id: venueId },
+    const venue = await prisma.venues.findUnique({
+      where: { id: venueId },
       select: { excluded_phones: true }
     });
-    const excludedPhones = Array.isArray(connection?.excluded_phones) ? connection.excluded_phones : [];
+    const excludedPhones = Array.isArray(venue?.excluded_phones) ? venue.excluded_phones : [];
     const isExcluded = excludedPhones.some(e => senderPhone.endsWith(e.phone) || e.phone.endsWith(senderPhone));
     if (isExcluded) {
       console.log(`[baileys] Ignored message from excluded phone ${senderPhone} for venue ${venueId}`);

@@ -6587,12 +6587,12 @@ REGLAS:
         return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
       }
 
-      const conn = await prisma.whatsapp_connections.findUnique({
-        where: { venue_id: venueId },
+      const venue = await prisma.venues.findUnique({
+        where: { id: venueId },
         select: { excluded_phones: true }
       });
 
-      res.json({ excluded_phones: conn?.excluded_phones || [] });
+      res.json({ excluded_phones: venue?.excluded_phones || [] });
     } catch (error) {
       console.error('[whatsapp] Excluded phones error:', error);
       res.status(500).json({ error: error.message });
@@ -6622,10 +6622,9 @@ REGLAS:
         entry.phone = entry.phone.replace(/\D/g, '');
       }
 
-      await prisma.whatsapp_connections.upsert({
-        where: { venue_id: venueId },
-        update: { excluded_phones, updated_at: new Date() },
-        create: { venue_id: venueId, excluded_phones, status: 'disconnected' }
+      await prisma.venues.update({
+        where: { id: venueId },
+        data: { excluded_phones }
       });
 
       res.json({ success: true, excluded_phones });

@@ -79,7 +79,8 @@ model whatsapp_event_log {
 }
 
 model venues {
-  id       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  name     String?  @db.VarChar
-  whatsapp Decimal? @db.Decimal
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name            String?  @db.VarChar
+  whatsapp        Decimal? @db.Decimal
+  excluded_phones Json     @default("[]") @db.Json
 }

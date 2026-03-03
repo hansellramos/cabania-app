@@ -85,13 +85,13 @@ async function handleMessage(venueId, socket, message) {
       return;
     }
 
-    // Check excluded phones
+    // Check excluded phones (stored at venue level, not connection level)
     step = 'check_excluded';
-    const connection = await prisma.whatsapp_connections.findUnique({
-      where: { venue_id: venueId },
+    const venue = await prisma.venues.findUnique({
+      where: { id: venueId },
       select: { excluded_phones: true }
     });
-    const excludedPhones = Array.isArray(connection?.excluded_phones) ? connection.excluded_phones : [];
+    const excludedPhones = Array.isArray(venue?.excluded_phones) ? venue.excluded_phones : [];
     const isExcluded = excludedPhones.some(e => senderPhone.endsWith(e.phone) || e.phone.endsWith(senderPhone));
     if (isExcluded) {
       logger.info(`[msg:excluded] ${senderPhone} is excluded`, { venueId, phone: senderPhone, step: 'excluded' });
