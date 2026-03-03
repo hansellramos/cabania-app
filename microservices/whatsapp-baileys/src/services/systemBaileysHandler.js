@@ -6,6 +6,7 @@
  */
 
 const { prisma } = require('../db');
+const logger = require('../logger');
 
 const RESUME_PATTERNS = [
   /ya puedes seguir/i,
@@ -33,7 +34,7 @@ async function handleSystemMessage(socket, message) {
     if (!messageText) return;
 
     const senderPhone = remoteJid.replace('@s.whatsapp.net', '');
-    console.log(`[baileys-system] Message from ${senderPhone}: ${messageText.substring(0, 80)}`);
+    logger.info(`[baileys-system] Message from ${senderPhone}: ${(messageText || '').substring(0, 80)}`, { phone: senderPhone });
 
     const isResumeCommand = RESUME_PATTERNS.some(p => p.test(messageText));
     if (!isResumeCommand) return;
@@ -57,7 +58,7 @@ async function handleSystemMessage(socket, message) {
     ])];
 
     if (allVenueIds.length === 0) {
-      console.log(`[baileys-system] No venues found for phone ${senderPhone}`);
+      logger.info(`[baileys-system] No venues found for phone ${senderPhone}`, { phone: senderPhone });
       return;
     }
 
@@ -112,7 +113,7 @@ async function handleSystemMessage(socket, message) {
           );
           resumedCount++;
         } catch (err) {
-          console.error(`[baileys-system] Failed to send greeting to ${conv.phone}:`, err.message);
+          logger.warn(`[baileys-system] Failed to send greeting to ${conv.phone}: ${err.message}`, { phone: conv.phone, error: err.message });
         }
       }
     }
@@ -121,9 +122,9 @@ async function handleSystemMessage(socket, message) {
       text: `✅ Listo, CabanIA retomó ${escalatedConversations.length} conversación(es) de ${venueNames || 'tus venues'}. ${resumedCount > 0 ? `Se notificó a ${resumedCount} cliente(s).` : ''}`
     });
 
-    console.log(`[baileys-system] Resumed ${escalatedConversations.length} conversations for venues: ${allVenueIds.join(', ')}`);
+    logger.info(`[baileys-system] Resumed ${escalatedConversations.length} conversations for venues: ${allVenueIds.join(', ')}`, { venueIds: allVenueIds });
   } catch (err) {
-    console.error('[baileys-system] Error handling system message:', err);
+    logger.error(`[baileys-system] Error handling system message: ${err.message}`, { error: err.message, stack: err.stack });
   }
 }
 

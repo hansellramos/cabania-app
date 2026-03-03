@@ -7,9 +7,11 @@
 
 const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion } = require('baileys');
 const { Boom } = require('@hapi/boom');
+const Sentry = require('@sentry/node');
 const { prisma } = require('../db');
 const { useDBAuthState } = require('../stores/baileysStore');
 const { handleMessage, logEvent } = require('./baileysHandler');
+const logger = require('../logger');
 
 const connections = new Map();
 const retryCounts = new Map();
@@ -53,16 +55,18 @@ async function connectVenue(venueId) {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log(`[baileys] QR code generated for venue ${venueId}`);
+      logger.info(`[baileys] QR code generated for venue ${venueId}`, { venueId });
       await prisma.whatsapp_connections.update({
         where: { venue_id: venueId },
         data: { qr_code: qr, status: 'qr_pending', updated_at: new Date() }
       });
-      logEvent(venueId, 'qr_generated').catch(() => {});
+      logEvent(venueId, 'qr_generated').catch(err =>
+        logger.warn(`[baileys] Failed to log qr_generated event: ${err.message}`, { venueId })
+      );
     }
 
     if (connection === 'open') {
-      console.log(`[baileys] Connected for venue ${venueId}`);
+      logger.info(`[baileys] Connected for venue ${venueId}`, { venueId });
       const meId = socket.user?.id;
       const phoneNumber = meId ? meId.split(':')[0].split('@')[0] : null;
 
@@ -80,14 +84,18 @@ async function connectVenue(venueId) {
       const entry = connections.get(venueId);
       if (entry) entry.phoneNumber = phoneNumber;
       retryCounts.set(venueId, 0);
-      logEvent(venueId, 'connected', null, phoneNumber).catch(() => {});
+      logEvent(venueId, 'connected', null, phoneNumber).catch(err =>
+        logger.warn(`[baileys] Failed to log connected event: ${err.message}`, { venueId })
+      );
     }
 
     if (connection === 'close') {
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log(`[baileys] Connection closed for venue ${venueId}, code: ${statusCode}, reconnect: ${shouldReconnect}`);
-      logEvent(venueId, 'disconnected', JSON.stringify({ statusCode, reason: lastDisconnect?.error?.message })).catch(() => {});
+      logger.info(`[baileys] Connection closed for venue ${venueId}, code: ${statusCode}, reconnect: ${shouldReconnect}`, { venueId, statusCode });
+      logEvent(venueId, 'disconnected', JSON.stringify({ statusCode, reason: lastDisconnect?.error?.message })).catch(err =>
+        logger.warn(`[baileys] Failed to log disconnected event: ${err.message}`, { venueId })
+      );
 
       if (statusCode === DisconnectReason.loggedOut) {
         await prisma.whatsapp_connections.update({
@@ -108,11 +116,14 @@ async function connectVenue(venueId) {
 
         if (retries <= MAX_RETRIES) {
           const delay = RETRY_DELAY_MS * retries;
-          console.log(`[baileys] Reconnecting venue ${venueId} in ${delay}ms (attempt ${retries}/${MAX_RETRIES})`);
+          logger.info(`[baileys] Reconnecting venue ${venueId} in ${delay}ms (attempt ${retries}/${MAX_RETRIES})`, { venueId, retries });
           setTimeout(() => connectVenue(venueId), delay);
         } else {
-          console.error(`[baileys] Max retries reached for venue ${venueId}`);
-          logEvent(venueId, 'max_retries_reached', JSON.stringify({ retries: MAX_RETRIES })).catch(() => {});
+          logger.error(`[baileys] Max retries reached for venue ${venueId}`, { venueId, retries: MAX_RETRIES });
+          Sentry.captureException(new Error(`Max retries reached for venue ${venueId}`));
+          logEvent(venueId, 'max_retries_reached', JSON.stringify({ retries: MAX_RETRIES })).catch(err =>
+            logger.warn(`[baileys] Failed to log max_retries event: ${err.message}`, { venueId })
+          );
           await prisma.whatsapp_connections.update({
             where: { venue_id: venueId },
             data: { status: 'disconnected', qr_code: null, updated_at: new Date() }
@@ -224,20 +235,22 @@ async function restoreAllConnections() {
     });
 
     if (activeConnections.length === 0) {
-      console.log('[baileys] No connections to restore');
+      logger.info('[baileys] No connections to restore');
       return;
     }
 
-    console.log(`[baileys] Restoring ${activeConnections.length} connection(s)...`);
+    logger.info(`[baileys] Restoring ${activeConnections.length} connection(s)...`);
     for (const conn of activeConnections) {
       try {
         await connectVenue(conn.venue_id);
       } catch (err) {
-        console.error(`[baileys] Failed to restore venue ${conn.venue_id}:`, err.message);
+        logger.error(`[baileys] Failed to restore venue ${conn.venue_id}: ${err.message}`, { venueId: conn.venue_id, error: err.message });
+        Sentry.captureException(err);
       }
     }
   } catch (err) {
-    console.error('[baileys] Error restoring connections:', err.message);
+    logger.error(`[baileys] Error restoring connections: ${err.message}`, { error: err.message });
+    Sentry.captureException(err);
   }
 }
 
