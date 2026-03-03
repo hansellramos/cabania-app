@@ -156,14 +156,15 @@ async function handleMessage(venueId, socket, message) {
     const data = await response.json();
     const replyText = data.response || data.message;
     const assistantMessageId = data.assistant_message_id;
-    const tokensUsed = data.usage || null;
 
-    logger.info(`[msg:ai_response] AI responded in ${apiMs}ms (${replyText ? replyText.length : 0} chars)`, {
+    logger.info(`[msg:ai_response] AI responded in ${apiMs}ms (${replyText ? replyText.length : 0} chars, ${data.tokens_used || '?'} tokens, ${data.model || '?'})`, {
       venueId, phone: senderPhone, step: 'ai_response', apiMs,
       replyLength: replyText?.length || 0,
+      tokensUsed: data.tokens_used || null,
+      model: data.model || null,
+      provider: data.provider || null,
       assistantMessageId,
       conversationId: data.conversation_id || conversationId,
-      tokensUsed,
     });
 
     if (!replyText) {
