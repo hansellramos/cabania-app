@@ -1,4 +1,17 @@
 const config = require('./config');
+const Sentry = require('@sentry/node');
+const logger = require('./logger');
+
+if (config.SENTRY_DSN) {
+  Sentry.init({
+    dsn: config.SENTRY_DSN,
+    environment: config.NODE_ENV,
+    sendDefaultPii: true,
+    enableLogs: true,
+    tracesSampleRate: 0.1,
+  });
+}
+
 const express = require('express');
 const cors = require('cors');
 const { validateApiKey } = require('./middleware/apiKey');
@@ -16,9 +29,22 @@ app.use('/api', validateApiKey, require('./routes/venue'));
 app.use('/api', validateApiKey, require('./routes/system'));
 app.use('/api', validateApiKey, require('./routes/messaging'));
 
+// Sentry error handler (must be after routes)
+Sentry.setupExpressErrorHandler(app);
+
 // Services (loaded after config is validated)
 const baileysService = require('./services/baileysService');
 const systemBaileysService = require('./services/systemBaileysService');
+
+// Global error handlers
+process.on('unhandledRejection', (reason) => {
+  logger.error('[process] Unhandled rejection', { error: String(reason) });
+  Sentry.captureException(reason);
+});
+process.on('uncaughtException', (err) => {
+  logger.error('[process] Uncaught exception', { error: err.message, stack: err.stack });
+  Sentry.captureException(err);
+});
 
 /**
  * Calculate the next resume time at given hour in America/Bogota timezone.
@@ -40,16 +66,16 @@ function getNextResumeTime(hour = 3) {
 }
 
 app.listen(config.PORT, '0.0.0.0', () => {
-  console.log(`[whatsapp-service] Running on port ${config.PORT}`);
+  logger.info(`[whatsapp-service] Running on port ${config.PORT}`);
 
   // Restore venue connections
   baileysService.restoreAllConnections().catch(err => {
-    console.error('[baileys] Error restoring connections on startup:', err.message);
+    logger.error('[baileys] Error restoring connections on startup', { error: err.message });
   });
 
   // Restore system connection
   systemBaileysService.restoreSystemConnection().catch(err => {
-    console.error('[baileys-system] Error restoring system connection on startup:', err.message);
+    logger.error('[baileys-system] Error restoring system connection on startup', { error: err.message });
   });
 
   // Auto-resume escalated conversations — check every 5 minutes
@@ -65,7 +91,7 @@ app.listen(config.PORT, '0.0.0.0', () => {
 
       if (toResume.length === 0) return;
 
-      console.log(`[auto-resume] Resuming ${toResume.length} conversation(s)`);
+      logger.info(`[auto-resume] Resuming ${toResume.length} conversation(s)`);
 
       await prisma.chat_conversations.updateMany({
         where: {
@@ -90,12 +116,12 @@ app.listen(config.PORT, '0.0.0.0', () => {
               '¡Hola! 👋 CabanIA está disponible nuevamente para ayudarte. ¿En qué puedo asistirte?'
             );
           } catch (err) {
-            // Connection may not be active
+            logger.warn(`[auto-resume] Failed to send greeting to ${conv.phone}`, { error: err.message });
           }
         }
       }
     } catch (err) {
-      console.error('[auto-resume] Error:', err.message);
+      logger.error('[auto-resume] Error', { error: err.message });
     }
   }, 5 * 60 * 1000);
 });

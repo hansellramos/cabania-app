@@ -15,4 +15,5 @@ module.exports = {
   MAIN_APP_INTERNAL_KEY: process.env.MAIN_APP_INTERNAL_KEY || '',
   PORT: parseInt(process.env.PORT || '3001', 10),
   NODE_ENV: process.env.NODE_ENV || 'development',
+  SENTRY_DSN: process.env.SENTRY_DSN || '',
 };

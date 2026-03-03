@@ -6,9 +6,11 @@
 
 const { default: makeWASocket, DisconnectReason, fetchLatestBaileysVersion } = require('baileys');
 const { Boom } = require('@hapi/boom');
+const Sentry = require('@sentry/node');
 const { prisma } = require('../db');
 const { useSystemDBAuthState } = require('../stores/systemBaileysStore');
 const { handleSystemMessage } = require('./systemBaileysHandler');
+const logger = require('../logger');
 
 let systemSocket = null;
 let systemPhoneNumber = null;
@@ -55,7 +57,7 @@ async function connectSystem() {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('[baileys-system] QR code generated');
+      logger.info('[baileys-system] QR code generated');
       await prisma.system_whatsapp_connection.update({
         where: { id: record.id },
         data: { qr_code: qr, status: 'qr_pending', updated_at: new Date() }
@@ -63,7 +65,7 @@ async function connectSystem() {
     }
 
     if (connection === 'open') {
-      console.log('[baileys-system] Connected');
+      logger.info('[baileys-system] Connected');
       const meId = systemSocket.user?.id;
       systemPhoneNumber = meId ? meId.split(':')[0].split('@')[0] : null;
 
@@ -83,7 +85,7 @@ async function connectSystem() {
     if (connection === 'close') {
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-      console.log(`[baileys-system] Connection closed, code: ${statusCode}, reconnect: ${shouldReconnect}`);
+      logger.info(`[baileys-system] Connection closed, code: ${statusCode}, reconnect: ${shouldReconnect}`, { statusCode });
 
       if (statusCode === DisconnectReason.loggedOut) {
         await prisma.system_whatsapp_connection.update({
@@ -103,10 +105,11 @@ async function connectSystem() {
         retryCount++;
         if (retryCount <= MAX_RETRIES) {
           const delay = RETRY_DELAY_MS * retryCount;
-          console.log(`[baileys-system] Reconnecting in ${delay}ms (attempt ${retryCount}/${MAX_RETRIES})`);
+          logger.info(`[baileys-system] Reconnecting in ${delay}ms (attempt ${retryCount}/${MAX_RETRIES})`, { retryCount });
           setTimeout(() => connectSystem(), delay);
         } else {
-          console.error('[baileys-system] Max retries reached');
+          logger.error('[baileys-system] Max retries reached', { retries: MAX_RETRIES });
+          Sentry.captureException(new Error('System WhatsApp max retries reached'));
           await prisma.system_whatsapp_connection.update({
             where: { id: record.id },
             data: { status: 'disconnected', qr_code: null, updated_at: new Date() }
@@ -174,7 +177,7 @@ async function getSystemStatus() {
 
 async function sendSystemMessage(phone, text) {
   if (!systemSocket) {
-    console.warn('[baileys-system] No active system connection, cannot send message');
+    logger.warn('[baileys-system] No active system connection, cannot send message');
     return false;
   }
   const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
@@ -188,13 +191,14 @@ async function restoreSystemConnection() {
       where: { status: 'connected', channel: 'baileys' }
     });
     if (record) {
-      console.log('[baileys-system] Restoring system connection...');
+      logger.info('[baileys-system] Restoring system connection...');
       await connectSystem();
     } else {
-      console.log('[baileys-system] No system connection to restore');
+      logger.info('[baileys-system] No system connection to restore');
     }
   } catch (err) {
-    console.error('[baileys-system] Error restoring connection:', err.message);
+    logger.error(`[baileys-system] Error restoring connection: ${err.message}`, { error: err.message });
+    Sentry.captureException(err);
   }
 }
 

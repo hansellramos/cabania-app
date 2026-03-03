@@ -13,6 +13,7 @@
     "@hapi/boom": "^10.0.1",
     "@prisma/adapter-pg": "^6.5.0",
     "@prisma/client": "^6.5.0",
+    "@sentry/node": "^10.42.0",
     "baileys": "^6.7.16",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
