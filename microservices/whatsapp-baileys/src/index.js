@@ -35,6 +35,7 @@ Sentry.setupExpressErrorHandler(app);
 // Services (loaded after config is validated)
 const baileysService = require('./services/baileysService');
 const systemBaileysService = require('./services/systemBaileysService');
+const { getMetrics } = require('./metrics');
 
 // Global error handlers
 process.on('unhandledRejection', (reason) => {
@@ -77,6 +78,65 @@ app.listen(config.PORT, '0.0.0.0', () => {
   systemBaileysService.restoreSystemConnection().catch(err => {
     logger.error('[baileys-system] Error restoring system connection on startup', { error: err.message });
   });
+
+  // Pipeline health monitor — check every 5 minutes
+  let lastAlertedChatApiDown = false;
+  let lastAlertedPipelineStale = false;
+
+  setInterval(async () => {
+    try {
+      const m = getMetrics();
+      const hasConnections = baileysService.connections.size > 0;
+
+      // Check if chat API is reachable
+      let chatApiUp = false;
+      try {
+        const res = await fetch(`${config.MAIN_APP_URL}/api/health`, {
+          signal: AbortSignal.timeout(5000),
+        });
+        chatApiUp = res.ok;
+      } catch (_) {}
+
+      if (!chatApiUp && hasConnections) {
+        if (!lastAlertedChatApiDown) {
+          const err = new Error(`Pipeline alert: Chat API unreachable at ${config.MAIN_APP_URL}`);
+          logger.error(`[pipeline:alert] Chat API unreachable`, { mainAppUrl: config.MAIN_APP_URL, venueConnections: baileysService.connections.size });
+          Sentry.captureException(err, { level: 'fatal', extra: { metrics: m } });
+          lastAlertedChatApiDown = true;
+        }
+      } else {
+        lastAlertedChatApiDown = false;
+      }
+
+      // Check for stale pipeline: receiving messages but failing to send
+      if (hasConnections && m.messages_received > 0) {
+        const receivedRecently = m.last_message_received_at &&
+          (Date.now() - new Date(m.last_message_received_at).getTime()) < 30 * 60 * 1000;
+        const sentRecently = m.last_message_sent_at &&
+          (Date.now() - new Date(m.last_message_sent_at).getTime()) < 30 * 60 * 1000;
+
+        if (receivedRecently && !sentRecently && m.messages_sent === 0) {
+          if (!lastAlertedPipelineStale) {
+            const err = new Error(`Pipeline alert: Messages received (${m.messages_received}) but none sent. Last error: ${m.last_error || 'unknown'} at step ${m.last_error_step || 'unknown'}`);
+            logger.error(`[pipeline:alert] Receiving but not sending`, { metrics: m });
+            Sentry.captureException(err, { level: 'error', extra: { metrics: m } });
+            lastAlertedPipelineStale = true;
+          }
+        } else {
+          lastAlertedPipelineStale = false;
+        }
+      }
+
+      // Log pipeline status periodically
+      if (hasConnections) {
+        logger.info(`[pipeline:status] received=${m.messages_received} sent=${m.messages_sent} failed=${m.messages_failed} api_errors=${m.chat_api_errors} drops=${m.connection_drops} chat_api=${chatApiUp ? 'up' : 'DOWN'}`, {
+          ...m, chatApiUp, venueConnections: baileysService.connections.size
+        });
+      }
+    } catch (err) {
+      logger.error(`[pipeline:monitor_error] ${err.message}`, { error: err.message });
+    }
+  }, 5 * 60 * 1000);
 
   // Auto-resume escalated conversations — check every 5 minutes
   setInterval(async () => {

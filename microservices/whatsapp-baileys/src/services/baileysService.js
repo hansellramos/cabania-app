@@ -12,6 +12,7 @@ const { prisma } = require('../db');
 const { useDBAuthState } = require('../stores/baileysStore');
 const { handleMessage, logEvent } = require('./baileysHandler');
 const logger = require('../logger');
+const metrics = require('../metrics');
 
 const connections = new Map();
 const retryCounts = new Map();
@@ -92,6 +93,7 @@ async function connectVenue(venueId) {
     if (connection === 'close') {
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+      metrics.recordConnectionDrop();
       logger.info(`[baileys] Connection closed for venue ${venueId}, code: ${statusCode}, reconnect: ${shouldReconnect}`, { venueId, statusCode });
       logEvent(venueId, 'disconnected', JSON.stringify({ statusCode, reason: lastDisconnect?.error?.message })).catch(err =>
         logger.warn(`[baileys] Failed to log disconnected event: ${err.message}`, { venueId })

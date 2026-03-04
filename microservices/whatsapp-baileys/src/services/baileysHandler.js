@@ -9,6 +9,7 @@ const Sentry = require('@sentry/node');
 const { prisma } = require('../db');
 const config = require('../config');
 const logger = require('../logger');
+const metrics = require('../metrics');
 
 /**
  * Handle an incoming WhatsApp message from Baileys.
@@ -37,6 +38,7 @@ async function handleMessage(venueId, socket, message) {
       : 'text';
 
     step = 'received';
+    metrics.recordReceived();
     logger.info(`[msg:${step}] ${senderPhone} → venue ${venueId} (${msgType})`, { venueId, phone: senderPhone, pushName, msgType, step });
 
     // Handle image messages
@@ -137,6 +139,7 @@ async function handleMessage(venueId, socket, message) {
 
     logger.info(`[msg:${step}] POST ${chatUrl}`, { venueId, phone: senderPhone, step, messagePreview: (messageText || '[media]').substring(0, 50) });
 
+    metrics.recordChatApiCall();
     const apiStart = Date.now();
     const response = await fetch(chatUrl, {
       method: 'POST',
@@ -148,7 +151,11 @@ async function handleMessage(venueId, socket, message) {
     if (!response.ok) {
       step = 'chat_api_error';
       const errText = await response.text();
+      metrics.recordChatApiError(response.status, errText.substring(0, 100));
       logger.error(`[msg:${step}] ${response.status} in ${apiMs}ms: ${errText.substring(0, 200)}`, { venueId, phone: senderPhone, step, status: response.status, apiMs });
+      Sentry.captureException(new Error(`Chat API error ${response.status} for venue ${venueId}`), {
+        extra: { venueId, phone: senderPhone, status: response.status, apiMs, errText: errText.substring(0, 500) }
+      });
       return;
     }
 
@@ -177,6 +184,7 @@ async function handleMessage(venueId, socket, message) {
     try {
       const sentMsg = await socket.sendMessage(remoteJid, { text: replyText });
       step = 'sent';
+      metrics.recordSent();
       const totalMs = Date.now() - startTime;
       logger.info(`[msg:${step}] Reply sent to ${senderPhone} (total: ${totalMs}ms, AI: ${apiMs}ms)`, {
         venueId, phone: senderPhone, step, totalMs, apiMs,
@@ -195,6 +203,7 @@ async function handleMessage(venueId, socket, message) {
       }
     } catch (sendErr) {
       step = 'send_failed';
+      metrics.recordFailed(step, sendErr.message);
       logger.error(`[msg:${step}] ${sendErr.message}`, { venueId, phone: senderPhone, step, error: sendErr.message });
       Sentry.captureException(sendErr);
       if (assistantMessageId && config.MAIN_APP_INTERNAL_KEY) {
@@ -213,6 +222,7 @@ async function handleMessage(venueId, socket, message) {
     );
   } catch (err) {
     const totalMs = Date.now() - startTime;
+    metrics.recordFailed(step, err.message);
     logger.error(`[msg:CRASH] at step="${step}" after ${totalMs}ms: ${err.message}`, {
       venueId, phone: senderPhone, step, totalMs,
       error: err.message, stack: err.stack,
