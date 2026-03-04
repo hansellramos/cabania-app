@@ -8071,6 +8071,59 @@ REGLAS:
     }
   });
 
+  // POST /api/chat/:venue_id/messages/:message_id/send-whatsapp - Send assistant message via WhatsApp
+  app.post('/api/chat/:venue_id/messages/:message_id/send-whatsapp', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, message_id } = req.params;
+
+      const message = await prisma.chat_messages.findUnique({
+        where: { id: message_id },
+        include: { conversation: true }
+      });
+
+      if (!message) {
+        return res.status(404).json({ error: 'Mensaje no encontrado' });
+      }
+      if (message.role !== 'assistant') {
+        return res.status(400).json({ error: 'Solo se pueden enviar mensajes del asistente' });
+      }
+      if (message.conversation.venue_id !== venue_id) {
+        return res.status(403).json({ error: 'El mensaje no pertenece a este venue' });
+      }
+
+      const phone = message.conversation.phone;
+      if (!phone) {
+        return res.status(400).json({ error: 'La conversación no tiene número de teléfono asociado' });
+      }
+
+      if (!whatsappClient.isAvailable()) {
+        return res.status(503).json({ error: 'Servicio de WhatsApp no disponible' });
+      }
+
+      try {
+        const result = await whatsappClient.sendMessage(venue_id, phone, message.content);
+        const updated = await prisma.chat_messages.update({
+          where: { id: message_id },
+          data: {
+            status: 'sent',
+            external_id: result?.messageId || result?.id || null
+          }
+        });
+        res.json({ status: updated.status, external_id: updated.external_id });
+      } catch (sendErr) {
+        console.error('[send-whatsapp] Failed:', sendErr.message);
+        await prisma.chat_messages.update({
+          where: { id: message_id },
+          data: { status: 'failed', error_details: sendErr.message }
+        });
+        res.status(502).json({ error: 'Error al enviar por WhatsApp', details: sendErr.message });
+      }
+    } catch (error) {
+      console.error('Send WhatsApp error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // GET /api/chat/:venue_id/conversations - List conversations for a venue
   app.get('/api/chat/:venue_id/conversations', isAuthenticated, async (req, res) => {
     try {

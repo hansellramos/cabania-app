@@ -82,6 +82,17 @@
                       <CSpinner v-if="reprocessingId === message.id" size="sm" style="width: 0.7rem; height: 0.7rem;" />
                       <span v-else>&#8635;</span>
                     </button>
+                    <button
+                      v-if="message.role === 'assistant' && message.id && activeConvPhone"
+                      class="btn-send-wa ms-1"
+                      :disabled="sendingWaId === message.id || message.status === 'sent'"
+                      title="Enviar a WhatsApp"
+                      @click="sendToWhatsApp(message)"
+                    >
+                      <CSpinner v-if="sendingWaId === message.id" size="sm" style="width: 0.7rem; height: 0.7rem;" />
+                      <span v-else-if="message.status === 'sent'">&#10003;</span>
+                      <span v-else>&#128241;</span>
+                    </button>
                   </div>
                   <div v-if="isDev && message.role === 'assistant' && message.meta" class="message-meta">
                     <small class="text-muted">
@@ -243,6 +254,7 @@ const estimateId = ref(null)
 const arrivedWithConversation = ref(false)
 const resumingConvId = ref(null)
 const reprocessingId = ref(null)
+const sendingWaId = ref(null)
 const imageModalUrl = ref(null)
 const activeConvSource = ref(null) // source of the active conversation (baileys, web, etc.)
 const activeConvPhone = ref(null)
@@ -316,7 +328,8 @@ const sendMessage = async () => {
         provider_id: selectedProviderId.value,
         conversation_id: conversationId.value,
         contact_type: contactType.value,
-        contact_value: contactValue.value
+        contact_value: contactValue.value,
+        visitor_phone: contactType.value === 'whatsapp' && contactValue.value ? contactValue.value : undefined
       })
     })
     
@@ -326,6 +339,10 @@ const sendMessage = async () => {
       // Store conversation_id from backend for subsequent messages
       if (result.conversation_id) {
         conversationId.value = result.conversation_id
+      }
+      // Track phone for send-to-whatsapp button
+      if (!activeConvPhone.value && contactType.value === 'whatsapp' && contactValue.value) {
+        activeConvPhone.value = contactValue.value
       }
       
       // Update user message with ID from backend
@@ -462,6 +479,27 @@ const reprocessMessage = async (message) => {
     showToast('Error al reprocesar el mensaje', 'danger')
   } finally {
     reprocessingId.value = null
+  }
+}
+
+const sendToWhatsApp = async (message) => {
+  sendingWaId.value = message.id
+  try {
+    const response = await fetch(`/api/chat/${route.params.id}/messages/${message.id}/send-whatsapp`, {
+      method: 'POST',
+      credentials: 'include'
+    })
+    const result = await response.json()
+    if (response.ok) {
+      message.status = result.status || 'sent'
+      showToast('Mensaje enviado por WhatsApp')
+    } else {
+      showToast(result.error || 'Error al enviar por WhatsApp', 'danger')
+    }
+  } catch {
+    showToast('Error al enviar por WhatsApp', 'danger')
+  } finally {
+    sendingWaId.value = null
   }
 }
 
@@ -687,5 +725,24 @@ onUnmounted(() => {
 }
 .bubble-user .btn-reprocess:hover {
   color: white;
+}
+
+.btn-send-wa {
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+  color: inherit;
+  line-height: 1;
+}
+.btn-send-wa:hover {
+  opacity: 1;
+}
+.btn-send-wa:disabled {
+  cursor: not-allowed;
+  opacity: 0.3;
 }
 </style>
