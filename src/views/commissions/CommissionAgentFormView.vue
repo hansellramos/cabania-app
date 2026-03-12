@@ -271,7 +271,7 @@ const filteredVenues = computed(() => {
 })
 
 const goBack = () => {
-  router.push('/commissions')
+  router.push('/business/commissions/agents')
 }
 
 // --- Provider methods (same pattern as ExpenseFormView) ---
@@ -479,7 +479,7 @@ const saveAgent = async () => {
     })
 
     if (response.ok) {
-      router.push('/commissions')
+      router.push('/business/commissions/agents')
     } else {
       const error = await response.json()
       alert(error.error || 'Error al guardar el agente de comisión')

@@ -339,7 +339,7 @@ const loadVenues = async () => {
 
 const loadAgents = async () => {
   try {
-    const response = await fetch('/api/agents', { credentials: 'include' })
+    const response = await fetch('/api/commission-agents', { credentials: 'include' })
     if (response.ok) {
       agents.value = await response.json()
     }
