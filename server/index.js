@@ -8492,18 +8492,65 @@ REGLAS:
     }
   });
 
-  // GET /api/chat/:venue_id/conversations - List conversations for a venue
+  // GET /api/chat/:venue_id/conversations - List conversations for a venue (inbox)
   app.get('/api/chat/:venue_id/conversations', isAuthenticated, async (req, res) => {
     try {
       const { venue_id } = req.params;
-      
+      const { search, source } = req.query;
+
+      const where = { venue_id };
+
+      // Filter by source channels (comma-separated)
+      if (source) {
+        where.source = { in: source.split(',').map(s => s.trim()) };
+      }
+
+      // Search by name or phone
+      if (search) {
+        where.OR = [
+          { name: { contains: search, mode: 'insensitive' } },
+          { phone: { contains: search } }
+        ];
+      }
+
       const conversations = await prisma.chat_conversations.findMany({
-        where: { venue_id },
+        where,
         orderBy: { updated_at: 'desc' },
-        take: 50
+        take: 50,
+        include: {
+          messages: {
+            orderBy: { created_at: 'desc' },
+            take: 1,
+            select: { content: true, role: true, created_at: true, provider: true }
+          }
+        }
       });
-      
-      res.json(conversations);
+
+      // Add last_message preview and unread_count
+      const result = await Promise.all(conversations.map(async (conv) => {
+        const lastMsg = conv.messages[0] || null;
+        // Count user messages after last_read_at
+        let unread_count = 0;
+        const unreadWhere = { conversation_id: conv.id, role: 'user' };
+        if (conv.last_read_at) {
+          unreadWhere.created_at = { gt: conv.last_read_at };
+        }
+        unread_count = await prisma.chat_messages.count({ where: unreadWhere });
+
+        const { messages, ...convData } = conv;
+        return {
+          ...convData,
+          last_message: lastMsg ? {
+            content: (lastMsg.content || '').substring(0, 100),
+            role: lastMsg.role,
+            created_at: lastMsg.created_at,
+            provider: lastMsg.provider
+          } : null,
+          unread_count
+        };
+      }));
+
+      res.json(result);
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -8516,9 +8563,93 @@ REGLAS:
         where: { id: req.params.id },
         include: { messages: { orderBy: { created_at: 'asc' } } }
       });
-      
+
+      // Mark as read
+      if (conversation) {
+        await prisma.chat_conversations.update({
+          where: { id: req.params.id },
+          data: { last_read_at: new Date() }
+        });
+      }
+
       res.json(conversation);
     } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/chat/:venue_id/conversations/:id/admin-reply - Send manual admin reply
+  app.post('/api/chat/:venue_id/conversations/:id/admin-reply', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, id } = req.params;
+      const { text } = req.body;
+      if (!text || !text.trim()) {
+        return res.status(400).json({ error: 'Text is required' });
+      }
+
+      const conversation = await prisma.chat_conversations.findUnique({ where: { id } });
+      if (!conversation || conversation.venue_id !== venue_id) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+
+      // Save as assistant message with provider 'admin'
+      const message = await prisma.chat_messages.create({
+        data: {
+          conversation_id: id,
+          role: 'assistant',
+          content: text.trim(),
+          provider: 'admin',
+          status: 'pending'
+        }
+      });
+
+      // Update conversation timestamp
+      await prisma.chat_conversations.update({
+        where: { id },
+        data: { updated_at: new Date(), last_read_at: new Date() }
+      });
+
+      // Send via WhatsApp if the conversation has a phone number
+      if (conversation.phone && conversation.source !== 'web') {
+        try {
+          await sendWhatsAppReply(venue_id, conversation.phone, text.trim(), message.id);
+        } catch (waError) {
+          console.error('Admin reply WhatsApp send error:', waError);
+          await prisma.chat_messages.update({
+            where: { id: message.id },
+            data: { status: 'failed', error_details: waError.message }
+          });
+          return res.json({ ...message, status: 'failed', error_details: waError.message });
+        }
+      } else {
+        // Web channel — just mark as sent (user will see on page reload)
+        await prisma.chat_messages.update({
+          where: { id: message.id },
+          data: { status: 'sent' }
+        });
+        message.status = 'sent';
+      }
+
+      res.json(message);
+    } catch (error) {
+      console.error('Admin reply error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // DELETE /api/chat/:venue_id/conversations/:id - Delete a conversation and its messages
+  app.delete('/api/chat/:venue_id/conversations/:id', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, id } = req.params;
+      const conversation = await prisma.chat_conversations.findUnique({ where: { id } });
+      if (!conversation || conversation.venue_id !== venue_id) {
+        return res.status(404).json({ error: 'Conversation not found' });
+      }
+      // Messages cascade-delete via schema relation (onDelete: Cascade)
+      await prisma.chat_conversations.delete({ where: { id } });
+      res.json({ success: true });
+    } catch (error) {
+      console.error('Delete conversation error:', error);
       res.status(500).json({ error: error.message });
     }
   });

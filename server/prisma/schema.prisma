@@ -498,6 +498,7 @@ model chat_conversations {
   escalated_at     DateTime?       @db.Timestamptz(6)
   escalated_reason String?         @db.VarChar(50)
   resume_at        DateTime?       @db.Timestamptz(6)
+  last_read_at     DateTime?       @db.Timestamptz(6)
   created_at       DateTime        @default(now()) @db.Timestamptz(6)
   updated_at       DateTime?       @db.Timestamptz(6)
   messages         chat_messages[]
