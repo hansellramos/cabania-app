@@ -969,6 +969,18 @@ model whatsapp_connections {
   meta_verify_token    String?   @db.VarChar(100)
 }
 
+model instagram_connections {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id     String    @unique @db.Uuid
+  ig_user_id   String?   @db.VarChar(50)
+  page_id      String?   @db.VarChar(50)
+  access_token String?
+  verify_token String?   @db.VarChar(100)
+  status       String    @default("disconnected") @db.VarChar(20)
+  created_at   DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at   DateTime? @db.Timestamptz(6)
+}
+
 model system_whatsapp_connection {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   channel           String    @default("baileys") @db.VarChar(30)

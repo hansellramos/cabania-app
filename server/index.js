@@ -13,6 +13,7 @@ const llmService = require('./llm-service');
 // WhatsApp service — proxied to external Baileys microservice via HTTP
 const whatsappClient = require('./services/whatsappClient');
 const metaWhatsApp = require('./services/metaWhatsApp');
+const metaInstagram = require('./services/metaInstagram');
 
 /**
  * Calculate the next resume time at given hour in America/Bogota timezone.
@@ -7203,6 +7204,246 @@ REGLAS:
     })();
   });
 
+  // ==================== Meta Instagram Messaging Webhook ====================
+
+  // GET /api/webhook/instagram — Meta verification challenge
+  app.get('/api/webhook/instagram', (req, res) => {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    const verifyToken = process.env.META_IG_WEBHOOK_VERIFY_TOKEN;
+    if (mode === 'subscribe' && token === verifyToken) {
+      console.log('[ig-webhook] Verification successful');
+      return res.status(200).send(challenge);
+    }
+    console.warn('[ig-webhook] Verification failed', { mode, token: token?.slice(0, 6) });
+    res.sendStatus(403);
+  });
+
+  // POST /api/webhook/instagram — Incoming Instagram DMs
+  app.post('/api/webhook/instagram', (req, res) => {
+    // Respond 200 immediately — Meta retries if >20s
+    res.sendStatus(200);
+
+    (async () => {
+      try {
+        if (req.body?.object !== 'instagram') return;
+
+        const entry = req.body?.entry?.[0];
+        if (!entry) return;
+        const messaging = entry.messaging?.[0];
+        if (!messaging) return;
+
+        const senderId = messaging.sender?.id;     // IGSID of the person who sent the DM
+        const recipientId = messaging.recipient?.id; // IG Business Account ID
+        const msgData = messaging.message;
+
+        if (!senderId || !recipientId || !msgData) return;
+
+        // Find venue by ig_user_id
+        const conn = await prisma.instagram_connections.findFirst({
+          where: { ig_user_id: recipientId }
+        });
+        if (!conn) {
+          console.warn(`[ig-webhook] No venue found for ig_user_id=${recipientId}`);
+          return;
+        }
+        const venue_id = conn.venue_id;
+
+        // Extract message content
+        let userMessage = '';
+        let media_url = null;
+        let media_type = null;
+        const mid = msgData.mid;
+
+        if (msgData.text) {
+          userMessage = msgData.text;
+        }
+
+        if (msgData.attachments && msgData.attachments.length > 0) {
+          const att = msgData.attachments[0];
+          if (att.type === 'image') {
+            media_url = att.payload?.url || null;
+            media_type = 'image';
+            if (!userMessage) userMessage = '[Imagen]';
+          } else if (att.type === 'video') {
+            if (!userMessage) userMessage = '[Video recibido]';
+          } else if (att.type === 'audio') {
+            if (!userMessage) userMessage = '[Audio recibido]';
+          } else {
+            if (!userMessage) userMessage = `[${att.type || 'archivo'} recibido]`;
+          }
+        }
+
+        if (!userMessage) return;
+
+        // Find or create conversation
+        let conversation = await prisma.chat_conversations.findFirst({
+          where: { venue_id, phone: senderId, source: 'instagram' },
+          include: { messages: { orderBy: { created_at: 'asc' }, take: 20 } }
+        });
+
+        if (!conversation) {
+          conversation = await prisma.chat_conversations.create({
+            data: {
+              venue_id,
+              phone: senderId,
+              name: null,
+              source: 'instagram',
+              status: 'active',
+              external_id: mid
+            }
+          });
+          conversation.messages = [];
+        }
+
+        // If escalated, save message but skip AI
+        if (conversation.status === 'human_attention') {
+          console.log(`[ig-webhook] Conversation ${conversation.id} is escalated, skipping AI`);
+          await prisma.chat_messages.create({
+            data: {
+              conversation_id: conversation.id,
+              role: 'user',
+              content: userMessage,
+              media_url,
+              media_type,
+              status: 'delivered',
+              external_id: mid
+            }
+          });
+          return;
+        }
+
+        // Save user message
+        await prisma.chat_messages.create({
+          data: {
+            conversation_id: conversation.id,
+            role: 'user',
+            content: userMessage,
+            media_url,
+            media_type,
+            status: 'delivered',
+            external_id: mid
+          }
+        });
+
+        // Update conversation timestamp
+        await prisma.chat_conversations.update({
+          where: { id: conversation.id },
+          data: { updated_at: new Date() }
+        });
+
+        // Process with AI
+        const result = await processChat({
+          venue_id,
+          userMessage,
+          conversation,
+          source: 'instagram',
+          media_url,
+          media_type
+        });
+
+        // Send AI response via Instagram
+        if (result?.llmResponse?.content) {
+          try {
+            const sendResult = await metaInstagram.sendText(
+              conn.ig_user_id, conn.access_token, senderId, result.llmResponse.content
+            );
+            await prisma.chat_messages.update({
+              where: { id: result.assistantMessage.id },
+              data: {
+                status: 'sent',
+                external_id: sendResult.message_id || null
+              }
+            });
+          } catch (sendErr) {
+            console.error('[ig-webhook] Failed to send reply:', sendErr.message);
+            await prisma.chat_messages.update({
+              where: { id: result.assistantMessage.id },
+              data: { status: 'failed', error_details: sendErr.message }
+            });
+          }
+        }
+
+      } catch (err) {
+        console.error('[ig-webhook] Unhandled error:', err);
+      }
+    })();
+  });
+
+  // ==================== Instagram Config ====================
+
+  // GET /api/venues/:id/instagram/config — Get Instagram config (super_admin only)
+  app.get('/api/venues/:id/instagram/config', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims.sub);
+      const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+      if (!currentUser?.is_super_admin) {
+        return res.status(403).json({ error: 'Solo super admin' });
+      }
+
+      const conn = await prisma.instagram_connections.findUnique({
+        where: { venue_id: req.params.id }
+      });
+
+      res.json({
+        ig_user_id: conn?.ig_user_id || '',
+        page_id: conn?.page_id || '',
+        access_token: conn?.access_token ? '••••••' : '',
+        verify_token: conn?.verify_token || '',
+        status: conn?.status || 'disconnected',
+        has_token: !!conn?.access_token
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PUT /api/venues/:id/instagram/config — Save Instagram config (super_admin only)
+  app.put('/api/venues/:id/instagram/config', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims.sub);
+      const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+      if (!currentUser?.is_super_admin) {
+        return res.status(403).json({ error: 'Solo super admin' });
+      }
+
+      const { ig_user_id, page_id, access_token, verify_token } = req.body;
+      const venue_id = req.params.id;
+
+      const updateData = {
+        ig_user_id: ig_user_id || null,
+        page_id: page_id || null,
+        verify_token: verify_token || null,
+        updated_at: new Date()
+      };
+
+      // Only update token if a new one is provided (not the masked placeholder)
+      if (access_token && access_token !== '••••••') {
+        updateData.access_token = access_token;
+      }
+
+      // Set status to connected if we have the required fields
+      if (ig_user_id && (access_token || updateData.access_token)) {
+        updateData.status = 'connected';
+      }
+
+      await prisma.instagram_connections.upsert({
+        where: { venue_id },
+        update: updateData,
+        create: {
+          venue_id,
+          ...updateData
+        }
+      });
+
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ==================== WhatsApp Cloud API Config ====================
 
   // GET /api/venues/:id/whatsapp/cloud-config — Get Cloud API config (super_admin only)
@@ -7337,6 +7578,28 @@ REGLAS:
       return metaWhatsApp.sendImage(conn.meta_phone_number_id, conn.meta_access_token, phone, imageUrl, caption);
     } else if (whatsappClient.isAvailable()) {
       return whatsappClient.sendImage(venue_id, phone, imageUrl, caption);
+    }
+    return null;
+  }
+
+  /**
+   * Send a text reply via Instagram DM.
+   * @param {string} venue_id
+   * @param {string} recipientId - IGSID of the recipient
+   * @param {string} text
+   * @param {string} [messageId] - chat_messages.id to update status
+   */
+  async function sendInstagramReply(venue_id, recipientId, text, messageId) {
+    const conn = await prisma.instagram_connections.findUnique({ where: { venue_id } });
+    if (conn?.ig_user_id && conn?.access_token) {
+      const result = await metaInstagram.sendText(conn.ig_user_id, conn.access_token, recipientId, text);
+      if (messageId) {
+        await prisma.chat_messages.update({
+          where: { id: messageId },
+          data: { status: 'sent', external_id: result.message_id || null }
+        });
+      }
+      return result;
     }
     return null;
   }
@@ -8322,7 +8585,7 @@ REGLAS:
           content: userMessage,
           media_url: media_url || null,
           media_type: media_type || null,
-          status: (source === 'baileys' || source === 'cloud_api') ? 'delivered' : null
+          status: (source === 'baileys' || source === 'cloud_api' || source === 'instagram') ? 'delivered' : null
         }
       });
 
@@ -8424,6 +8687,16 @@ REGLAS:
           await sendWhatsAppReply(venue_id, conversation.phone, result.llmResponse.content, result.assistantMessage.id);
         } catch (sendErr) {
           console.error('[reprocess] Failed to send via WhatsApp:', sendErr.message);
+          await prisma.chat_messages.update({
+            where: { id: result.assistantMessage.id },
+            data: { status: 'failed', error_details: sendErr.message }
+          });
+        }
+      } else if (source === 'instagram' && conversation.phone) {
+        try {
+          await sendInstagramReply(venue_id, conversation.phone, result.llmResponse.content, result.assistantMessage.id);
+        } catch (sendErr) {
+          console.error('[reprocess] Failed to send via Instagram:', sendErr.message);
           await prisma.chat_messages.update({
             where: { id: result.assistantMessage.id },
             data: { status: 'failed', error_details: sendErr.message }
@@ -8609,8 +8882,21 @@ REGLAS:
         data: { updated_at: new Date(), last_read_at: new Date() }
       });
 
-      // Send via WhatsApp if the conversation has a phone number
-      if (conversation.phone && conversation.source !== 'web') {
+      // Send via the appropriate channel
+      if (conversation.source === 'instagram' && conversation.phone) {
+        // Instagram DM — phone field holds IGSID
+        try {
+          await sendInstagramReply(venue_id, conversation.phone, text.trim(), message.id);
+        } catch (igError) {
+          console.error('Admin reply Instagram send error:', igError);
+          await prisma.chat_messages.update({
+            where: { id: message.id },
+            data: { status: 'failed', error_details: igError.message }
+          });
+          return res.json({ ...message, status: 'failed', error_details: igError.message });
+        }
+      } else if (conversation.phone && conversation.source !== 'web') {
+        // WhatsApp channels
         try {
           await sendWhatsAppReply(venue_id, conversation.phone, text.trim(), message.id);
         } catch (waError) {

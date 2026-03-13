@@ -232,14 +232,16 @@ const messagesContainer = ref(null)
 const channelFilters = [
   { label: 'Todos', value: 'all' },
   { label: 'WhatsApp', value: 'whatsapp' },
+  { label: 'Instagram', value: 'instagram' },
   { label: 'Web', value: 'web' }
 ]
 
-const SOURCE_ALIASES = { baileys: 'WhatsApp', cloud_api: 'WhatsApp', twilio: 'Twilio', web: 'Web', whatsapp: 'WhatsApp', meta: 'Meta' }
+const SOURCE_ALIASES = { baileys: 'WhatsApp', cloud_api: 'WhatsApp', twilio: 'Twilio', web: 'Web', whatsapp: 'WhatsApp', meta: 'Meta', instagram: 'Instagram' }
 const getSourceLabel = (source) => SOURCE_ALIASES[source] || source || '?'
 const getSourceColor = (source) => {
   if (source === 'web') return 'primary'
   if (['whatsapp', 'baileys', 'cloud_api'].includes(source)) return 'success'
+  if (source === 'instagram') return 'danger'
   return 'secondary'
 }
 const getInitial = (conv) => {
@@ -300,6 +302,7 @@ const loadConversations = async () => {
     const params = new URLSearchParams()
     if (searchQuery.value) params.set('search', searchQuery.value)
     if (activeChannelFilter.value === 'whatsapp') params.set('source', 'baileys,cloud_api,whatsapp')
+    else if (activeChannelFilter.value === 'instagram') params.set('source', 'instagram')
     else if (activeChannelFilter.value !== 'all') params.set('source', activeChannelFilter.value)
 
     const response = await fetch(`/api/chat/${venueId}/conversations?${params}`, { credentials: 'include' })
