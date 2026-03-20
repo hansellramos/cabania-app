@@ -20,7 +20,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const session = require('express-session');
 const connectPg = require('connect-pg-simple');
-const { prisma } = require('../db');
+const { prisma, directUrl } = require('../db');
 
 const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
@@ -41,7 +41,7 @@ function getRpId(req) {
 function getSession() {
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
-    conString: process.env.DATABASE_URL,
+    conString: directUrl,
     createTableIfMissing: false,
     ttl: SESSION_TTL,
     tableName: 'sessions',
