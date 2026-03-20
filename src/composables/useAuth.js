@@ -90,8 +90,14 @@ async function loginWithPasskey(email) {
   try {
     error.value = null;
 
-    // 1. Get challenge from server (optionally with email to get allowCredentials)
-    const body = email ? { email } : {};
+    // Require a valid email before starting the ceremony
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      error.value = 'Ingresa tu email para iniciar con Passkey';
+      return false;
+    }
+
+    // 1. Get challenge from server (with email to get allowCredentials)
+    const body = { email };
     const optionsRes = await fetch('/api/auth/passkey/login/options', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -105,16 +111,7 @@ async function loginWithPasskey(email) {
     const optionsJSON = await optionsRes.json();
 
     // 2. Start WebAuthn authentication (browser prompt)
-    let authResponse;
-    try {
-      authResponse = await startAuthentication({ optionsJSON });
-    } catch (firstErr) {
-      // If discoverable credentials failed and we haven't tried with email yet, retry with allowCredentials
-      if (!email && firstErr.code === 'ERROR_CEREMONY_ABORTED') {
-        throw firstErr; // re-throw to be caught by outer catch with retry logic
-      }
-      throw firstErr;
-    }
+    const authResponse = await startAuthentication({ optionsJSON });
 
     // 3. Send assertion to server
     const verifyRes = await fetch('/api/auth/passkey/login', {
@@ -136,9 +133,6 @@ async function loginWithPasskey(email) {
     // User cancelled the WebAuthn prompt
     if (err.name === 'NotAllowedError') {
       error.value = 'Autenticación cancelada';
-    } else if (err.code === 'ERROR_CEREMONY_ABORTED' && !email) {
-      // Discoverable credentials not available (e.g. Firefox) — retry with email if provided
-      error.value = 'Ingresa tu email y vuelve a intentar con Passkey';
     } else {
       error.value = err.message;
     }
