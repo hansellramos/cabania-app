@@ -410,12 +410,36 @@ async function setupAuth(app) {
   });
 
   // Login options (public) — generates challenge for assertion
-  app.post('/api/auth/passkey/login/options', (req, res, next) => {
+  app.post('/api/auth/passkey/login/options', async (req, res, next) => {
     const options = {
       rpId: getRpId(req),
       userVerification: 'preferred',
       timeout: 60000,
     };
+
+    // If email is provided, include allowCredentials for browsers that don't support discoverable credentials (e.g. Firefox)
+    const { email } = req.body || {};
+    if (email) {
+      try {
+        const user = await prisma.users.findFirst({ where: { email: email.toLowerCase().trim() } });
+        if (user) {
+          const credentials = await prisma.passkey_credentials.findMany({
+            where: { user_id: user.id },
+            select: { credential_id: true },
+          });
+          if (credentials.length > 0) {
+            options.allowCredentials = credentials.map(c => ({
+              id: c.credential_id,
+              type: 'public-key',
+              transports: ['internal', 'hybrid'],
+            }));
+          }
+        }
+      } catch (e) {
+        // Non-critical — continue without allowCredentials
+        console.error('Error fetching passkey credentials for email:', e.message);
+      }
+    }
 
     // The store generates its own challenge and returns it via callback
     challengeStore.challenge(req, options, (err, challenge) => {
