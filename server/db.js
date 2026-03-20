@@ -1,8 +1,17 @@
-const { PrismaPg } = require('@prisma/adapter-pg');
 const { PrismaClient } = require('@prisma/client');
 
 const connectionString = process.env.DATABASE_URL;
-const adapter = new PrismaPg({ connectionString });
-const prisma = new PrismaClient({ adapter });
+
+// Prisma Postgres (accelerate) URLs don't support driver adapters
+const isPrismaPostgres = connectionString?.startsWith('prisma+postgres://');
+
+let prisma;
+if (isPrismaPostgres) {
+  prisma = new PrismaClient();
+} else {
+  const { PrismaPg } = require('@prisma/adapter-pg');
+  const adapter = new PrismaPg({ connectionString });
+  prisma = new PrismaClient({ adapter });
+}
 
 module.exports = { prisma };
