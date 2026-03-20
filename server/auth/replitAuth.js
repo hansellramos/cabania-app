@@ -19,8 +19,7 @@ webauthnUtils.originalOrigin = function(req) {
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const session = require('express-session');
-const connectPg = require('connect-pg-simple');
-const { prisma, directUrl } = require('../db');
+const { prisma } = require('../db');
 
 const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
@@ -38,17 +37,52 @@ function getRpId(req) {
   return req.headers['host']?.split(':')[0] || 'localhost';
 }
 
+// Session store using Prisma (no direct pg connection needed)
+class PrismaSessionStore extends session.Store {
+  async get(sid, cb) {
+    try {
+      const row = await prisma.sessions.findUnique({ where: { sid } });
+      if (!row || row.expire < new Date()) return cb(null, null);
+      cb(null, typeof row.sess === 'string' ? JSON.parse(row.sess) : row.sess);
+    } catch (err) { cb(err); }
+  }
+
+  async set(sid, sess, cb) {
+    try {
+      const expire = sess.cookie?.expires
+        ? new Date(sess.cookie.expires)
+        : new Date(Date.now() + SESSION_TTL * 1000);
+      await prisma.sessions.upsert({
+        where: { sid },
+        create: { sid, sess, expire },
+        update: { sess, expire },
+      });
+      cb?.(null);
+    } catch (err) { cb?.(err); }
+  }
+
+  async destroy(sid, cb) {
+    try {
+      await prisma.sessions.delete({ where: { sid } }).catch(() => {});
+      cb?.(null);
+    } catch (err) { cb?.(err); }
+  }
+
+  async touch(sid, sess, cb) {
+    try {
+      const expire = sess.cookie?.expires
+        ? new Date(sess.cookie.expires)
+        : new Date(Date.now() + SESSION_TTL * 1000);
+      await prisma.sessions.update({ where: { sid }, data: { expire } }).catch(() => {});
+      cb?.(null);
+    } catch (err) { cb?.(err); }
+  }
+}
+
 function getSession() {
-  const pgStore = connectPg(session);
-  const sessionStore = new pgStore({
-    conString: directUrl,
-    createTableIfMissing: false,
-    ttl: SESSION_TTL,
-    tableName: 'sessions',
-  });
   return session({
     secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
-    store: sessionStore,
+    store: new PrismaSessionStore(),
     resave: false,
     saveUninitialized: false,
     cookie: {
