@@ -10,10 +10,14 @@ const user = ref(null);
 const isLoading = ref(true);
 const error = ref(null);
 const supportsPasskeys = ref(false);
+// Firefox on macOS desktop has a known bug that freezes the browser during passkey ceremonies
+// https://bugzilla.mozilla.org/show_bug.cgi?id=1990064
+const passkeyBlocked = ref(false);
 
-// Check WebAuthn support on load
 if (typeof window !== 'undefined') {
+  const isFirefoxMac = /Firefox/i.test(navigator.userAgent) && /Macintosh/i.test(navigator.userAgent);
   supportsPasskeys.value = browserSupportsWebAuthn();
+  passkeyBlocked.value = supportsPasskeys.value && isFirefoxMac;
 }
 
 async function fetchUser() {
@@ -274,6 +278,7 @@ export function useAuth() {
     isAuthenticated,
     error,
     supportsPasskeys,
+    passkeyBlocked,
     login,
     loginWithPasskey,
     logout,

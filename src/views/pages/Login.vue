@@ -112,7 +112,7 @@
           <button
             type="button"
             class="cabania-btn cabania-btn--passkey"
-            :disabled="submitting"
+            :disabled="submitting || passkeyBlocked"
             @click="handlePasskeyLogin"
           >
             <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
@@ -122,6 +122,9 @@
             </svg>
             Iniciar con Passkey
           </button>
+          <p v-if="passkeyBlocked" class="cabania-passkey-blocked">
+            Passkeys no es compatible con Firefox en macOS. Usa Chrome o Safari.
+          </p>
         </template>
       </form>
     </div>
@@ -136,7 +139,7 @@ import { useAuth } from '@/composables/useAuth';
 const THEME_KEY = 'coreui-free-vue-admin-template-theme';
 const REMEMBERED_EMAIL_KEY = 'cabania-remembered-email';
 const router = useRouter();
-const { user, isAuthenticated, isLoading, login, loginWithPasskey, supportsPasskeys, error } = useAuth();
+const { user, isAuthenticated, isLoading, login, loginWithPasskey, supportsPasskeys, passkeyBlocked, error } = useAuth();
 
 const savedEmail = localStorage.getItem(REMEMBERED_EMAIL_KEY) || '';
 const email = ref(savedEmail);
@@ -601,5 +604,11 @@ const handlePasskeyLogin = async () => {
 }
 .cabania-forget-email:hover {
   color: #ef4444 !important;
+}
+.cabania-passkey-blocked {
+  text-align: center;
+  color: var(--cl-text-muted);
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
 }
 </style>
