@@ -2701,7 +2701,11 @@ async function startServer() {
       const user = await prisma.users.findUnique({
         where: { id: req.params.id }
       });
-      res.json(user);
+      // Find linked contact
+      const linked_contact = await prisma.contacts.findFirst({
+        where: { user: req.params.id }
+      });
+      res.json({ ...user, linked_contact: linked_contact || null });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -2783,6 +2787,34 @@ async function startServer() {
       });
       res.json(user);
     } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Generate temporary key for a user (saves hashed password, returns plain key)
+  app.post('/api/users/:id/generate-temp-key', isAuthenticated, async (req, res) => {
+    try {
+      if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'users:manage')) {
+        return res.status(403).json({ error: 'No tiene permiso para gestionar usuarios' });
+      }
+
+      const user = await prisma.users.findUnique({ where: { id: req.params.id } });
+      if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+
+      // Generate random 8-character alphanumeric temp key
+      const tempKey = require('crypto').randomBytes(4).toString('hex');
+
+      // Hash and save as password
+      const bcryptUsers = require('bcryptjs');
+      const hash = await bcryptUsers.hash(tempKey, 10);
+      await prisma.users.update({
+        where: { id: req.params.id },
+        data: { password_hash: hash }
+      });
+
+      res.json({ success: true, tempKey });
+    } catch (error) {
+      console.error('Error generating temp key:', error);
       res.status(500).json({ error: error.message });
     }
   });

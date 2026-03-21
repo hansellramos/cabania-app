@@ -67,13 +67,102 @@
       </div>
       <div class="form-text">El usuario solo podrá ver datos de las organizaciones seleccionadas</div>
     </div>
+
+    <!-- Linked Contact (only in edit mode) -->
+    <div v-if="isEdit" class="mb-3">
+      <CFormLabel>Contacto Vinculado</CFormLabel>
+      <div v-if="form.linked_contact" class="border rounded p-3 bg-light">
+        <div class="d-flex align-items-center justify-content-between">
+          <div>
+            <strong>{{ form.linked_contact.fullname || 'Sin nombre' }}</strong>
+            <br />
+            <small class="text-muted">
+              WhatsApp: {{ form.linked_contact.whatsapp || 'No registrado' }}
+            </small>
+          </div>
+          <CButton
+            v-if="form.linked_contact.whatsapp"
+            color="success"
+            size="sm"
+            @click="openTempKeyModal"
+          >
+            Enviar clave temporal
+          </CButton>
+        </div>
+      </div>
+      <div v-else class="text-muted border rounded p-3">
+        Este usuario no tiene un contacto vinculado
+      </div>
+    </div>
+
     <CButton type="submit" color="primary" class="me-2">{{ isEdit ? 'Actualizar' : 'Crear' }}</CButton>
     <CButton color="secondary" variant="outline" @click="onCancel">Cancelar</CButton>
+
+    <!-- Modal: Enviar clave temporal por WhatsApp -->
+    <CModal :visible="showTempKeyModal" @close="closeTempKeyModal" alignment="center" size="lg">
+      <CModalHeader>
+        <CModalTitle>Enviar clave temporal por WhatsApp</CModalTitle>
+      </CModalHeader>
+      <CModalBody>
+        <!-- Step 1: Generate key -->
+        <div v-if="!tempKeyData">
+          <p class="text-muted mb-3">
+            Se generará una clave temporal para <strong>{{ form.display_name || form.email }}</strong>
+            y se preparará un mensaje para enviar por WhatsApp al contacto
+            <strong>{{ form.linked_contact?.fullname }}</strong>
+            ({{ form.linked_contact?.whatsapp }}).
+          </p>
+          <div class="d-grid">
+            <CButton color="primary" :disabled="generatingKey" @click="generateTempKey">
+              <CSpinner v-if="generatingKey" size="sm" class="me-2" />
+              {{ generatingKey ? 'Generando...' : 'Generar clave temporal' }}
+            </CButton>
+          </div>
+        </div>
+
+        <!-- Step 2: Preview & Send -->
+        <div v-else>
+          <div class="mb-3">
+            <CFormLabel>Clave generada</CFormLabel>
+            <div class="d-flex align-items-center gap-2">
+              <code class="fs-5 px-3 py-2 bg-light border rounded">{{ tempKeyData.tempKey }}</code>
+              <small class="text-muted">Ya fue guardada como password del usuario</small>
+            </div>
+          </div>
+
+          <div class="mb-3">
+            <CFormLabel>Mensaje a enviar</CFormLabel>
+            <CFormTextarea
+              v-model="tempKeyMessage"
+              rows="8"
+              style="white-space: pre-wrap;"
+            />
+          </div>
+
+          <div v-if="tempKeyResult" class="mb-3">
+            <CAlert :color="tempKeyResult.success ? 'success' : 'danger'" class="mb-0 py-2">
+              {{ tempKeyResult.message }}
+            </CAlert>
+          </div>
+        </div>
+      </CModalBody>
+      <CModalFooter v-if="tempKeyData">
+        <CButton color="secondary" variant="outline" @click="closeTempKeyModal">Cerrar</CButton>
+        <CButton
+          color="success"
+          @click="openWhatsApp(tempKeyMessage)"
+        >
+          <CIcon icon="cib-whatsapp" class="me-1" />
+          Enviar por WhatsApp
+        </CButton>
+      </CModalFooter>
+    </CModal>
   </CForm>
 </template>
 
 <script setup>
 import { ref, watch, onMounted, defineProps, defineEmits } from 'vue'
+import { CIcon } from '@coreui/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
 
@@ -90,10 +179,17 @@ const form = ref({ ...props.modelValue, profile_id: '', organization_ids: [] })
 const profiles = ref([])
 const organizations = ref([])
 
+// Temp key modal state
+const showTempKeyModal = ref(false)
+const generatingKey = ref(false)
+const tempKeyData = ref(null)
+const tempKeyMessage = ref('')
+const tempKeyResult = ref(null)
+
 watch(() => props.modelValue, val => {
   if (val) {
-    form.value = { 
-      ...val, 
+    form.value = {
+      ...val,
       profile_id: val.profile_id || '',
       organization_ids: val.organization_ids || []
     }
@@ -130,6 +226,51 @@ function handleSubmit() {
 
 function onCancel() {
   emit('cancel')
+}
+
+function openTempKeyModal() {
+  tempKeyData.value = null
+  tempKeyMessage.value = ''
+  tempKeyResult.value = null
+  showTempKeyModal.value = true
+}
+
+function closeTempKeyModal() {
+  showTempKeyModal.value = false
+}
+
+async function generateTempKey() {
+  generatingKey.value = true
+  tempKeyResult.value = null
+  try {
+    const res = await fetch(`/api/users/${form.value.id}/generate-temp-key`, {
+      method: 'POST',
+      credentials: 'include'
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      tempKeyResult.value = { success: false, message: data.error || 'Error al generar clave' }
+      return
+    }
+    tempKeyData.value = data
+    const contactName = form.linked_contact?.fullname || form.value.display_name || ''
+    tempKeyMessage.value = `*Cabania - Clave de acceso*\n\nHola ${contactName},\n\nTu cuenta *${form.value.email}* ya está lista.\n\nTu clave temporal es: *${data.tempKey}*\n\nIngresa aquí: https://app.cabania.info/#/pages/login\n\nPor favor cambia tu clave lo antes posible.\n\nSi tienes alguna duda, contacta a tu administrador.`
+  } catch (error) {
+    tempKeyResult.value = { success: false, message: error.message }
+  } finally {
+    generatingKey.value = false
+  }
+}
+
+function openWhatsApp(text) {
+  const phone = `57${form.value.linked_contact.whatsapp}`
+  const encodedText = encodeURIComponent(text)
+    .replace(/!/g, '%21')
+    .replace(/'/g, '%27')
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29')
+    .replace(/\*/g, '%2A')
+  window.open(`https://wa.me/${phone}?text=${encodedText}`, '_blank')
 }
 
 onMounted(() => {
