@@ -5355,6 +5355,86 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
     }
   });
 
+  app.get('/api/analytics/income-detail', async (req, res) => {
+    try {
+      const { venue_id, organization_id, period, viewAll, basis } = req.query;
+      const incomeDateField = basis === 'accrual' ? 'accrual_date' : 'date';
+      const viewAllFlag = viewAll === 'true';
+
+      let accessibleOrgIds = null;
+
+      if (req.user) {
+        const userId = String(req.user.claims?.sub);
+        const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+
+        if (viewAllFlag && currentUser?.is_super_admin) {
+          accessibleOrgIds = null;
+        } else if (currentUser?.is_super_admin) {
+          const userOrgs = await prisma.user_organizations.findMany({
+            where: { user_id: userId }
+          });
+          accessibleOrgIds = userOrgs.map(uo => uo.organization_id);
+        } else {
+          accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+        }
+      } else {
+        return res.json([]);
+      }
+
+      const now = new Date();
+      let startDate, endDate;
+
+      if (period && typeof calculateDateRange === 'function') {
+        const range = calculateDateRange(period);
+        startDate = range.startDate;
+        endDate = range.endDate;
+      } else {
+        startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+        endDate = now;
+      }
+
+      const whereClause = {
+        [incomeDateField]: { gte: startDate, lte: endDate }
+      };
+      if (accessibleOrgIds !== null) {
+        if (accessibleOrgIds.length === 0) return res.json([]);
+        whereClause.organization_id = { in: accessibleOrgIds };
+      }
+      if (venue_id) whereClause.venue_id = venue_id;
+      if (organization_id) whereClause.organization_id = organization_id;
+
+      const incomes = await prisma.incomes.findMany({
+        where: whereClause,
+        orderBy: { [incomeDateField]: 'desc' }
+      });
+
+      // Enrich with venue names
+      const venueIds = [...new Set(incomes.filter(i => i.venue_id).map(i => i.venue_id))];
+      const venueMap = {};
+      if (venueIds.length > 0) {
+        const venueList = await prisma.venues.findMany({
+          where: { id: { in: venueIds } },
+          select: { id: true, name: true }
+        });
+        venueList.forEach(v => { venueMap[v.id] = v.name; });
+      }
+
+      const result = incomes.map(income => ({
+        id: income.id,
+        amount: parseFloat(income.amount) || 0,
+        type: income.type,
+        date: income.date,
+        accrual_date: income.accrual_date,
+        venue_name: venueMap[income.venue_id] || null,
+        created_at: income.created_at
+      }));
+
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get('/api/analytics/monthly-trend', async (req, res) => {
     try {
       const { venue_id, organization_id, period, viewAll, basis } = req.query;

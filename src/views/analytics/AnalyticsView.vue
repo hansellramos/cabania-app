@@ -117,6 +117,78 @@
       </CCol>
     </CRow>
 
+    <CRow v-if="incomeDetail.length > 0" class="mb-4">
+      <CCol :xs="12">
+        <CCard>
+          <CCardHeader class="d-flex justify-content-between align-items-center">
+            <strong>Detalle de Ingresos por Alquiler</strong>
+            <small class="text-muted">{{ incomeDetail.length }} registros</small>
+          </CCardHeader>
+          <CCardBody class="p-0">
+            <CTable hover responsive small class="mb-0">
+              <CTableHead>
+                <CTableRow>
+                  <CTableHeaderCell
+                    style="cursor: pointer; user-select: none;"
+                    @click="toggleIncomeSort('display_date')"
+                  >
+                    {{ selectedBasis === 'accrual' ? 'Fecha Alquiler' : 'Fecha Ingreso' }}
+                    {{ incomeSortIcon('display_date') }}
+                  </CTableHeaderCell>
+                  <CTableHeaderCell>Cabaña</CTableHeaderCell>
+                  <CTableHeaderCell>Tipo</CTableHeaderCell>
+                  <CTableHeaderCell
+                    class="text-end"
+                    style="cursor: pointer; user-select: none;"
+                    @click="toggleIncomeSort('amount')"
+                  >
+                    Monto {{ incomeSortIcon('amount') }}
+                  </CTableHeaderCell>
+                </CTableRow>
+              </CTableHead>
+              <CTableBody>
+                <CTableRow v-for="income in paginatedIncomeDetail" :key="income.id">
+                  <CTableDataCell>{{ formatDate(income.display_date) }}</CTableDataCell>
+                  <CTableDataCell>{{ income.venue_name || '—' }}</CTableDataCell>
+                  <CTableDataCell>
+                    <CBadge color="success">{{ income.type || 'alquiler' }}</CBadge>
+                  </CTableDataCell>
+                  <CTableDataCell class="text-end">{{ formatCurrency(income.amount) }}</CTableDataCell>
+                </CTableRow>
+              </CTableBody>
+              <CTableFoot>
+                <CTableRow>
+                  <CTableDataCell colspan="3" class="text-end fw-bold">Total</CTableDataCell>
+                  <CTableDataCell class="text-end fw-bold text-success">
+                    {{ formatCurrency(incomeTotalFiltered) }}
+                  </CTableDataCell>
+                </CTableRow>
+              </CTableFoot>
+            </CTable>
+            <div v-if="incomeTotalPages > 1" class="d-flex flex-wrap align-items-center justify-content-between p-3 gap-2">
+              <div class="small text-muted">
+                Mostrando {{ incomePageStart }}-{{ incomePageEnd }} de {{ sortedIncomeDetail.length }}
+              </div>
+              <CPagination size="sm" class="mb-0">
+                <CPaginationItem :disabled="incomeCurrentPage === 1" @click="incomeCurrentPage = 1">&laquo;</CPaginationItem>
+                <CPaginationItem :disabled="incomeCurrentPage === 1" @click="incomeCurrentPage--">&lsaquo;</CPaginationItem>
+                <CPaginationItem
+                  v-for="page in incomeVisiblePages"
+                  :key="page"
+                  :active="page === incomeCurrentPage"
+                  @click="incomeCurrentPage = page"
+                >
+                  {{ page }}
+                </CPaginationItem>
+                <CPaginationItem :disabled="incomeCurrentPage === incomeTotalPages" @click="incomeCurrentPage++">&rsaquo;</CPaginationItem>
+                <CPaginationItem :disabled="incomeCurrentPage === incomeTotalPages" @click="incomeCurrentPage = incomeTotalPages">&raquo;</CPaginationItem>
+              </CPagination>
+            </div>
+          </CCardBody>
+        </CCard>
+      </CCol>
+    </CRow>
+
     <CRow v-if="expensesByCategory.length > 0">
       <CCol :md="6">
         <CCard class="mb-4 h-100">
@@ -198,10 +270,18 @@ const summary = ref({
 })
 const monthlyTrend = ref([])
 const expensesByCategory = ref([])
+const incomeDetail = ref([])
 
 const loading = ref(false)
 const loadingTrend = ref(false)
 const loadingCategories = ref(false)
+const loadingIncomeDetail = ref(false)
+
+// Income detail sorting & pagination
+const incomeSortKey = ref('display_date')
+const incomeSortOrder = ref('desc')
+const incomeCurrentPage = ref(1)
+const incomePerPage = 20
 
 const animIncome = useAnimatedNumber(computed(() => summary.value.income), { formatter: formatCurrency })
 const animExpenses = useAnimatedNumber(computed(() => summary.value.expenses), { formatter: formatCurrency })
@@ -321,6 +401,11 @@ const expensesCategoryBarOptions = computed(() => ({
   credits: { enabled: false }
 }))
 
+function formatDate(date) {
+  if (!date) return '—'
+  return new Date(date).toLocaleDateString('es-CO', { timeZone: 'UTC' })
+}
+
 function formatCurrency(amount) {
   return new Intl.NumberFormat('es-CO', {
     style: 'currency',
@@ -409,13 +494,103 @@ async function loadExpensesByCategory() {
   }
 }
 
+function toggleIncomeSort(key) {
+  if (incomeSortKey.value === key) {
+    incomeSortOrder.value = incomeSortOrder.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    incomeSortKey.value = key
+    incomeSortOrder.value = 'desc'
+  }
+  incomeCurrentPage.value = 1
+}
+
+function incomeSortIcon(key) {
+  if (incomeSortKey.value !== key) return ''
+  return incomeSortOrder.value === 'asc' ? '▲' : '▼'
+}
+
+const sortedIncomeDetail = computed(() => {
+  const items = incomeDetail.value.map(i => ({
+    ...i,
+    display_date: selectedBasis.value === 'accrual' ? i.accrual_date : i.date
+  }))
+  const key = incomeSortKey.value
+  const dir = incomeSortOrder.value === 'asc' ? 1 : -1
+  return [...items].sort((a, b) => {
+    let va, vb
+    if (key === 'display_date') {
+      va = new Date(a.display_date || 0).getTime()
+      vb = new Date(b.display_date || 0).getTime()
+    } else if (key === 'amount') {
+      va = a.amount || 0
+      vb = b.amount || 0
+    } else {
+      va = (a[key] || '').toString()
+      vb = (b[key] || '').toString()
+    }
+    if (va < vb) return -1 * dir
+    if (va > vb) return 1 * dir
+    return 0
+  })
+})
+
+const incomeTotalFiltered = computed(() =>
+  sortedIncomeDetail.value.reduce((sum, i) => sum + (i.amount || 0), 0)
+)
+
+const incomeTotalPages = computed(() => Math.ceil(sortedIncomeDetail.value.length / incomePerPage))
+
+const paginatedIncomeDetail = computed(() => {
+  const start = (incomeCurrentPage.value - 1) * incomePerPage
+  return sortedIncomeDetail.value.slice(start, start + incomePerPage)
+})
+
+const incomePageStart = computed(() => {
+  if (sortedIncomeDetail.value.length === 0) return 0
+  return (incomeCurrentPage.value - 1) * incomePerPage + 1
+})
+
+const incomePageEnd = computed(() =>
+  Math.min(incomeCurrentPage.value * incomePerPage, sortedIncomeDetail.value.length)
+)
+
+const incomeVisiblePages = computed(() => {
+  const pages = []
+  const total = incomeTotalPages.value
+  const current = incomeCurrentPage.value
+  let start = Math.max(1, current - 2)
+  let end = Math.min(total, current + 2)
+  if (end - start < 4) {
+    if (start === 1) end = Math.min(total, start + 4)
+    else start = Math.max(1, end - 4)
+  }
+  for (let i = start; i <= end; i++) pages.push(i)
+  return pages
+})
+
+async function loadIncomeDetail() {
+  loadingIncomeDetail.value = true
+  incomeCurrentPage.value = 1
+  try {
+    const response = await fetch(`/api/analytics/income-detail?${getQueryParams()}`, { credentials: 'include' })
+    if (response.ok) {
+      incomeDetail.value = await response.json()
+    }
+  } catch (error) {
+    console.error('Error loading income detail:', error)
+  } finally {
+    loadingIncomeDetail.value = false
+  }
+}
+
 async function loadAllData() {
   loading.value = true
   try {
     await Promise.all([
       loadSummary(),
       loadMonthlyTrend(),
-      loadExpensesByCategory()
+      loadExpensesByCategory(),
+      loadIncomeDetail()
     ])
   } finally {
     loading.value = false
