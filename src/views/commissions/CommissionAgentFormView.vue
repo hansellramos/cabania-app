@@ -93,6 +93,27 @@
                 <div class="small text-muted mt-1">
                   Al vincular un usuario, los eventos que este cree se asignarán automáticamente a este comisionista.
                 </div>
+                <!-- Linked contact + send temp key -->
+                <div v-if="form.user_id && linkedContact" class="mt-2 border rounded p-2 bg-light">
+                  <div class="d-flex align-items-center justify-content-between">
+                    <div>
+                      <strong class="small">{{ linkedContact.fullname || 'Sin nombre' }}</strong>
+                      <br />
+                      <small class="text-muted">WhatsApp: {{ linkedContact.whatsapp || 'No registrado' }}</small>
+                    </div>
+                    <CButton
+                      v-if="linkedContact.whatsapp"
+                      color="success"
+                      size="sm"
+                      @click="openTempKeyModal"
+                    >
+                      Enviar clave temporal
+                    </CButton>
+                  </div>
+                </div>
+                <div v-else-if="form.user_id && !loadingLinkedContact" class="mt-2 small text-muted">
+                  Este usuario no tiene un contacto vinculado
+                </div>
               </CCol>
             </CRow>
             <CRow class="mb-3">
@@ -202,6 +223,59 @@
       </CCard>
     </CCol>
   </CRow>
+
+  <!-- Modal: Enviar clave temporal por WhatsApp -->
+  <CModal :visible="showTempKeyModal" @close="showTempKeyModal = false" alignment="center" size="lg">
+    <CModalHeader>
+      <CModalTitle>Enviar clave temporal por WhatsApp</CModalTitle>
+    </CModalHeader>
+    <CModalBody>
+      <!-- Step 1: Generate key -->
+      <div v-if="!tempKeyData">
+        <p class="text-muted mb-3">
+          Se generará una clave temporal para <strong>{{ linkedUserName }}</strong>
+          y se preparará un mensaje para enviar por WhatsApp al contacto
+          <strong>{{ linkedContact?.fullname }}</strong>
+          ({{ linkedContact?.whatsapp }}).
+        </p>
+        <div class="d-grid">
+          <CButton color="primary" :disabled="generatingKey" @click="generateTempKey">
+            <CSpinner v-if="generatingKey" size="sm" class="me-2" />
+            {{ generatingKey ? 'Generando...' : 'Generar clave temporal' }}
+          </CButton>
+        </div>
+        <div v-if="tempKeyError" class="mt-3">
+          <CAlert color="danger" class="mb-0 py-2">{{ tempKeyError }}</CAlert>
+        </div>
+      </div>
+
+      <!-- Step 2: Preview & Send -->
+      <div v-else>
+        <div class="mb-3">
+          <CFormLabel>Clave generada</CFormLabel>
+          <div class="d-flex align-items-center gap-2">
+            <code class="fs-5 px-3 py-2 bg-light border rounded">{{ tempKeyData.tempKey }}</code>
+            <small class="text-muted">Ya fue guardada como password del usuario</small>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <CFormLabel>Mensaje a enviar</CFormLabel>
+          <CFormTextarea
+            v-model="tempKeyMessage"
+            rows="8"
+          />
+        </div>
+      </div>
+    </CModalBody>
+    <CModalFooter v-if="tempKeyData">
+      <CButton color="secondary" variant="outline" @click="showTempKeyModal = false">Cerrar</CButton>
+      <CButton color="success" @click="openWhatsApp(tempKeyMessage)">
+        <CIcon name="cib-whatsapp" class="me-1" />
+        Enviar por WhatsApp
+      </CButton>
+    </CModalFooter>
+  </CModal>
 </template>
 
 <script setup>
@@ -211,7 +285,8 @@ import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton,
   CForm, CFormLabel, CFormInput, CFormTextarea, CFormSelect, CFormCheck,
   CTable, CTableHead, CTableRow, CTableHeaderCell, CTableBody, CTableDataCell,
-  CBadge
+  CBadge, CModal, CModalHeader, CModalTitle, CModalBody, CModalFooter,
+  CAlert, CSpinner
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 
@@ -249,6 +324,79 @@ const showProviderSuggestions = ref(false)
 const selectedProvider = ref(null)
 
 const organizationUsers = ref([])
+
+// Linked contact & temp key
+const linkedContact = ref(null)
+const loadingLinkedContact = ref(false)
+const showTempKeyModal = ref(false)
+const generatingKey = ref(false)
+const tempKeyData = ref(null)
+const tempKeyMessage = ref('')
+const tempKeyError = ref('')
+
+const linkedUserName = computed(() => {
+  const u = organizationUsers.value.find(u => u.id === form.value.user_id)
+  return u?.display_name || u?.email || ''
+})
+
+const loadLinkedContact = async (userId) => {
+  linkedContact.value = null
+  if (!userId) return
+  loadingLinkedContact.value = true
+  try {
+    const res = await fetch(`/api/users/${userId}`, { credentials: 'include' })
+    if (res.ok) {
+      const userData = await res.json()
+      linkedContact.value = userData.linked_contact || null
+    }
+  } catch (error) {
+    console.error('Error loading linked contact:', error)
+  } finally {
+    loadingLinkedContact.value = false
+  }
+}
+
+function openTempKeyModal() {
+  tempKeyData.value = null
+  tempKeyMessage.value = ''
+  tempKeyError.value = ''
+  showTempKeyModal.value = true
+}
+
+async function generateTempKey() {
+  generatingKey.value = true
+  tempKeyError.value = ''
+  try {
+    const res = await fetch(`/api/users/${form.value.user_id}/generate-temp-key`, {
+      method: 'POST',
+      credentials: 'include'
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      tempKeyError.value = data.error || 'Error al generar clave'
+      return
+    }
+    tempKeyData.value = data
+    const contactName = linkedContact.value?.fullname || linkedUserName.value || ''
+    const userEmail = organizationUsers.value.find(u => u.id === form.value.user_id)?.email || ''
+    tempKeyMessage.value = `*Cabania - Clave de acceso*\n\nHola ${contactName},\n\nTu cuenta *${userEmail}* ya está lista.\n\nTu clave temporal es: *${data.tempKey}*\n\nIngresa aquí: https://app.cabania.info/#/pages/login\n\nPor favor cambia tu clave lo antes posible.\n\nSi tienes alguna duda, contacta a tu administrador.`
+  } catch (error) {
+    tempKeyError.value = error.message
+  } finally {
+    generatingKey.value = false
+  }
+}
+
+function openWhatsApp(text) {
+  const phone = `57${linkedContact.value.whatsapp}`
+  const encodedText = encodeURIComponent(text)
+    .replace(/!/g, '%21')
+    .replace(/'/g, '%27')
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29')
+    .replace(/\*/g, '%2A')
+  window.open(`https://wa.me/${phone}?text=${encodedText}`, '_blank')
+}
 
 const loadOrganizationUsers = async (orgId) => {
   if (!orgId) {
@@ -491,6 +639,10 @@ const saveAgent = async () => {
     saving.value = false
   }
 }
+
+watch(() => form.value.user_id, (newUserId) => {
+  loadLinkedContact(newUserId)
+})
 
 watch(() => form.value.organization_id, (newOrgId) => {
   if (!isEditing.value) {
