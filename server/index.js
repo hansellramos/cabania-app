@@ -72,6 +72,32 @@ function invalidateProviderPriceCache() {
   _providerPriceCache.expires = 0;
 }
 
+// Check if a user is the linked commission agent for an accommodation
+async function isCommissionAgentForAccommodation(userId, accommodation) {
+  if (!userId || !accommodation?.commission_agent_id) return false;
+  const agent = await prisma.commission_agents.findUnique({
+    where: { id: accommodation.commission_agent_id },
+    select: { user_id: true }
+  });
+  return agent?.user_id === userId;
+}
+
+// Get accommodation IDs where user is the linked commission agent
+async function getAgentAccommodationIds(userId) {
+  if (!userId) return new Set();
+  const agents = await prisma.commission_agents.findMany({
+    where: { user_id: userId, is_active: true },
+    select: { id: true }
+  });
+  if (agents.length === 0) return new Set();
+  const agentIds = agents.map(a => a.id);
+  const accs = await prisma.accommodations.findMany({
+    where: { commission_agent_id: { in: agentIds } },
+    select: { id: true }
+  });
+  return new Set(accs.map(a => a.id));
+}
+
 async function logAICall(data) {
   try {
     const systemPrompt = data.system_prompt || '';
@@ -1501,10 +1527,12 @@ async function startServer() {
       });
 
       // :own pattern — redact details for accommodations not created by this user
+      // Exception: commission agents can see full details of their linked accommodations
       if (hasOwnOnly(req.userPermissions, 'accommodations:view')) {
         const currentUserId = req.user ? String(req.user.claims?.sub) : null;
+        const agentAccIds = await getAgentAccommodationIds(currentUserId);
         const result = enriched.map(a => {
-          if (a.created_by === currentUserId) return a;
+          if (a.created_by === currentUserId || agentAccIds.has(a.id)) return a;
           return {
             id: a.id,
             venue: a.venue,
@@ -1574,9 +1602,11 @@ async function startServer() {
       }
       
       // :own pattern — redact if user only has accommodations:view:own and this isn't theirs
+      // Exception: commission agents can see full details of their linked accommodations
       if (hasOwnOnly(req.userPermissions, 'accommodations:view')) {
         const currentUserId = req.user ? String(req.user.claims?.sub) : null;
-        if (accommodation.created_by !== currentUserId) {
+        const isAgent = await isCommissionAgentForAccommodation(currentUserId, accommodation);
+        if (accommodation.created_by !== currentUserId && !isAgent) {
           return res.json({
             id: accommodation.id,
             venue: accommodation.venue,
@@ -1824,6 +1854,7 @@ async function startServer() {
       }));
 
       // :own pattern — only show payments for user's own accommodations
+      // Exception: commission agents can see payments for their linked accommodations
       if (hasOwnOnly(req.userPermissions, 'payments:view')) {
         const currentUserId = req.user ? String(req.user.claims?.sub) : null;
         if (!currentUserId) return res.json([]);
@@ -1832,7 +1863,8 @@ async function startServer() {
           select: { id: true }
         });
         const ownAccIdSet = new Set(ownAccIds.map(a => a.id));
-        return res.json(enriched.filter(p => p.accommodation && ownAccIdSet.has(p.accommodation)));
+        const agentAccIds = await getAgentAccommodationIds(currentUserId);
+        return res.json(enriched.filter(p => p.accommodation && (ownAccIdSet.has(p.accommodation) || agentAccIds.has(p.accommodation))));
       }
 
       res.json(enriched);
