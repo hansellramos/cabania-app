@@ -327,12 +327,83 @@ async function setupAuth(app) {
         where: { user_id: userId },
       });
 
+      // Impersonation info
+      const isImpersonating = !!req.session.originalUserId;
+      let impersonationInfo = null;
+      if (isImpersonating) {
+        const originalUser = await prisma.users.findUnique({
+          where: { id: req.session.originalUserId },
+          select: { id: true, email: true, display_name: true }
+        });
+        impersonationInfo = { originalUser };
+      }
+
       // Exclude password_hash from response
       const { password_hash, ...userData } = user;
-      res.json({ ...userData, permissionDetails, subscription, has_passkeys: passkeyCount > 0, passkey_count: passkeyCount });
+      res.json({ ...userData, permissionDetails, subscription, has_passkeys: passkeyCount > 0, passkey_count: passkeyCount, is_impersonating: isImpersonating, impersonation: impersonationInfo });
     } catch (error) {
       console.error('Error fetching user:', error);
       res.status(500).json({ message: 'Failed to fetch user' });
+    }
+  });
+
+  // --- Impersonation routes ---
+
+  app.post('/api/auth/impersonate', isAuthenticated, async (req, res) => {
+    try {
+      const { getUserPermissions, hasPermission } = require('./permissions');
+      const currentUserId = String(req.user.claims.sub);
+      const originalUserId = req.session.originalUserId || currentUserId;
+
+      // Check permission on the ORIGINAL user (not the impersonated one)
+      const originalPerms = await getUserPermissions(originalUserId);
+      if (!hasPermission(originalPerms, 'users:impersonate')) {
+        return res.status(403).json({ error: 'No tiene permiso para impersonar usuarios' });
+      }
+
+      const { targetUserId } = req.body;
+      if (!targetUserId) {
+        return res.status(400).json({ error: 'targetUserId requerido' });
+      }
+
+      const targetUser = await prisma.users.findUnique({ where: { id: targetUserId } });
+      if (!targetUser) {
+        return res.status(404).json({ error: 'Usuario no encontrado' });
+      }
+
+      // Store original user and switch session
+      req.session.originalUserId = originalUserId;
+      req.user.claims.sub = targetUserId;
+      req.session.passport.user = { claims: { sub: targetUserId }, expires_at: req.user.expires_at };
+
+      req.session.save((err) => {
+        if (err) return res.status(500).json({ error: 'Error al guardar sesión' });
+        res.json({ message: 'Impersonando usuario', targetUser: { id: targetUser.id, email: targetUser.email, display_name: targetUser.display_name } });
+      });
+    } catch (error) {
+      console.error('Error impersonating:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/auth/stop-impersonating', isAuthenticated, async (req, res) => {
+    try {
+      const originalUserId = req.session.originalUserId;
+      if (!originalUserId) {
+        return res.status(400).json({ error: 'No está impersonando a nadie' });
+      }
+
+      req.user.claims.sub = originalUserId;
+      req.session.passport.user = { claims: { sub: originalUserId }, expires_at: req.user.expires_at };
+      delete req.session.originalUserId;
+
+      req.session.save((err) => {
+        if (err) return res.status(500).json({ error: 'Error al guardar sesión' });
+        res.json({ message: 'Sesión restaurada' });
+      });
+    } catch (error) {
+      console.error('Error stopping impersonation:', error);
+      res.status(500).json({ error: error.message });
     }
   });
 
