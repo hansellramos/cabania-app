@@ -221,6 +221,46 @@ async function deletePasskey(id) {
   }
 }
 
+async function impersonate(targetUserId) {
+  try {
+    error.value = null;
+    const response = await fetch('/api/auth/impersonate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ targetUserId }),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Error al impersonar usuario');
+    }
+    await fetchUser();
+    return true;
+  } catch (err) {
+    error.value = err.message;
+    return false;
+  }
+}
+
+async function stopImpersonating() {
+  try {
+    error.value = null;
+    const response = await fetch('/api/auth/stop-impersonating', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Error al restaurar sesión');
+    }
+    await fetchUser();
+    return true;
+  } catch (err) {
+    error.value = err.message;
+    return false;
+  }
+}
+
 async function requestLoginCode(email) {
   try {
     error.value = null;
@@ -288,6 +328,8 @@ export function useAuth() {
     deletePasskey,
     requestLoginCode,
     verifyLoginCode,
+    impersonate,
+    stopImpersonating,
   };
 }
 

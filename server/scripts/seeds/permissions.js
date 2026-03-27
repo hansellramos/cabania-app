@@ -37,6 +37,7 @@ const data = [
   { code: 'venues:edit', name: 'Editar venues', description: 'Permite editar venues' },
   { code: 'venues:view', name: 'Ver venues', description: 'Permite ver venues de organizaciones asignadas' },
   { code: 'ai-usage:view', name: 'Ver uso de IA', description: 'Permite ver estadísticas y registros de uso de IA' },
+  { code: 'users:impersonate', name: 'Impersonar usuarios', description: 'Permite iniciar sesión como otro usuario para soporte/debugging' },
   // Permisos :own — solo aplican a datos creados por el usuario
   { code: 'accommodations:view:own', name: 'Ver reservas propias', description: 'Ve ocupación general sin detalles; solo detalles de reservas propias' },
   { code: 'accommodations:edit:own', name: 'Editar reservas propias', description: 'Solo puede editar reservas que creó' },
