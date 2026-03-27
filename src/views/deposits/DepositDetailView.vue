@@ -117,6 +117,38 @@
                 <p>{{ deposit.damage_notes || '—' }}</p>
               </CCol>
             </CRow>
+
+            <template v-if="deposit.refund_amount">
+              <hr class="my-4" />
+              <h5 class="mb-3">Devolución de Saldo</h5>
+              <CRow>
+                <CCol :md="4">
+                  <h6 class="text-muted">Monto Devuelto</h6>
+                  <p class="fs-5 fw-bold text-success">{{ formatCurrency(deposit.refund_amount) }}</p>
+                </CCol>
+                <CCol :md="4">
+                  <h6 class="text-muted">Fecha de Devolución</h6>
+                  <p>{{ formatDate(deposit.refund_date) }}</p>
+                </CCol>
+                <CCol :md="4">
+                  <h6 class="text-muted">Referencia de Devolución</h6>
+                  <p>{{ deposit.refund_reference || '—' }}</p>
+                </CCol>
+              </CRow>
+            </template>
+
+            <template v-if="pendingBalance > 0 && !deposit.refund_amount">
+              <CAlert color="warning" class="mt-3 d-flex justify-content-between align-items-center">
+                <div>
+                  <strong>Saldo pendiente de devolver:</strong> {{ formatCurrency(pendingBalance) }}
+                  <div class="small text-muted">Depósito {{ formatCurrency(deposit.amount) }} − Daños {{ formatCurrency(deposit.damage_amount) }}</div>
+                </div>
+                <CButton color="success" size="sm" @click="openRefundBalanceModal">
+                  <CIcon :icon="cilArrowCircleLeft" class="me-1" />
+                  Devolver Saldo
+                </CButton>
+              </CAlert>
+            </template>
           </template>
 
           <hr class="my-4" />
@@ -140,7 +172,7 @@
                   </CBadge>
                   <small v-if="item.description" class="d-block mt-1 text-muted">{{ item.description }}</small>
                 </div>
-                <div v-if="deposit.status === 'pending'" class="card-footer p-1">
+                <div v-if="deposit.status === 'pending' || (deposit.status === 'claimed' && !deposit.refund_amount)" class="card-footer p-1">
                   <CButton 
                     color="danger" 
                     size="sm" 
@@ -158,7 +190,7 @@
             No hay evidencia registrada
           </div>
 
-          <template v-if="deposit.status === 'pending'">
+          <template v-if="deposit.status === 'pending' || (deposit.status === 'claimed' && !deposit.refund_amount)">
             <div class="mb-4 p-3 border rounded bg-light">
               <h6 class="mb-3">Agregar Evidencia</h6>
               <CRow class="mb-2">
@@ -224,7 +256,7 @@
 
             <hr class="my-4" />
 
-            <div class="d-flex gap-2 flex-wrap">
+            <div v-if="deposit.status === 'pending'" class="d-flex gap-2 flex-wrap">
               <CButton color="success" @click="showRefundModal = true">
                 <CIcon :icon="cilArrowCircleLeft" class="me-1" />
                 Devolver Depósito
@@ -343,7 +375,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import { cilTrash, cilCloudUpload, cilArrowCircleLeft, cilWarning, cilFolderOpen, cilClipboard, cilCamera } from '@coreui/icons'
@@ -367,6 +399,18 @@ const uploading = ref(false)
 const uploadError = ref('')
 const newEvidenceType = ref('damage')
 const newEvidenceDescription = ref('')
+
+const pendingBalance = computed(() => {
+  if (!deposit.value || deposit.value.status !== 'claimed') return 0
+  return (deposit.value.amount || 0) - (deposit.value.damage_amount || 0)
+})
+
+const openRefundBalanceModal = () => {
+  refundForm.value.refund_amount = pendingBalance.value
+  refundForm.value.refund_date = new Date().toISOString().split('T')[0]
+  refundForm.value.refund_reference = ''
+  showRefundModal.value = true
+}
 
 const refundForm = ref({
   refund_amount: '',
