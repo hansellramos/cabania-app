@@ -994,7 +994,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/venues', isAuthenticated, async (req, res) => {
+  app.post('/api/venues', isAuthenticated, requirePermission('venues:create'), async (req, res) => {
     try {
       const venue = await prisma.venues.create({
         data: req.body
@@ -1005,7 +1005,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/venues/:id', isAuthenticated, async (req, res) => {
+  app.put('/api/venues/:id', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
     try {
       const data = { ...req.body };
       if (data.deposit_max_people_included !== undefined) {
@@ -1047,7 +1047,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/venues/:id', isAuthenticated, async (req, res) => {
+  app.delete('/api/venues/:id', isAuthenticated, requirePermission('venues:delete'), async (req, res) => {
     try {
       await prisma.venues.delete({
         where: { id: req.params.id }
@@ -2665,7 +2665,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/users', isAuthenticated, async (req, res) => {
+  app.get('/api/users', isAuthenticated, requirePermission('users:view'), async (req, res) => {
     try {
       const users = await prisma.users.findMany({
         orderBy: { email: 'asc' }
@@ -2746,7 +2746,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/users', isAuthenticated, async (req, res) => {
+  app.post('/api/users', isAuthenticated, requirePermission('users:edit'), async (req, res) => {
     try {
       const user = await prisma.users.create({
         data: {
@@ -2764,7 +2764,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/users/:id', isAuthenticated, async (req, res) => {
+  app.put('/api/users/:id', isAuthenticated, requirePermission('users:edit'), async (req, res) => {
     try {
       const { email, display_name, avatar_url, role, preferences } = req.body;
       const user = await prisma.users.update({
@@ -2783,7 +2783,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/users/:id', isAuthenticated, async (req, res) => {
+  app.delete('/api/users/:id', isAuthenticated, requirePermission('users:edit'), async (req, res) => {
     try {
       await prisma.users.delete({
         where: { id: req.params.id }
@@ -2794,7 +2794,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/users/:id/lock', isAuthenticated, async (req, res) => {
+  app.post('/api/users/:id/lock', isAuthenticated, requirePermission('users:lock'), async (req, res) => {
     try {
       const user = await prisma.users.update({
         where: { id: req.params.id },
@@ -2810,7 +2810,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/users/:id/unlock', isAuthenticated, async (req, res) => {
+  app.post('/api/users/:id/unlock', isAuthenticated, requirePermission('users:lock'), async (req, res) => {
     try {
       const user = await prisma.users.update({
         where: { id: req.params.id },
@@ -2827,7 +2827,7 @@ async function startServer() {
   });
 
   // Generate temporary key for a user (saves hashed password, returns plain key)
-  app.post('/api/users/:id/generate-temp-key', isAuthenticated, async (req, res) => {
+  app.post('/api/users/:id/generate-temp-key', isAuthenticated, requirePermission('users:edit'), async (req, res) => {
     try {
       if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'users:manage')) {
         return res.status(403).json({ error: 'No tiene permiso para gestionar usuarios' });
@@ -2918,7 +2918,7 @@ async function startServer() {
   });
 
   // Profiles CRUD
-  app.get('/api/profiles', async (req, res) => {
+  app.get('/api/profiles', isAuthenticated, requirePermission('profiles:view'), async (req, res) => {
     try {
       const profiles = await prisma.profiles.findMany({
         orderBy: { name: 'asc' }
@@ -3017,7 +3017,7 @@ async function startServer() {
   });
 
   // Permissions list
-  app.get('/api/permissions', async (req, res) => {
+  app.get('/api/permissions', isAuthenticated, requirePermission('profiles:view'), async (req, res) => {
     try {
       const permissions = await prisma.permissions.findMany({
         orderBy: { code: 'asc' }
@@ -3044,7 +3044,7 @@ async function startServer() {
     }
   });
 
-  app.put('/api/users/:id/organizations', isAuthenticated, async (req, res) => {
+  app.put('/api/users/:id/organizations', isAuthenticated, requirePermission('users:edit'), async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
       const currentUser = await prisma.users.findUnique({ where: { id: userId } });
@@ -3098,7 +3098,7 @@ async function startServer() {
   });
 
   // Update user profile
-  app.put('/api/users/:id/profile', isAuthenticated, async (req, res) => {
+  app.put('/api/users/:id/profile', isAuthenticated, requirePermission('users:edit'), async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
       const currentUser = await prisma.users.findUnique({ where: { id: userId } });
@@ -9573,7 +9573,7 @@ REGLAS:
   }
 
   // List invitations
-  app.get('/api/invitations', isAuthenticated, async (req, res) => {
+  app.get('/api/invitations', isAuthenticated, requirePermission('invitations:view'), async (req, res) => {
     try {
       if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:view')) {
         return res.status(403).json({ error: 'No tiene permiso para ver invitaciones' });
@@ -9598,7 +9598,7 @@ REGLAS:
   });
 
   // Create and send invitation
-  app.post('/api/invitations', isAuthenticated, async (req, res) => {
+  app.post('/api/invitations', isAuthenticated, requirePermission('invitations:send'), async (req, res) => {
     try {
       if (!req.user?.is_super_admin && !hasPermission(req.userPermissions, 'invitations:send')) {
         return res.status(403).json({ error: 'No tiene permiso para enviar invitaciones' });
