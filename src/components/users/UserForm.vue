@@ -71,7 +71,7 @@
     <!-- Linked Contact (only in edit mode) -->
     <div v-if="isEdit" class="mb-3">
       <CFormLabel>Contacto Vinculado</CFormLabel>
-      <div v-if="form.linked_contact" class="border rounded p-3 bg-light">
+      <div v-if="form.linked_contact" class="border rounded p-3 bg-body-tertiary">
         <div class="d-flex align-items-center justify-content-between">
           <div>
             <strong>{{ form.linked_contact.fullname || 'Sin nombre' }}</strong>
@@ -80,37 +80,63 @@
               WhatsApp: {{ form.linked_contact.whatsapp || 'No registrado' }}
             </small>
           </div>
-          <CButton
-            v-if="form.linked_contact.whatsapp"
-            color="success"
-            size="sm"
-            @click="openTempKeyModal"
-          >
-            Enviar clave temporal
+          <CButton color="danger" size="sm" variant="outline" @click="unlinkContact">
+            Desvincular
           </CButton>
         </div>
       </div>
-      <div v-else class="text-muted border rounded p-3">
-        Este usuario no tiene un contacto vinculado
+      <div v-else>
+        <div class="input-group">
+          <CFormInput
+            v-model="contactSearch"
+            placeholder="Buscar contacto por nombre o WhatsApp..."
+            @input="searchContacts"
+          />
+        </div>
+        <div v-if="contactResults.length > 0" class="list-group mt-1" style="max-height: 200px; overflow-y: auto;">
+          <button
+            v-for="c in contactResults"
+            :key="c.id"
+            type="button"
+            class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+            @click="linkContact(c)"
+          >
+            <div>
+              <strong>{{ c.fullname || 'Sin nombre' }}</strong>
+              <small class="text-muted ms-2">{{ c.whatsapp || '' }}</small>
+            </div>
+            <CBadge color="primary">Vincular</CBadge>
+          </button>
+        </div>
+        <div v-else-if="contactSearch && !searchingContacts" class="text-muted small mt-1">
+          No se encontraron contactos disponibles
+        </div>
       </div>
     </div>
 
-    <CButton type="submit" color="primary" class="me-2">{{ isEdit ? 'Actualizar' : 'Crear' }}</CButton>
-    <CButton color="secondary" variant="outline" @click="onCancel">Cancelar</CButton>
+    <div class="d-flex gap-2 flex-wrap">
+      <CButton type="submit" color="primary">{{ isEdit ? 'Actualizar' : 'Crear' }}</CButton>
+      <CButton color="secondary" variant="outline" @click="onCancel">Cancelar</CButton>
+      <CButton v-if="isEdit" color="warning" variant="outline" @click="openTempKeyModal">
+        Resetear Clave
+      </CButton>
+    </div>
 
-    <!-- Modal: Enviar clave temporal por WhatsApp -->
+    <!-- Modal: Resetear clave temporal -->
     <CModal :visible="showTempKeyModal" @close="closeTempKeyModal" alignment="center" size="lg">
       <CModalHeader>
-        <CModalTitle>Enviar clave temporal por WhatsApp</CModalTitle>
+        <CModalTitle>Resetear Clave</CModalTitle>
       </CModalHeader>
       <CModalBody>
         <!-- Step 1: Generate key -->
         <div v-if="!tempKeyData">
           <p class="text-muted mb-3">
-            Se generará una clave temporal para <strong>{{ form.display_name || form.email }}</strong>
-            y se preparará un mensaje para enviar por WhatsApp al contacto
-            <strong>{{ form.linked_contact?.fullname }}</strong>
-            ({{ form.linked_contact?.whatsapp }}).
+            Se generará una clave temporal para <strong>{{ form.display_name || form.email }}</strong>.
+            <template v-if="form.linked_contact?.whatsapp">
+              Podrás enviarla por WhatsApp al contacto
+              <strong>{{ form.linked_contact.fullname }}</strong>
+              ({{ form.linked_contact.whatsapp }}).
+            </template>
           </p>
           <div class="d-grid">
             <CButton color="primary" :disabled="generatingKey" @click="generateTempKey">
@@ -125,7 +151,7 @@
           <div class="mb-3">
             <CFormLabel>Clave generada</CFormLabel>
             <div class="d-flex align-items-center gap-2">
-              <code class="fs-5 px-3 py-2 bg-light border rounded">{{ tempKeyData.tempKey }}</code>
+              <code class="fs-5 px-3 py-2 bg-body-tertiary border rounded">{{ tempKeyData.tempKey }}</code>
               <small class="text-muted">Ya fue guardada como password del usuario</small>
             </div>
           </div>
@@ -139,6 +165,12 @@
             />
           </div>
 
+          <div v-if="!form.linked_contact?.whatsapp" class="mb-3">
+            <CAlert color="info" class="mb-0 py-2">
+              Este usuario no tiene contacto con WhatsApp vinculado. Copia el mensaje y envíalo manualmente.
+            </CAlert>
+          </div>
+
           <div v-if="tempKeyResult" class="mb-3">
             <CAlert :color="tempKeyResult.success ? 'success' : 'danger'" class="mb-0 py-2">
               {{ tempKeyResult.message }}
@@ -149,6 +181,7 @@
       <CModalFooter v-if="tempKeyData">
         <CButton color="secondary" variant="outline" @click="closeTempKeyModal">Cerrar</CButton>
         <CButton
+          v-if="form.linked_contact?.whatsapp"
           color="success"
           @click="openWhatsApp(tempKeyMessage)"
         >
@@ -178,6 +211,75 @@ const emit = defineEmits(['update:modelValue', 'submit', 'cancel'])
 const form = ref({ ...props.modelValue, profile_id: '', organization_ids: [] })
 const profiles = ref([])
 const organizations = ref([])
+
+// Contact linking
+const contactSearch = ref('')
+const contactResults = ref([])
+const searchingContacts = ref(false)
+let searchTimeout = null
+
+async function searchContacts() {
+  clearTimeout(searchTimeout)
+  const query = contactSearch.value.trim()
+  if (query.length < 2) {
+    contactResults.value = []
+    return
+  }
+  searchTimeout = setTimeout(async () => {
+    searchingContacts.value = true
+    try {
+      const res = await fetch(`/api/contacts?viewAll=true`, { credentials: 'include' })
+      if (res.ok) {
+        const all = await res.json()
+        const q = query.toLowerCase()
+        contactResults.value = all.filter(c =>
+          !c.user &&
+          ((c.fullname && c.fullname.toLowerCase().includes(q)) ||
+           (c.whatsapp && String(c.whatsapp).includes(q)))
+        ).slice(0, 10)
+      }
+    } catch (e) {
+      console.error('Error searching contacts:', e)
+    } finally {
+      searchingContacts.value = false
+    }
+  }, 300)
+}
+
+async function linkContact(contact) {
+  try {
+    const res = await fetch(`/api/contacts/${contact.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ user: form.value.id })
+    })
+    if (res.ok) {
+      form.value.linked_contact = contact
+      contactSearch.value = ''
+      contactResults.value = []
+    }
+  } catch (e) {
+    console.error('Error linking contact:', e)
+  }
+}
+
+async function unlinkContact() {
+  if (!form.value.linked_contact) return
+  try {
+    const res = await fetch(`/api/contacts/${form.value.linked_contact.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ user: null })
+    })
+    if (res.ok) {
+      form.value.linked_contact = null
+    }
+  } catch (e) {
+    console.error('Error unlinking contact:', e)
+  }
+}
 
 // Temp key modal state
 const showTempKeyModal = ref(false)

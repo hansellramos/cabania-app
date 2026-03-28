@@ -2731,10 +2731,15 @@ async function startServer() {
       const user = await prisma.users.findUnique({
         where: { id: req.params.id }
       });
-      // Find linked contact
-      const linked_contact = await prisma.contacts.findFirst({
-        where: { user: req.params.id }
-      });
+      if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+      // Find linked contact — user field is UUID, so only query if ID looks like a UUID
+      let linked_contact = null;
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      if (uuidRegex.test(req.params.id)) {
+        linked_contact = await prisma.contacts.findFirst({
+          where: { user: req.params.id }
+        });
+      }
       res.json({ ...user, linked_contact: linked_contact || null });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -4904,8 +4909,14 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         updated_at: new Date(),
         updated_by: userId
       };
-      
-      if (status === 'refunded') {
+
+      // Claimed deposit: allow recording balance refund without changing status
+      if (existing.status === 'claimed' && status === 'refunded') {
+        updateData.status = 'claimed'; // keep claimed status
+        updateData.refund_amount = refund_amount;
+        updateData.refund_date = refund_date ? new Date(refund_date) : new Date();
+        updateData.refund_reference = refund_reference;
+      } else if (status === 'refunded') {
         updateData.refund_amount = refund_amount;
         updateData.refund_date = refund_date ? new Date(refund_date) : new Date();
         updateData.refund_reference = refund_reference;
