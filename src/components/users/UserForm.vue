@@ -356,7 +356,8 @@ async function generateTempKey() {
     }
     tempKeyData.value = data
     const contactName = form.linked_contact?.fullname || form.value.display_name || ''
-    tempKeyMessage.value = `*Cabania - Clave de acceso*\n\nHola ${contactName},\n\nTu cuenta *${form.value.email}* ya está lista.\n\nTu clave temporal es: *${data.tempKey}*\n\nIngresa aquí: https://cabania.app/#/pages/login\n\nPor favor cambia tu clave lo antes posible.\n\nSi tienes alguna duda, contacta a tu administrador.`
+    const appUrl = import.meta.env.VITE_APP_URL || 'https://cabania.app'
+    tempKeyMessage.value = `*Cabania - Clave de acceso*\n\nHola ${contactName},\n\nTu cuenta *${form.value.email}* ya está lista.\n\nTu clave temporal es: *${data.tempKey}*\n\nIngresa aquí: ${appUrl}/#/pages/login\n\nPor favor cambia tu clave lo antes posible.\n\nSi tienes alguna duda, contacta a tu administrador.`
   } catch (error) {
     tempKeyResult.value = { success: false, message: error.message }
   } finally {

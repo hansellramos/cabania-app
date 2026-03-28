@@ -2,7 +2,7 @@
  * HTML email templates for CabanIA
  */
 
-const APP_URL = () => process.env.APP_URL || 'https://app.cabania.info'
+const APP_URL = () => process.env.APP_URL || 'https://cabania.app'
 
 function invitationEmail({ inviterName, organizationName, token, message, expiresAt, acceptUrl }) {
   const onboardingUrl = acceptUrl || `${APP_URL()}/#/onboarding?token=${token}`

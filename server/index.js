@@ -9650,7 +9650,7 @@ REGLAS:
       // Partner invitations use a different acceptance page
       const isPartnerInvitation = profile_code && profile_code !== 'organization:admin';
       const acceptUrl = isPartnerInvitation
-        ? `${process.env.APP_URL || 'https://app.cabania.info'}/#/invitation/accept?token=${invitation.token}`
+        ? `${process.env.APP_URL || 'https://cabania.app'}/#/invitation/accept?token=${invitation.token}`
         : null;
 
       if (channel === 'email') {
