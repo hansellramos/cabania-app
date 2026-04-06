@@ -38,6 +38,9 @@ const data = [
   { code: 'venues:view', name: 'Ver venues', description: 'Permite ver venues de organizaciones asignadas' },
   { code: 'ai-usage:view', name: 'Ver uso de IA', description: 'Permite ver estadísticas y registros de uso de IA' },
   { code: 'users:impersonate', name: 'Impersonar usuarios', description: 'Permite iniciar sesión como otro usuario para soporte/debugging' },
+  { code: 'contracts:view', name: 'Ver contratos', description: 'Permite ver contratos de hospedajes' },
+  { code: 'contracts:manage', name: 'Gestionar contratos', description: 'Permite crear, regenerar y eliminar contratos' },
+  { code: 'contracts:templates:manage', name: 'Gestionar plantillas de contrato', description: 'Permite crear y editar plantillas de contrato a nivel de venue' },
   // Permisos :own — solo aplican a datos creados por el usuario
   { code: 'accommodations:view:own', name: 'Ver reservas propias', description: 'Ve ocupación general sin detalles; solo detalles de reservas propias' },
   { code: 'accommodations:edit:own', name: 'Editar reservas propias', description: 'Solo puede editar reservas que creó' },

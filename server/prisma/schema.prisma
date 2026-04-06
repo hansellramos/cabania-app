@@ -1026,3 +1026,75 @@ model whatsapp_event_log {
   @@index([event_type])
   @@index([created_at])
 }
+
+model contract_templates {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id   String   @db.Uuid
+  name       String   @db.VarChar(255)
+  is_default Boolean  @default(false)
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime? @db.Timestamptz(6)
+  created_by String?  @db.VarChar(255)
+
+  sections   contract_template_sections[]
+  contracts  contracts[]
+
+  @@index([venue_id])
+}
+
+model contract_template_sections {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  template_id String   @db.Uuid
+  title       String   @db.VarChar(255)
+  content     String   @db.Text
+  sort_order  Int      @default(0)
+  created_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  template    contract_templates @relation(fields: [template_id], references: [id], onDelete: Cascade)
+
+  @@index([template_id])
+}
+
+model contracts {
+  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accommodation_id      String    @db.Uuid
+  template_id           String?   @db.Uuid
+  snapshot_html         String?   @db.Text
+  access_code           String    @db.VarChar(10)
+  qr_token              String    @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  status                String    @default("draft") @db.VarChar(20)
+  accepted_at           DateTime? @db.Timestamptz(6)
+  accepted_ip           String?   @db.VarChar(45)
+  accepted_user_agent   String?   @db.Text
+  signature_image_url   String?   @db.Text
+  signer_photo_url      String?   @db.Text
+  signer_photo_sepia_url String?  @db.Text
+  pdf_url               String?   @db.Text
+  pdf_hash              String?   @db.VarChar(64)
+  blockchain_tx         String?   @db.VarChar(255)
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime? @db.Timestamptz(6)
+  created_by            String?   @db.VarChar(255)
+
+  template              contract_templates? @relation(fields: [template_id], references: [id])
+  attachments           contract_attachments[]
+
+  @@index([accommodation_id])
+  @@index([qr_token])
+  @@index([status])
+}
+
+model contract_attachments {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  contract_id     String   @db.Uuid
+  type            String   @db.VarChar(20)
+  image_url       String   @db.Text
+  image_sepia_url String?  @db.Text
+  description     String?  @db.Text
+  uploaded_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  contract        contracts @relation(fields: [contract_id], references: [id], onDelete: Cascade)
+
+  @@index([contract_id])
+}
