@@ -10409,6 +10409,65 @@ REGLAS:
     }
   });
 
+  // --- AI-powered contract template generation ---
+  app.post('/api/contract-templates/ai-generate', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+    try {
+      const { prompt, current_sections } = req.body;
+      if (!prompt) return res.status(400).json({ error: 'Prompt requerido' });
+
+      const placeholderList = contractRenderer.getAvailablePlaceholders()
+        .map(p => `- ${p.label} → {{${p.key}}}`)
+        .join('\n');
+
+      let contextMsg = '';
+      if (current_sections?.length > 0) {
+        contextMsg = `\n\nPLANTILLA ACTUAL (modifica/agrega segun lo que pide el usuario):\n${JSON.stringify(current_sections, null, 2)}`;
+      }
+
+      const messages = [
+        {
+          role: 'system',
+          content: `Eres un experto en contratos de hospedaje en Colombia. Genera o modifica plantillas de contrato con secciones estructuradas.
+
+Reglas:
+- Cada seccion tiene titulo y contenido en markdown
+- Usa los placeholders disponibles para datos variables
+- Mantén un tono profesional pero claro
+- Si el usuario pide agregar algo a una plantilla existente, mantén las secciones actuales y agrega/modifica solo lo solicitado
+- Responde SOLO con JSON valido
+
+Placeholders disponibles:
+${placeholderList}`
+        },
+        {
+          role: 'user',
+          content: `${prompt}${contextMsg}
+
+Responde con JSON:
+{
+  "name": "nombre sugerido",
+  "sections": [
+    { "title": "...", "content": "...", "sort_order": 1 }
+  ]
+}`
+        },
+      ];
+
+      const aiResponse = await llmService.callLLMByCode('xai_grok', messages, {
+        maxTokens: 8000,
+        temperature: 0.2,
+      });
+
+      const responseText = aiResponse.content || aiResponse.choices?.[0]?.message?.content || '';
+      const parsed = contractImporter.parseAIResponse(responseText);
+
+      res.json({ success: true, template: parsed });
+    } catch (error) {
+      console.error('Error generating contract with AI:', error);
+      res.status(500).json({ error: error.message || 'Error al generar con IA' });
+    }
+  });
+
   // --- Contract for an accommodation ---
   app.get('/api/accommodations/:id/contract', isAuthenticated, async (req, res) => {
     try {

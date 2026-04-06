@@ -20,6 +20,30 @@
 
             <hr />
 
+            <!-- AI Assistant -->
+            <div class="mb-3 p-3 border rounded bg-body-tertiary">
+              <div class="d-flex align-items-center gap-2 mb-2">
+                <CIcon name="cil-bolt" class="text-warning" />
+                <strong>Asistente IA</strong>
+              </div>
+              <div class="d-flex gap-2">
+                <CFormInput
+                  v-model="aiPrompt"
+                  placeholder="Ej: Genera un contrato para pasadia, Agrega seccion de mascotas, Hazlo mas estricto..."
+                  @keyup.enter="generateWithAI"
+                />
+                <CButton color="warning" :disabled="!aiPrompt || aiGenerating" @click="generateWithAI" style="white-space: nowrap;">
+                  {{ aiGenerating ? 'Generando...' : 'Generar' }}
+                </CButton>
+              </div>
+              <div v-if="aiGenerating" class="mt-2 small text-muted">
+                <CSpinner size="sm" class="me-1" /> Analizando con IA, puede tomar unos segundos...
+              </div>
+              <div v-if="aiError" class="mt-2 text-danger small">{{ aiError }}</div>
+            </div>
+
+            <hr />
+
             <div class="d-flex justify-content-between align-items-center mb-3">
               <h5 class="mb-0">Secciones ({{ form.sections.length }})</h5>
               <div class="d-flex gap-2">
@@ -94,6 +118,9 @@ const loading = ref(false)
 const saving = ref(false)
 const showPlaceholders = ref(false)
 const placeholders = ref([])
+const aiPrompt = ref('')
+const aiGenerating = ref(false)
+const aiError = ref('')
 
 const form = ref({
   name: '',
@@ -155,6 +182,48 @@ function placeholderTag(key) {
 
 function copyPlaceholder(key) {
   navigator.clipboard.writeText(`{{${key}}}`)
+}
+
+async function generateWithAI() {
+  if (!aiPrompt.value) return
+  aiGenerating.value = true
+  aiError.value = ''
+
+  try {
+    const currentSections = form.sections.length > 0 && form.sections[0].title
+      ? form.sections.map(s => ({ title: s.title, content: s.content }))
+      : null
+
+    const res = await fetch('/api/contract-templates/ai-generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        prompt: aiPrompt.value,
+        current_sections: currentSections,
+      }),
+    })
+
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Error al generar')
+
+    if (data.template) {
+      if (!form.value.name && data.template.name) {
+        form.value.name = data.template.name
+      }
+      form.value.sections = data.template.sections.map((s, i) => ({
+        title: s.title,
+        content: s.content,
+        sort_order: i,
+      }))
+    }
+
+    aiPrompt.value = ''
+  } catch (e) {
+    aiError.value = e.message
+  } finally {
+    aiGenerating.value = false
+  }
 }
 
 async function save() {
