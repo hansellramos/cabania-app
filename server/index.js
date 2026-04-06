@@ -10356,6 +10356,50 @@ REGLAS:
     res.json(contractRenderer.getAvailablePlaceholders());
   });
 
+  // --- Contract template import from PDF/Word ---
+  const contractImporter = require('./services/contractImporter');
+
+  app.post('/api/contract-templates/import', isAuthenticated, requirePermission('venues:edit'), upload.single('file'), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'No se envió archivo' });
+      }
+      if (req.file.size > 5 * 1024 * 1024) {
+        return res.status(400).json({ error: 'El archivo no puede superar 5MB' });
+      }
+
+      // Extract text
+      const text = await contractImporter.extractText(req.file.buffer, req.file.mimetype);
+      if (!text || text.trim().length < 50) {
+        return res.status(400).json({ error: 'No se pudo extraer texto suficiente del archivo' });
+      }
+
+      // Build prompt and call AI
+      const { system, user } = contractImporter.buildImportPrompt(text);
+      const messages = [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ];
+
+      const aiResponse = await llmService.callLLMByCode('anthropic', messages, {
+        max_tokens: 4000,
+        temperature: 0.2,
+      });
+
+      const responseText = aiResponse.content || aiResponse.choices?.[0]?.message?.content || '';
+      const parsed = contractImporter.parseAIResponse(responseText);
+
+      res.json({
+        success: true,
+        extracted_text_length: text.length,
+        template: parsed,
+      });
+    } catch (error) {
+      console.error('Error importing contract template:', error);
+      res.status(500).json({ error: error.message || 'Error al importar plantilla' });
+    }
+  });
+
   // --- Contract for an accommodation ---
   app.get('/api/accommodations/:id/contract', isAuthenticated, async (req, res) => {
     try {

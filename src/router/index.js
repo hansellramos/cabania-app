@@ -526,6 +526,13 @@ const routes = [
         meta: { breadcrumb: 'Metodos de Pago' },
       },
       {
+        path: '/business/venues/:venueId/contract-templates',
+        name: 'ContractTemplateList',
+        component: () => import('@/views/contracts/ContractTemplateListView.vue'),
+        props: true,
+        meta: { breadcrumb: 'Plantillas de Contrato' },
+      },
+      {
         path: '/business/venues/:id/plans',
         name: 'VenuePlans',
         component: () => import('@/views/venues/VenuePlansView.vue'),
