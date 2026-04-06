@@ -533,6 +533,20 @@ const routes = [
         meta: { breadcrumb: 'Plantillas de Contrato' },
       },
       {
+        path: '/business/venues/:venueId/contract-templates/create',
+        name: 'ContractTemplateCreate',
+        component: () => import('@/views/contracts/ContractTemplateFormView.vue'),
+        props: true,
+        meta: { breadcrumb: 'Nueva Plantilla' },
+      },
+      {
+        path: '/business/venues/:venueId/contract-templates/:templateId/edit',
+        name: 'ContractTemplateEdit',
+        component: () => import('@/views/contracts/ContractTemplateFormView.vue'),
+        props: true,
+        meta: { breadcrumb: 'Editar Plantilla' },
+      },
+      {
         path: '/business/venues/:id/plans',
         name: 'VenuePlans',
         component: () => import('@/views/venues/VenuePlansView.vue'),

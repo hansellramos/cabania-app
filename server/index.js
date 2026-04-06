@@ -158,6 +158,15 @@ const upload = multer({
   }
 });
 
+const uploadDocument = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    const allowed = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'];
+    cb(null, allowed.includes(file.mimetype));
+  }
+});
+
 app.use(cors({
   origin: true,
   credentials: true
@@ -10359,7 +10368,7 @@ REGLAS:
   // --- Contract template import from PDF/Word ---
   const contractImporter = require('./services/contractImporter');
 
-  app.post('/api/contract-templates/import', isAuthenticated, requirePermission('venues:edit'), upload.single('file'), async (req, res) => {
+  app.post('/api/contract-templates/import', isAuthenticated, requirePermission('venues:edit'), uploadDocument.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: 'No se envió archivo' });
@@ -10381,9 +10390,9 @@ REGLAS:
         { role: 'user', content: user },
       ];
 
-      const aiResponse = await llmService.callLLMByCode('anthropic', messages, {
-        max_tokens: 4000,
-        temperature: 0.2,
+      const aiResponse = await llmService.callLLMByCode('xai_grok', messages, {
+        maxTokens: 8000,
+        temperature: 0.1,
       });
 
       const responseText = aiResponse.content || aiResponse.choices?.[0]?.message?.content || '';
