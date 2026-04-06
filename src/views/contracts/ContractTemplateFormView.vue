@@ -38,7 +38,7 @@
                     <div v-for="(group, cat) in groupedPlaceholders" :key="cat" class="col-md-4 col-sm-6 mb-2">
                       <strong class="small">{{ cat }}</strong>
                       <div v-for="p in group" :key="p.key" class="small">
-                        <code class="text-primary cursor-pointer" @click="copyPlaceholder(p.key)">{{ '{{' + p.key + '}}' }}</code>
+                        <code class="text-primary cursor-pointer" @click="copyPlaceholder(p.key)" v-text="placeholderTag(p.key)"></code>
                         <span class="text-muted ms-1">{{ p.label }}</span>
                       </div>
                     </div>
@@ -147,6 +147,10 @@ function moveSection(idx, dir) {
   const arr = form.value.sections
   const target = idx + dir
   ;[arr[idx], arr[target]] = [arr[target], arr[idx]]
+}
+
+function placeholderTag(key) {
+  return `{{${key}}}`
 }
 
 function copyPlaceholder(key) {
