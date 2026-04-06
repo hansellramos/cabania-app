@@ -637,6 +637,18 @@ const routes = [
     component: () => import('@/views/invitations/AcceptInvitationView.vue'),
   },
   {
+    path: '/contract/:token',
+    name: 'PublicContract',
+    component: () => import('@/views/contracts/PublicContractView.vue'),
+    props: true,
+  },
+  {
+    path: '/contract/code/:accommodationId',
+    name: 'PublicContractCode',
+    component: () => import('@/views/contracts/PublicContractCodeView.vue'),
+    props: true,
+  },
+  {
     path: '/p/:slug',
     name: 'PublicVenue',
     component: () => import('@/layouts/PublicLayout.vue'),
@@ -704,7 +716,7 @@ const router = createRouter({
 const { posthog } = usePostHog()
 
 // Public routes that don't require authentication
-const publicRoutes = ['/availability', '/p/', '/pages/login', '/pages/register', '/pages/forgot-password', '/pages/code-login', '/pages/404', '/pages/500', '/payment-result', '/onboarding', '/invitation/accept']
+const publicRoutes = ['/availability', '/p/', '/contract/', '/pages/login', '/pages/register', '/pages/forgot-password', '/pages/code-login', '/pages/404', '/pages/500', '/payment-result', '/onboarding', '/invitation/accept']
 
 // Routes that don't require subscription
 const noSubscriptionRoutes = ['/no-subscription', '/profile']

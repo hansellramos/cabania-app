@@ -10235,6 +10235,302 @@ REGLAS:
 
   // ==================== End Onboarding API ====================
 
+  // ==================== Contract API ====================
+  const contractRenderer = require('./services/contractRenderer');
+
+  // --- Contract Templates CRUD ---
+  app.get('/api/venues/:venueId/contract-templates', isAuthenticated, async (req, res) => {
+    try {
+      const templates = await prisma.contract_templates.findMany({
+        where: { venue_id: req.params.venueId },
+        include: { sections: { orderBy: { sort_order: 'asc' } } },
+        orderBy: { created_at: 'desc' },
+      });
+      res.json(templates);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/contract-templates/:id', isAuthenticated, async (req, res) => {
+    try {
+      const template = await prisma.contract_templates.findUnique({
+        where: { id: req.params.id },
+        include: { sections: { orderBy: { sort_order: 'asc' } } },
+      });
+      if (!template) return res.status(404).json({ error: 'Plantilla no encontrada' });
+      res.json(template);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/contract-templates', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { venue_id, name, is_default, sections } = req.body;
+
+      const result = await prisma.$transaction(async (tx) => {
+        if (is_default) {
+          await tx.contract_templates.updateMany({
+            where: { venue_id, is_default: true },
+            data: { is_default: false },
+          });
+        }
+        const template = await tx.contract_templates.create({
+          data: { venue_id, name, is_default: is_default || false, created_by: userId },
+        });
+        if (sections?.length > 0) {
+          await tx.contract_template_sections.createMany({
+            data: sections.map((s, i) => ({
+              template_id: template.id,
+              title: s.title,
+              content: s.content,
+              sort_order: s.sort_order ?? i,
+            })),
+          });
+        }
+        return tx.contract_templates.findUnique({
+          where: { id: template.id },
+          include: { sections: { orderBy: { sort_order: 'asc' } } },
+        });
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/contract-templates/:id', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+    try {
+      const { name, is_default, is_active, sections } = req.body;
+      const template = await prisma.contract_templates.findUnique({ where: { id: req.params.id } });
+      if (!template) return res.status(404).json({ error: 'Plantilla no encontrada' });
+
+      const result = await prisma.$transaction(async (tx) => {
+        if (is_default) {
+          await tx.contract_templates.updateMany({
+            where: { venue_id: template.venue_id, is_default: true, NOT: { id: template.id } },
+            data: { is_default: false },
+          });
+        }
+        await tx.contract_templates.update({
+          where: { id: req.params.id },
+          data: { name, is_default, is_active, updated_at: new Date() },
+        });
+        if (sections) {
+          await tx.contract_template_sections.deleteMany({ where: { template_id: req.params.id } });
+          if (sections.length > 0) {
+            await tx.contract_template_sections.createMany({
+              data: sections.map((s, i) => ({
+                template_id: req.params.id,
+                title: s.title,
+                content: s.content,
+                sort_order: s.sort_order ?? i,
+              })),
+            });
+          }
+        }
+        return tx.contract_templates.findUnique({
+          where: { id: req.params.id },
+          include: { sections: { orderBy: { sort_order: 'asc' } } },
+        });
+      });
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/contract-templates/:id', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+    try {
+      await prisma.contract_templates.delete({ where: { id: req.params.id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Contract placeholders reference ---
+  app.get('/api/contract-placeholders', isAuthenticated, (req, res) => {
+    res.json(contractRenderer.getAvailablePlaceholders());
+  });
+
+  // --- Contract for an accommodation ---
+  app.get('/api/accommodations/:id/contract', isAuthenticated, async (req, res) => {
+    try {
+      const contract = await prisma.contracts.findFirst({
+        where: { accommodation_id: req.params.id },
+        include: { attachments: true, template: { include: { sections: { orderBy: { sort_order: 'asc' } } } } },
+      });
+      if (!contract) return res.json(null);
+      res.json(contract);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/accommodations/:id/contract', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const accommodation = await prisma.accommodations.findUnique({ where: { id: req.params.id } });
+      if (!accommodation) return res.status(404).json({ error: 'Hospedaje no encontrado' });
+
+      const existing = await prisma.contracts.findFirst({ where: { accommodation_id: req.params.id } });
+      if (existing) return res.status(400).json({ error: 'Ya existe un contrato para este hospedaje' });
+
+      const template = await prisma.contract_templates.findFirst({
+        where: { venue_id: accommodation.venue, is_default: true, is_active: true },
+        include: { sections: { orderBy: { sort_order: 'asc' } } },
+      });
+
+      const accessCode = String(Math.floor(100000 + Math.random() * 900000));
+
+      // Gather related data for rendering
+      const customer = accommodation.customer ? await prisma.contacts.findUnique({ where: { id: accommodation.customer } }) : null;
+      const venue = accommodation.venue ? await prisma.venues.findUnique({ where: { id: accommodation.venue } }) : null;
+      const organization = venue?.organization ? await prisma.organizations.findUnique({ where: { id: venue.organization } }) : null;
+      const plan = accommodation.plan_id ? await prisma.venue_plans.findUnique({ where: { id: accommodation.plan_id } }) : null;
+      const payments = await prisma.payments.findMany({ where: { accommodation: req.params.id } });
+      const deposit = await prisma.deposits.findFirst({ where: { accommodation_id: req.params.id } });
+      let commissionAgent = null;
+      if (accommodation.commission_agent_id) {
+        commissionAgent = await prisma.commission_agents.findUnique({
+          where: { id: accommodation.commission_agent_id },
+          include: { provider: true },
+        });
+      }
+
+      let snapshotHtml = null;
+      if (template) {
+        const { renderedSections } = contractRenderer.renderContract(template.sections, {
+          accommodation, customer, venue, organization, plan, commissionAgent, payments, deposit,
+        });
+        snapshotHtml = JSON.stringify(renderedSections);
+      }
+
+      const contract = await prisma.contracts.create({
+        data: {
+          accommodation_id: req.params.id,
+          template_id: template?.id || null,
+          snapshot_html: snapshotHtml,
+          access_code: accessCode,
+          status: 'draft',
+          created_by: userId,
+        },
+        include: { attachments: true },
+      });
+
+      res.json(contract);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- Public contract access (no auth) ---
+  app.get('/api/public/contracts/:token', async (req, res) => {
+    try {
+      const contract = await prisma.contracts.findUnique({
+        where: { qr_token: req.params.token },
+        include: { attachments: true },
+      });
+      if (!contract) return res.status(404).json({ error: 'Contrato no encontrado' });
+
+      // Get venue branding
+      const accommodation = await prisma.accommodations.findUnique({ where: { id: contract.accommodation_id } });
+      const venue = accommodation?.venue ? await prisma.venues.findUnique({ where: { id: accommodation.venue } }) : null;
+
+      res.json({
+        ...contract,
+        venue_branding: venue ? {
+          name: venue.name,
+          logo_url: venue.logo_url,
+          brand_color_primary: venue.brand_color_primary,
+          brand_color_secondary: venue.brand_color_secondary,
+        } : null,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/public/contracts/validate-code', async (req, res) => {
+    try {
+      const { accommodation_id, code } = req.body;
+      const contract = await prisma.contracts.findFirst({
+        where: { accommodation_id, access_code: code },
+      });
+      if (!contract) return res.status(403).json({ error: 'Código incorrecto' });
+      res.json({ qr_token: contract.qr_token });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/public/contracts/:token/sign', async (req, res) => {
+    try {
+      const { signature_image_url, signer_photo_url, signer_photo_sepia_url } = req.body;
+      const contract = await prisma.contracts.findUnique({ where: { qr_token: req.params.token } });
+      if (!contract) return res.status(404).json({ error: 'Contrato no encontrado' });
+      if (contract.status === 'signed') return res.status(400).json({ error: 'Contrato ya firmado' });
+
+      const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+      const userAgent = req.headers['user-agent'];
+
+      const updated = await prisma.contracts.update({
+        where: { qr_token: req.params.token },
+        data: {
+          status: 'signed',
+          signature_image_url,
+          signer_photo_url,
+          signer_photo_sepia_url,
+          accepted_at: new Date(),
+          accepted_ip: String(ip).split(',')[0].trim(),
+          accepted_user_agent: userAgent,
+          updated_at: new Date(),
+        },
+        include: { attachments: true },
+      });
+
+      // TODO: Generate PDF + hash (ticket #10)
+
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/public/contracts/:token/attachments', async (req, res) => {
+    try {
+      const contract = await prisma.contracts.findUnique({ where: { qr_token: req.params.token } });
+      if (!contract) return res.status(404).json({ error: 'Contrato no encontrado' });
+      if (contract.status === 'signed') return res.status(400).json({ error: 'Contrato ya firmado, no se pueden agregar adjuntos' });
+
+      const { type, image_url, image_sepia_url, description } = req.body;
+      const attachment = await prisma.contract_attachments.create({
+        data: { contract_id: contract.id, type, image_url, image_sepia_url, description },
+      });
+      res.json(attachment);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/public/contracts/:token/attachments/:attachmentId', async (req, res) => {
+    try {
+      const contract = await prisma.contracts.findUnique({ where: { qr_token: req.params.token } });
+      if (!contract) return res.status(404).json({ error: 'Contrato no encontrado' });
+      if (contract.status === 'signed') return res.status(400).json({ error: 'Contrato ya firmado' });
+
+      await prisma.contract_attachments.delete({ where: { id: req.params.attachmentId } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== End Contract API ====================
+
   // Serve static files from Vue build in production
   const distPath = path.join(__dirname, '..', 'dist');
   app.use(express.static(distPath));
