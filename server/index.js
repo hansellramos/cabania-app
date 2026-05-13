@@ -10274,7 +10274,7 @@ REGLAS:
     }
   });
 
-  app.post('/api/contract-templates', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+  app.post('/api/contract-templates', isAuthenticated, requirePermission('contracts:templates:manage'), async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
       const { venue_id, name, is_default, sections } = req.body;
@@ -10310,7 +10310,7 @@ REGLAS:
     }
   });
 
-  app.put('/api/contract-templates/:id', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+  app.put('/api/contract-templates/:id', isAuthenticated, requirePermission('contracts:templates:manage'), async (req, res) => {
     try {
       const { name, is_default, is_active, sections } = req.body;
       const template = await prisma.contract_templates.findUnique({ where: { id: req.params.id } });
@@ -10351,7 +10351,7 @@ REGLAS:
     }
   });
 
-  app.delete('/api/contract-templates/:id', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+  app.delete('/api/contract-templates/:id', isAuthenticated, requirePermission('contracts:templates:manage'), async (req, res) => {
     try {
       await prisma.contract_templates.delete({ where: { id: req.params.id } });
       res.json({ success: true });
@@ -10368,7 +10368,7 @@ REGLAS:
   // --- Contract template import from PDF/Word ---
   const contractImporter = require('./services/contractImporter');
 
-  app.post('/api/contract-templates/import', isAuthenticated, requirePermission('venues:edit'), uploadDocument.single('file'), async (req, res) => {
+  app.post('/api/contract-templates/import', isAuthenticated, requirePermission('contracts:templates:manage'), uploadDocument.single('file'), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: 'No se envió archivo' });
@@ -10410,7 +10410,7 @@ REGLAS:
   });
 
   // --- AI-powered contract template generation ---
-  app.post('/api/contract-templates/ai-generate', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+  app.post('/api/contract-templates/ai-generate', isAuthenticated, requirePermission('contracts:templates:manage'), async (req, res) => {
     try {
       const { prompt, current_sections } = req.body;
       if (!prompt) return res.status(400).json({ error: 'Prompt requerido' });
@@ -10469,8 +10469,29 @@ Responde con JSON:
   });
 
   // --- Contract for an accommodation ---
+  async function canAccessAccommodationContract(req, accommodationId, action) {
+    // action: 'view' or 'manage'
+    const fullPerm = action === 'manage' ? 'contracts:manage' : 'contracts:view';
+    const ownPerm = action === 'manage' ? 'contracts:manage:own' : 'contracts:view:own';
+    if (hasPermission(req.userPermissions, fullPerm)) return true;
+    if (!hasPermission(req.userPermissions, ownPerm)) return false;
+    const userId = req.user ? String(req.user.claims?.sub) : null;
+    if (!userId) return false;
+    const acc = await prisma.accommodations.findUnique({
+      where: { id: accommodationId },
+      select: { created_by: true, commission_agent_id: true }
+    });
+    if (!acc) return false;
+    if (acc.created_by === userId) return true;
+    const agentAccIds = await getAgentAccommodationIds(userId);
+    return agentAccIds.has(accommodationId);
+  }
+
   app.get('/api/accommodations/:id/contract', isAuthenticated, async (req, res) => {
     try {
+      if (!(await canAccessAccommodationContract(req, req.params.id, 'view'))) {
+        return res.status(403).json({ error: 'Permiso denegado' });
+      }
       const contract = await prisma.contracts.findFirst({
         where: { accommodation_id: req.params.id },
         include: { attachments: true, template: { include: { sections: { orderBy: { sort_order: 'asc' } } } } },
@@ -10484,6 +10505,9 @@ Responde con JSON:
 
   app.post('/api/accommodations/:id/contract', isAuthenticated, async (req, res) => {
     try {
+      if (!(await canAccessAccommodationContract(req, req.params.id, 'manage'))) {
+        return res.status(403).json({ error: 'Permiso denegado' });
+      }
       const userId = String(req.user.claims?.sub);
       const accommodation = await prisma.accommodations.findUnique({ where: { id: req.params.id } });
       if (!accommodation) return res.status(404).json({ error: 'Hospedaje no encontrado' });
@@ -10541,6 +10565,9 @@ Responde con JSON:
 
   app.delete('/api/accommodations/:id/contract', isAuthenticated, async (req, res) => {
     try {
+      if (!(await canAccessAccommodationContract(req, req.params.id, 'manage'))) {
+        return res.status(403).json({ error: 'Permiso denegado' });
+      }
       const existing = await prisma.contracts.findFirst({ where: { accommodation_id: req.params.id } });
       if (!existing) return res.status(404).json({ error: 'Contrato no encontrado' });
       if (existing.status === 'signed') {

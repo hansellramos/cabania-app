@@ -49,6 +49,8 @@ const data = [
   { code: 'payments:view:own', name: 'Ver pagos propios', description: 'Solo pagos de sus reservas' },
   { code: 'payments:verify:own', name: 'Verificar pagos propios', description: 'Verificar pagos solo de sus reservas' },
   { code: 'deposits:view:own', name: 'Ver depósitos propios', description: 'Solo depósitos de sus reservas' },
+  { code: 'contracts:view:own', name: 'Ver contratos propios', description: 'Solo contratos de sus reservas' },
+  { code: 'contracts:manage:own', name: 'Gestionar contratos propios', description: 'Crear, regenerar y eliminar contratos solo en sus reservas' },
 ];
 
 async function seed(prisma) {
