@@ -11,6 +11,9 @@
             <RouterLink :to="`/business/venues/${venue.id}/plans`">
               <CButton color="success" size="sm">Planes</CButton>
             </RouterLink>
+            <RouterLink :to="`/business/venues/${venue.id}/contract-templates`">
+              <CButton color="secondary" size="sm">Plantillas de Contrato</CButton>
+            </RouterLink>
             <RouterLink :to="{ path: '/business/expenses', query: { venue_id: venue.id } }">
               <CButton color="warning" size="sm">Egresos</CButton>
             </RouterLink>
