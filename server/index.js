@@ -10608,6 +10608,25 @@ Responde con JSON:
     }
   });
 
+  app.post('/api/public/contracts/:token/upload', upload.single('file'), async (req, res) => {
+    try {
+      const contract = await prisma.contracts.findUnique({
+        where: { qr_token: req.params.token },
+        select: { id: true, status: true },
+      });
+      if (!contract) return res.status(404).json({ error: 'Contrato no encontrado' });
+      if (contract.status === 'signed') {
+        return res.status(400).json({ error: 'El contrato ya esta firmado' });
+      }
+      if (!req.file) return res.status(400).json({ error: 'No se envio archivo' });
+      const result = await uploadImage(req.file.buffer, { type: 'receipt', mimetype: req.file.mimetype });
+      res.json({ imageUrl: result.secure_url });
+    } catch (error) {
+      console.error('Error uploading contract asset:', error);
+      res.status(500).json({ error: 'Error al subir la imagen' });
+    }
+  });
+
   app.post('/api/public/contracts/validate-code', async (req, res) => {
     try {
       const { accommodation_id, code } = req.body;

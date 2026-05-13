@@ -416,24 +416,33 @@ function stopCamera() {
   }
 }
 
+async function uploadContractAsset(blob, filename) {
+  const form = new FormData()
+  form.append('file', blob, filename)
+  const res = await fetch(`/api/public/contracts/${token.value}/upload`, {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    throw new Error(err.error || 'No se pudo subir la imagen')
+  }
+  const data = await res.json()
+  if (!data?.imageUrl) throw new Error('Respuesta de upload sin imageUrl')
+  return data.imageUrl
+}
+
 async function submitSignature() {
   signing.value = true
   try {
     const sigBlob = await new Promise(resolve => signaturePad.canvas.toBlob(resolve, 'image/png'))
-    const sigForm = new FormData()
-    sigForm.append('file', sigBlob, 'signature.png')
-    const sigRes = await fetch('/api/uploads/receipt', { method: 'POST', credentials: 'include', body: sigForm })
-    const { imageUrl: signatureUrl } = await sigRes.json()
+    const signatureUrl = await uploadContractAsset(sigBlob, 'signature.png')
 
     let photoUrl = null, photoSepiaUrl = null
     if (capturedPhoto.value) {
       const photoBlob = await fetch(capturedPhoto.value).then(r => r.blob())
-      const photoForm = new FormData()
-      photoForm.append('file', photoBlob, 'signer-photo.jpg')
-      const photoRes = await fetch('/api/uploads/receipt', { method: 'POST', credentials: 'include', body: photoForm })
-      const { imageUrl: uploaded } = await photoRes.json()
-      photoUrl = uploaded
-      photoSepiaUrl = uploaded.replace('/upload/', '/upload/e_sepia/')
+      photoUrl = await uploadContractAsset(photoBlob, 'signer-photo.jpg')
+      photoSepiaUrl = photoUrl.replace('/upload/', '/upload/e_sepia/')
     }
 
     const signRes = await fetch(`/api/public/contracts/${token.value}/sign`, {
