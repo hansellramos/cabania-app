@@ -35,11 +35,16 @@
             </CNavItem>
             <CNavItem>
               <CNavLink href="javascript:void(0)" :active="activeTab === 3" @click="activeTab = 3">
-                Comisiones y Gastos
+                Contrato
               </CNavLink>
             </CNavItem>
             <CNavItem>
               <CNavLink href="javascript:void(0)" :active="activeTab === 4" @click="activeTab = 4">
+                Comisiones y Gastos
+              </CNavLink>
+            </CNavItem>
+            <CNavItem>
+              <CNavLink href="javascript:void(0)" :active="activeTab === 5" @click="activeTab = 5">
                 Mensajes
               </CNavLink>
             </CNavItem>
@@ -400,8 +405,16 @@
               </div>
             </CTabPane>
 
-            <!-- Tab Comisiones y Gastos -->
+            <!-- Tab Contrato -->
             <CTabPane :visible="activeTab === 3">
+              <AccommodationContractTab
+                :accommodation-id="route.params.id"
+                :accommodation="accommodation"
+              />
+            </CTabPane>
+
+            <!-- Tab Comisiones y Gastos -->
+            <CTabPane :visible="activeTab === 4">
               <CommissionCalculator
                 :accommodation-id="route.params.id"
                 :accommodation="accommodation"
@@ -449,7 +462,7 @@
             </CTabPane>
 
             <!-- Tab Mensajes -->
-            <CTabPane :visible="activeTab === 4">
+            <CTabPane :visible="activeTab === 5">
               <MessageSuggestions :accommodation="accommodation" />
             </CTabPane>
           </CTabContent>
@@ -726,6 +739,7 @@ import { CIcon } from '@coreui/icons-vue'
 import { CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
 import MessageSuggestions from '@/components/accommodations/MessageSuggestions.vue'
 import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
+import AccommodationContractTab from '@/components/accommodations/AccommodationContractTab.vue'
 import { deleteAccommodation } from '@/services/accommodationService'
 
 const route = useRoute()

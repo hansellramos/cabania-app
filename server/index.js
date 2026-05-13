@@ -10539,6 +10539,21 @@ Responde con JSON:
     }
   });
 
+  app.delete('/api/accommodations/:id/contract', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.contracts.findFirst({ where: { accommodation_id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Contrato no encontrado' });
+      if (existing.status === 'signed') {
+        return res.status(400).json({ error: 'No se puede eliminar un contrato firmado' });
+      }
+      await prisma.contract_attachments.deleteMany({ where: { contract_id: existing.id } });
+      await prisma.contracts.delete({ where: { id: existing.id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // --- Public contract access (no auth) ---
   app.get('/api/public/contracts/:token', async (req, res) => {
     try {
