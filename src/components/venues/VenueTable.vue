@@ -39,6 +39,7 @@
             <CTableDataCell>
               <CButton color="primary" size="sm" @click="onEdit(venue)">Editar</CButton>
               <CButton color="success" size="sm" class="ms-2" @click="viewPlans(venue)">Planes</CButton>
+              <CButton color="secondary" size="sm" class="ms-2" @click="viewContracts(venue)">Contratos</CButton>
               <CButton color="warning" size="sm" class="ms-2" @click="viewExpenses(venue)">Egresos</CButton>
 
               <CButton color="info" size="sm" class="ms-2" @click="viewUpcoming(venue)">Próximos</CButton>
@@ -133,6 +134,10 @@ function viewUpcoming(venue) {
 
 function viewPlans(venue) {
   router.push(`/business/venues/${venue.id}/plans`)
+}
+
+function viewContracts(venue) {
+  router.push(`/business/venues/${venue.id}/contract-templates`)
 }
 
 function viewExpenses(venue) {

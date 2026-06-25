@@ -26,6 +26,10 @@
         <CFormInput id="contactWhatsapp" v-model="form.whatsapp" type="text" placeholder="Ingresa el número de WhatsApp" />
       </div>
       <div class="mb-3">
+        <CFormLabel for="contactInstagram">Instagram</CFormLabel>
+        <CFormInput id="contactInstagram" v-model="form.instagram" type="text" placeholder="@usuario de Instagram" />
+      </div>
+      <div class="mb-3">
         <CFormLabel for="contactCountry">País</CFormLabel>
         <CFormSelect id="contactCountry" v-model="form.country">
           <option value="">Selecciona un país</option>
