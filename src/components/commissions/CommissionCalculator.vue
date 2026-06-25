@@ -47,6 +47,10 @@
                 <div v-if="result.existing_payment.reference">
                   <strong>Referencia:</strong> {{ result.existing_payment.reference }}
                 </div>
+                <div v-if="result.existing_payment.notes" class="mt-2">
+                  <strong>Notas:</strong>
+                  <div style="white-space: pre-wrap;">{{ result.existing_payment.notes }}</div>
+                </div>
                 <div v-if="result.existing_payment.expense_id" class="mt-2">
                   <RouterLink
                     :to="`/business/expenses/${result.existing_payment.expense_id}/edit`"
@@ -144,6 +148,10 @@
                 </div>
                 <div v-if="result.existing_payment.reference">
                   <strong>Referencia:</strong> {{ result.existing_payment.reference }}
+                </div>
+                <div v-if="result.existing_payment.notes">
+                  <strong>Notas:</strong>
+                  <div style="white-space: pre-wrap;">{{ result.existing_payment.notes }}</div>
                 </div>
               </div>
             </div>

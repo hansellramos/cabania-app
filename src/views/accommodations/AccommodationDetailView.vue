@@ -718,10 +718,16 @@
           <CIcon name="cil-check-circle" class="me-1" />
           {{ verifying ? 'Verificando...' : 'Verificar pago' }}
         </CButton>
-        <span v-if="selectedPayment?.verified" class="text-success">
-          <CIcon name="cil-lock-locked" class="me-1" />
-          Pago bloqueado (verificado)
-        </span>
+        <CButton
+          v-if="selectedPayment?.verified"
+          color="warning"
+          variant="outline"
+          :disabled="verifying"
+          @click="unverifyPayment"
+        >
+          <CIcon name="cil-x-circle" class="me-1" />
+          {{ verifying ? 'Procesando...' : 'Quitar verificación' }}
+        </CButton>
       </div>
       <div>
         <CButton color="secondary" variant="outline" @click="showReceiptModal = false">
@@ -827,6 +833,39 @@ async function verifyPayment() {
   } catch (error) {
     console.error('Error verifying payment:', error)
     alert('Error al verificar el pago')
+  } finally {
+    verifying.value = false
+  }
+}
+
+async function unverifyPayment() {
+  if (!selectedPayment.value) return
+
+  if (!confirm('¿Quitar la verificación de este pago? Se eliminará el ingreso asociado.')) return
+
+  verifying.value = true
+  try {
+    const res = await fetch(`/api/payments/${selectedPayment.value.id}/verify`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ verified: false })
+    })
+
+    if (res.ok) {
+      const updated = await res.json()
+      selectedPayment.value = updated
+      const idx = payments.value.findIndex(p => p.id === updated.id)
+      if (idx !== -1) {
+        payments.value[idx] = updated
+      }
+    } else {
+      const err = await res.json()
+      alert(err.error || 'Error al quitar la verificación')
+    }
+  } catch (error) {
+    console.error('Error unverifying payment:', error)
+    alert('Error al quitar la verificación')
   } finally {
     verifying.value = false
   }
