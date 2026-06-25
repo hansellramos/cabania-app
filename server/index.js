@@ -5181,7 +5181,8 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
           const newContact = await prisma.contacts.create({
             data: {
               fullname: estimate.customer_name,
-              whatsapp: estimate.contact_type === 'whatsapp' ? parseFloat(estimate.contact_value) : null
+              whatsapp: estimate.contact_type === 'whatsapp' ? parseFloat(estimate.contact_value) : null,
+              instagram: estimate.contact_type === 'instagram' ? estimate.contact_value : null
             }
           });
           customerId = newContact.id;
@@ -10255,7 +10256,13 @@ REGLAS:
         include: { sections: { orderBy: { sort_order: 'asc' } } },
         orderBy: { created_at: 'desc' },
       });
-      res.json(templates);
+      // Enriquecer con el nombre del plan ligado (si lo hay)
+      const planIds = [...new Set(templates.map(t => t.plan_id).filter(Boolean))];
+      const plans = planIds.length
+        ? await prisma.venue_plans.findMany({ where: { id: { in: planIds } }, select: { id: true, name: true } })
+        : [];
+      const planMap = Object.fromEntries(plans.map(p => [p.id, p.name]));
+      res.json(templates.map(t => ({ ...t, plan_name: t.plan_id ? (planMap[t.plan_id] || null) : null })));
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -10277,7 +10284,7 @@ REGLAS:
   app.post('/api/contract-templates', isAuthenticated, requirePermission('contracts:templates:manage'), async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
-      const { venue_id, name, is_default, sections } = req.body;
+      const { venue_id, plan_id, name, is_default, sections } = req.body;
 
       const result = await prisma.$transaction(async (tx) => {
         if (is_default) {
@@ -10287,7 +10294,7 @@ REGLAS:
           });
         }
         const template = await tx.contract_templates.create({
-          data: { venue_id, name, is_default: is_default || false, created_by: userId },
+          data: { venue_id, plan_id: plan_id || null, name, is_default: is_default || false, created_by: userId },
         });
         if (sections?.length > 0) {
           await tx.contract_template_sections.createMany({
@@ -10296,6 +10303,7 @@ REGLAS:
               title: s.title,
               content: s.content,
               sort_order: s.sort_order ?? i,
+              print_hidden: s.print_hidden ?? false,
             })),
           });
         }
@@ -10312,7 +10320,7 @@ REGLAS:
 
   app.put('/api/contract-templates/:id', isAuthenticated, requirePermission('contracts:templates:manage'), async (req, res) => {
     try {
-      const { name, is_default, is_active, sections } = req.body;
+      const { name, plan_id, is_default, is_active, sections } = req.body;
       const template = await prisma.contract_templates.findUnique({ where: { id: req.params.id } });
       if (!template) return res.status(404).json({ error: 'Plantilla no encontrada' });
 
@@ -10325,7 +10333,7 @@ REGLAS:
         }
         await tx.contract_templates.update({
           where: { id: req.params.id },
-          data: { name, is_default, is_active, updated_at: new Date() },
+          data: { name, plan_id: plan_id || null, is_default, is_active, updated_at: new Date() },
         });
         if (sections) {
           await tx.contract_template_sections.deleteMany({ where: { template_id: req.params.id } });
@@ -10336,6 +10344,7 @@ REGLAS:
                 title: s.title,
                 content: s.content,
                 sort_order: s.sort_order ?? i,
+                print_hidden: s.print_hidden ?? false,
               })),
             });
           }
@@ -10409,43 +10418,154 @@ REGLAS:
     }
   });
 
+  // Arma el contexto real de la cabaña para que la IA no invente features
+  async function buildVenueContextForAI(venueId) {
+    if (!venueId) return '';
+    const venue = await prisma.venues.findUnique({ where: { id: venueId } });
+    if (!venue) return '';
+
+    // Amenidades del venue (agrupadas por categoría)
+    const links = await prisma.venue_amenities.findMany({ where: { venue_id: venueId } });
+    const amenityIds = links.map(l => l.amenity_id);
+    const amenities = amenityIds.length
+      ? await prisma.amenities.findMany({ where: { id: { in: amenityIds } } })
+      : [];
+    const byCat = {};
+    amenities.forEach(a => {
+      const cat = a.category || 'General';
+      (byCat[cat] = byCat[cat] || []).push(a.name);
+    });
+    const amenitiesText = Object.keys(byCat).length
+      ? Object.entries(byCat).map(([cat, list]) => `  - ${cat}: ${list.join(', ')}`).join('\n')
+      : '  (ninguna registrada)';
+
+    // Planes del venue
+    const plans = await prisma.venue_plans.findMany({ where: { venue_id: venueId }, orderBy: { name: 'asc' } });
+    const plansText = plans.length
+      ? plans.map(p => {
+          const parts = [`  - "${p.name}"`];
+          if (p.check_in_time || p.check_out_time) parts.push(`check-in ${p.check_in_time || '?'} / check-out ${p.check_out_time || '?'}`);
+          if (p.max_capacity) parts.push(`capacidad ${p.max_capacity}`);
+          parts.push(p.includes_food ? `incluye comida${p.food_description ? ` (${p.food_description})` : ''}` : 'sin comida');
+          if (p.terms_conditions) parts.push(`términos: ${p.terms_conditions}`);
+          return parts.join('; ');
+        }).join('\n')
+      : '  (ninguno registrado)';
+
+    return `CONTEXTO REAL DE LA CABAÑA (usa SOLO esta información; NO inventes amenidades, servicios ni reglas sobre features que no estén listados aquí):
+Cabaña: ${venue.name || '—'}${venue.city ? `, ${venue.city}` : ''}${venue.address ? `, ${venue.address}` : ''}
+Amenidades disponibles:
+${amenitiesText}
+Planes:
+${plansText}`;
+  }
+
   // --- AI-powered contract template generation ---
   app.post('/api/contract-templates/ai-generate', isAuthenticated, requirePermission('contracts:templates:manage'), async (req, res) => {
     try {
-      const { prompt, current_sections } = req.body;
+      const { prompt, current_sections, venue_id, template_id } = req.body;
       if (!prompt) return res.status(400).json({ error: 'Prompt requerido' });
 
       const placeholderList = contractRenderer.getAvailablePlaceholders()
         .map(p => `- ${p.label} → {{${p.key}}}`)
         .join('\n');
 
+      // --- Herramientas: la IA consulta datos reales SOLO cuando los necesita ---
+      async function toolGetAmenities() {
+        if (!venue_id) return 'Sin venue.';
+        const links = await prisma.venue_amenities.findMany({ where: { venue_id } });
+        const ids = links.map(l => l.amenity_id);
+        const ams = ids.length ? await prisma.amenities.findMany({ where: { id: { in: ids } } }) : [];
+        if (!ams.length) return 'La cabaña no tiene amenidades registradas.';
+        const byCat = {};
+        ams.forEach(a => { const c = a.category || 'General'; (byCat[c] = byCat[c] || []).push(a.name); });
+        return Object.entries(byCat).map(([c, l]) => `${c}: ${l.join(', ')}`).join('\n');
+      }
+      async function toolGetPlans() {
+        if (!venue_id) return 'Sin venue.';
+        const plans = await prisma.venue_plans.findMany({ where: { venue_id }, orderBy: { name: 'asc' } });
+        if (!plans.length) return 'No hay planes registrados.';
+        return plans.map(p => {
+          const parts = [`"${p.name}"`];
+          if (p.check_in_time || p.check_out_time) parts.push(`check-in ${p.check_in_time || '?'} / check-out ${p.check_out_time || '?'}`);
+          if (p.max_capacity) parts.push(`capacidad ${p.max_capacity}`);
+          parts.push(p.includes_food ? `incluye comida${p.food_description ? ` (${p.food_description})` : ''}` : 'sin comida');
+          return parts.join('; ');
+        }).join('\n');
+      }
+      async function toolListTemplates() {
+        if (!venue_id) return 'Sin venue.';
+        const others = await prisma.contract_templates.findMany({
+          where: { venue_id, is_active: true, ...(template_id ? { NOT: { id: template_id } } : {}) },
+          select: { id: true, name: true, plan_id: true },
+        });
+        if (!others.length) return 'No hay otras plantillas en este venue.';
+        const planIds = [...new Set(others.map(t => t.plan_id).filter(Boolean))];
+        const plans = planIds.length ? await prisma.venue_plans.findMany({ where: { id: { in: planIds } }, select: { id: true, name: true } }) : [];
+        const planMap = Object.fromEntries(plans.map(p => [p.id, p.name]));
+        return others.map(t => `- "${t.name}"${t.plan_id && planMap[t.plan_id] ? ` (plan: ${planMap[t.plan_id]})` : ''}`).join('\n');
+      }
+      async function toolGetTemplate(name) {
+        if (!venue_id || !name) return 'Falta el nombre de la plantilla.';
+        const t = await prisma.contract_templates.findFirst({
+          where: { venue_id, is_active: true, name: { equals: name, mode: 'insensitive' }, ...(template_id ? { NOT: { id: template_id } } : {}) },
+          include: { sections: { orderBy: { sort_order: 'asc' } } },
+        });
+        if (!t) return `No existe una plantilla llamada "${name}". Usa list_templates para ver los nombres exactos.`;
+        return t.sections.map(s => `[${s.title}]\n${s.content}`).join('\n\n');
+      }
+      async function execTool(name, args) {
+        switch (name) {
+          case 'get_amenities': return await toolGetAmenities();
+          case 'get_plans': return await toolGetPlans();
+          case 'list_templates': return await toolListTemplates();
+          case 'get_template': return await toolGetTemplate(args?.name);
+          default: return 'Herramienta desconocida.';
+        }
+      }
+
+      const tools = [
+        { type: 'function', function: { name: 'get_amenities', description: 'Lista las amenidades reales del venue agrupadas por categoría. Úsala ANTES de escribir reglas sobre features físicos (piscina, canchas, parrilla, etc.) para no inventar.', parameters: { type: 'object', properties: {}, required: [] } } },
+        { type: 'function', function: { name: 'get_plans', description: 'Lista los planes del venue con horarios de check-in/check-out, si incluyen comida y capacidad.', parameters: { type: 'object', properties: {}, required: [] } } },
+        { type: 'function', function: { name: 'list_templates', description: 'Lista los nombres de las otras plantillas de contrato del venue. Úsala si el usuario pide basarse en otra plantilla.', parameters: { type: 'object', properties: {}, required: [] } } },
+        { type: 'function', function: { name: 'get_template', description: 'Devuelve el contenido (secciones) de una plantilla del venue por su nombre exacto.', parameters: { type: 'object', properties: { name: { type: 'string', description: 'Nombre exacto de la plantilla' } }, required: ['name'] } } },
+      ];
+
       let contextMsg = '';
       if (current_sections?.length > 0) {
-        contextMsg = `\n\nPLANTILLA ACTUAL (modifica/agrega segun lo que pide el usuario):\n${JSON.stringify(current_sections, null, 2)}`;
+        contextMsg = `\n\nPLANTILLA ACTUAL (parte de aquí; modifica/agrega SOLO lo que pide el usuario y conserva el resto tal cual):\n${JSON.stringify(current_sections, null, 2)}`;
       }
 
       const messages = [
         {
           role: 'system',
-          content: `Eres un experto en contratos de hospedaje en Colombia. Genera o modifica plantillas de contrato con secciones estructuradas.
+          content: `Eres un experto en contratos de alquiler de cabañas/fincas en Colombia. Modificas o generas plantillas de contrato con secciones estructuradas, a partir de instrucciones en lenguaje natural.
 
-Reglas:
-- Cada seccion tiene titulo y contenido en markdown
-- Usa los placeholders disponibles para datos variables
-- Mantén un tono profesional pero claro
-- Si el usuario pide agregar algo a una plantilla existente, mantén las secciones actuales y agrega/modifica solo lo solicitado
-- Responde SOLO con JSON valido
+Tienes HERRAMIENTAS para consultar datos REALES del venue, pero úsalas SOLO cuando la instrucción lo requiera (no las llames de más):
+- get_amenities: amenidades reales. Consúltala antes de escribir reglas sobre features físicos (piscina, canchas, parrilla...).
+- get_plans: planes con horarios, comida y capacidad.
+- list_templates / get_template: para basarte en otra plantilla del venue.
+
+REGLAS IMPORTANTES:
+- Cada sección tiene "title" y "content" en markdown. Listas numeradas con "1.", "2."; viñetas con "- ".
+- Usa los placeholders disponibles para datos variables (no escribas valores fijos que cambian por reserva).
+- NO inventes amenidades ni reglas sobre features. Si la instrucción toca un feature físico, primero verifica con get_amenities; si el venue NO lo tiene, no agregues reglas de ese feature.
+- CRÍTICO: el array "sections" de tu respuesta DEBE contener TODAS las secciones actuales (con título y contenido completos), salvo las que el usuario pida explícitamente eliminar. NUNCA omitas ni reemplaces una sección existente que el usuario no pidió quitar. Una sección nueva va ADEMÁS de las existentes.
+- Si el usuario pide ELIMINAR una política o sección, quítala Y revisa el resto: si ese tema se menciona en otra sección, elimina/ajusta esas menciones para no dejar inconsistencias.
+- Si pide reorganizar (ej: "separa las políticas por categorías"), reestructura manteniendo TODA la información.
+- Cuando ya tengas lo que necesitas, responde SOLO con el JSON final (sin más tool calls ni texto adicional).
 
 Placeholders disponibles:
 ${placeholderList}`
         },
         {
           role: 'user',
-          content: `${prompt}${contextMsg}
+          content: `Instrucción del usuario: ${prompt}${contextMsg}
 
-Responde con JSON:
+Responde con JSON EXACTAMENTE en este formato:
 {
-  "name": "nombre sugerido",
+  "name": "nombre sugerido para la plantilla",
+  "summary": "resumen breve, en español y en bullets con '-', de los cambios que hiciste (qué agregaste, quitaste o reorganizaste)",
   "sections": [
     { "title": "...", "content": "...", "sort_order": 1 }
   ]
@@ -10453,18 +10573,66 @@ Responde con JSON:
         },
       ];
 
-      const aiResponse = await llmService.callLLMByCode('xai_grok', messages, {
-        maxTokens: 8000,
-        temperature: 0.2,
-      });
+      // --- Streaming (SSE): estado en vivo según la tool que la IA va pidiendo ---
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      if (res.flushHeaders) res.flushHeaders();
+      const sse = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
-      const responseText = aiResponse.content || aiResponse.choices?.[0]?.message?.content || '';
-      const parsed = contractImporter.parseAIResponse(responseText);
+      const TOOL_LABELS = {
+        get_amenities: 'Revisando las amenidades de la cabaña…',
+        get_plans: 'Consultando los planes…',
+        list_templates: 'Buscando otras plantillas de contrato…',
+        get_template: 'Leyendo la plantilla de referencia…',
+      };
 
-      res.json({ success: true, template: parsed });
+      sse('status', { label: 'Analizando tu solicitud…' });
+
+      // Loop de tool calling: la IA pide datos bajo demanda y luego responde el JSON
+      let finalText = '';
+      const toolsUsed = [];
+      for (let i = 0; i < 5; i++) {
+        if (i > 0) sse('status', { label: 'Redactando los cambios…' });
+        const aiResponse = await llmService.callLLMByCode('xai_grok', messages, {
+          maxTokens: 8000,
+          temperature: 0.2,
+          tools,
+        });
+        if (aiResponse.tool_calls && aiResponse.tool_calls.length > 0) {
+          messages.push({ role: 'assistant', content: aiResponse.content || '', tool_calls: aiResponse.tool_calls });
+          for (const tc of aiResponse.tool_calls) {
+            const tname = tc.function?.name;
+            sse('status', { label: TOOL_LABELS[tname] || 'Consultando información…', tool: tname });
+            let args = {};
+            try { args = JSON.parse(tc.function?.arguments || '{}'); } catch { /* noop */ }
+            const result = await execTool(tname, args);
+            toolsUsed.push(tname);
+            messages.push({ role: 'tool', tool_call_id: tc.id, content: String(result) });
+          }
+          continue;
+        }
+        finalText = aiResponse.content || '';
+        break;
+      }
+
+      if (!finalText) {
+        sse('error', { error: 'La IA no devolvió una respuesta final.' });
+        return res.end();
+      }
+
+      const parsed = contractImporter.parseAIResponse(finalText);
+      sse('done', { success: true, template: parsed, summary: parsed.summary || '', tools_used: toolsUsed });
+      res.end();
     } catch (error) {
       console.error('Error generating contract with AI:', error);
-      res.status(500).json({ error: error.message || 'Error al generar con IA' });
+      if (res.headersSent) {
+        res.write(`event: error\ndata: ${JSON.stringify({ error: error.message || 'Error al generar con IA' })}\n\n`);
+        res.end();
+      } else {
+        res.status(500).json({ error: error.message || 'Error al generar con IA' });
+      }
     }
   });
 
@@ -10503,6 +10671,57 @@ Responde con JSON:
     }
   });
 
+  // Helper: arma el snapshot_html (JSON de secciones renderizadas) para un hospedaje.
+  // Selección de plantilla: (1) override explícito, (2) la ligada al plan de la reserva,
+  // (3) la marcada como Default del venue.
+  async function buildContractSnapshot(accommodation, explicitTemplateId = null) {
+    const withSections = { include: { sections: { orderBy: { sort_order: 'asc' } } } };
+    let template = null;
+    if (explicitTemplateId) {
+      template = await prisma.contract_templates.findFirst({
+        where: { id: explicitTemplateId, venue_id: accommodation.venue, is_active: true },
+        ...withSections,
+      });
+    }
+    if (!template && accommodation.plan_id) {
+      template = await prisma.contract_templates.findFirst({
+        where: { venue_id: accommodation.venue, plan_id: accommodation.plan_id, is_active: true },
+        ...withSections,
+      });
+    }
+    if (!template) {
+      template = await prisma.contract_templates.findFirst({
+        where: { venue_id: accommodation.venue, is_default: true, is_active: true },
+        ...withSections,
+      });
+    }
+    const customer = accommodation.customer ? await prisma.contacts.findUnique({ where: { id: accommodation.customer } }) : null;
+    const venue = accommodation.venue ? await prisma.venues.findUnique({ where: { id: accommodation.venue } }) : null;
+    const organization = venue?.organization ? await prisma.organizations.findUnique({ where: { id: venue.organization } }) : null;
+    const plan = accommodation.plan_id ? await prisma.venue_plans.findUnique({ where: { id: accommodation.plan_id } }) : null;
+    const payments = await prisma.payments.findMany({ where: { accommodation: accommodation.id } });
+    const deposit = await prisma.deposits.findFirst({ where: { accommodation_id: accommodation.id } });
+    let commissionAgent = null;
+    let commissionAgentContact = null;
+    if (accommodation.commission_agent_id) {
+      commissionAgent = await prisma.commission_agents.findUnique({
+        where: { id: accommodation.commission_agent_id },
+        include: { provider: true },
+      });
+      if (commissionAgent?.user_id) {
+        commissionAgentContact = await prisma.contacts.findFirst({ where: { user: commissionAgent.user_id } });
+      }
+    }
+    let snapshotHtml = null;
+    if (template) {
+      const { renderedSections } = contractRenderer.renderContract(template.sections, {
+        accommodation, customer, venue, organization, plan, commissionAgent, commissionAgentContact, payments, deposit,
+      });
+      snapshotHtml = JSON.stringify(renderedSections);
+    }
+    return { snapshotHtml, templateId: template?.id || null };
+  }
+
   app.post('/api/accommodations/:id/contract', isAuthenticated, async (req, res) => {
     try {
       if (!(await canAccessAccommodationContract(req, req.params.id, 'manage'))) {
@@ -10515,40 +10734,13 @@ Responde con JSON:
       const existing = await prisma.contracts.findFirst({ where: { accommodation_id: req.params.id } });
       if (existing) return res.status(400).json({ error: 'Ya existe un contrato para este hospedaje' });
 
-      const template = await prisma.contract_templates.findFirst({
-        where: { venue_id: accommodation.venue, is_default: true, is_active: true },
-        include: { sections: { orderBy: { sort_order: 'asc' } } },
-      });
-
       const accessCode = String(Math.floor(100000 + Math.random() * 900000));
-
-      // Gather related data for rendering
-      const customer = accommodation.customer ? await prisma.contacts.findUnique({ where: { id: accommodation.customer } }) : null;
-      const venue = accommodation.venue ? await prisma.venues.findUnique({ where: { id: accommodation.venue } }) : null;
-      const organization = venue?.organization ? await prisma.organizations.findUnique({ where: { id: venue.organization } }) : null;
-      const plan = accommodation.plan_id ? await prisma.venue_plans.findUnique({ where: { id: accommodation.plan_id } }) : null;
-      const payments = await prisma.payments.findMany({ where: { accommodation: req.params.id } });
-      const deposit = await prisma.deposits.findFirst({ where: { accommodation_id: req.params.id } });
-      let commissionAgent = null;
-      if (accommodation.commission_agent_id) {
-        commissionAgent = await prisma.commission_agents.findUnique({
-          where: { id: accommodation.commission_agent_id },
-          include: { provider: true },
-        });
-      }
-
-      let snapshotHtml = null;
-      if (template) {
-        const { renderedSections } = contractRenderer.renderContract(template.sections, {
-          accommodation, customer, venue, organization, plan, commissionAgent, payments, deposit,
-        });
-        snapshotHtml = JSON.stringify(renderedSections);
-      }
+      const { snapshotHtml, templateId } = await buildContractSnapshot(accommodation, req.body?.template_id || null);
 
       const contract = await prisma.contracts.create({
         data: {
           accommodation_id: req.params.id,
-          template_id: template?.id || null,
+          template_id: templateId,
           snapshot_html: snapshotHtml,
           access_code: accessCode,
           status: 'draft',
@@ -10575,6 +10767,67 @@ Responde con JSON:
       }
       await prisma.contract_attachments.deleteMany({ where: { contract_id: existing.id } });
       await prisma.contracts.delete({ where: { id: existing.id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Regenerar el snapshot del contrato EN SITIO (conserva adjuntos, qr_token y código)
+  app.post('/api/accommodations/:id/contract/regenerate', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await canAccessAccommodationContract(req, req.params.id, 'manage'))) {
+        return res.status(403).json({ error: 'Permiso denegado' });
+      }
+      const existing = await prisma.contracts.findFirst({ where: { accommodation_id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Contrato no encontrado' });
+      if (existing.status === 'signed') {
+        return res.status(400).json({ error: 'No se puede regenerar un contrato firmado' });
+      }
+      const accommodation = await prisma.accommodations.findUnique({ where: { id: req.params.id } });
+      const { snapshotHtml, templateId } = await buildContractSnapshot(accommodation, req.body?.template_id || null);
+
+      const updated = await prisma.contracts.update({
+        where: { id: existing.id },
+        data: { snapshot_html: snapshotHtml, template_id: templateId, updated_at: new Date() },
+        include: { attachments: true },
+      });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Admin: adjuntar imagen al contrato (pegar/subir desde el tab del hospedaje)
+  app.post('/api/accommodations/:id/contract/attachments', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await canAccessAccommodationContract(req, req.params.id, 'manage'))) {
+        return res.status(403).json({ error: 'Permiso denegado' });
+      }
+      const contract = await prisma.contracts.findFirst({
+        where: { accommodation_id: req.params.id },
+        select: { id: true },
+      });
+      if (!contract) return res.status(404).json({ error: 'Contrato no encontrado' });
+
+      const { type, image_url, image_sepia_url, description } = req.body;
+      if (!image_url) return res.status(400).json({ error: 'Falta image_url' });
+
+      const attachment = await prisma.contract_attachments.create({
+        data: { contract_id: contract.id, type: type || 'document', image_url, image_sepia_url, description },
+      });
+      res.json(attachment);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/accommodations/:id/contract/attachments/:attachmentId', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await canAccessAccommodationContract(req, req.params.id, 'manage'))) {
+        return res.status(403).json({ error: 'Permiso denegado' });
+      }
+      await prisma.contract_attachments.delete({ where: { id: req.params.attachmentId } });
       res.json({ success: true });
     } catch (error) {
       res.status(500).json({ error: error.message });

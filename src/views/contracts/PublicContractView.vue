@@ -69,6 +69,7 @@
         v-for="(section, idx) in sections"
         :key="idx"
         class="cabania-contract__card cabania-contract__section"
+        :class="{ 'cabania-no-print': section.print_hidden }"
       >
         <button
           type="button"
@@ -128,6 +129,28 @@
         </div>
       </section>
 
+      <!-- Attachments (grayscale + watermark) -->
+      <section
+        v-if="contract.attachments && contract.attachments.length"
+        class="cabania-contract__card"
+      >
+        <h2 class="cabania-contract__section-title">Documentos adjuntos</h2>
+        <div class="cabania-contract__attachments">
+          <figure
+            v-for="att in contract.attachments"
+            :key="att.id"
+            class="cabania-contract__attachment"
+          >
+            <img
+              :src="protectedAttachmentUrl(att)"
+              :alt="att.description || 'Documento adjunto'"
+              loading="lazy"
+              @click="lightboxUrl = protectedAttachmentUrl(att)"
+            />
+          </figure>
+        </div>
+      </section>
+
       <!-- Sign CTA (hidden in print) -->
       <div v-if="contract.status !== 'signed'" class="cabania-contract__cta">
         <button class="cabania-btn cabania-btn--gradient" @click="startSigning">
@@ -140,10 +163,23 @@
     <div v-if="showSignModal" class="cabania-modal-backdrop" @click.self="closeSignModal">
       <div class="cabania-modal">
         <header class="cabania-modal__header">
-          <h3>{{ signStep === 1 ? 'Firma Digital' : 'Foto de Identidad' }}</h3>
+          <h3>{{ modalTitle }}</h3>
           <button class="cabania-modal__close" @click="closeSignModal" aria-label="Cerrar">&times;</button>
         </header>
         <div class="cabania-modal__body">
+          <!-- Step 0: intro -->
+          <div v-if="signStep === 0" class="cabania-sign-intro">
+            <p class="cabania-muted">Para firmar este contrato vamos a pedirte:</p>
+            <ul class="cabania-sign-intro__list">
+              <li><span>✍️</span> Tu <strong>firma</strong> digital.</li>
+              <li><span>🤳</span> Una <strong>foto tuya</strong> para verificar tu identidad.</li>
+              <li><span>🪪</span> Una <strong>foto de tu documento</strong> de identidad.</li>
+            </ul>
+            <p class="cabania-sign-intro__note">
+              Ten tu <strong>documento de identidad a la mano</strong> antes de continuar.
+            </p>
+          </div>
+
           <!-- Step 1: signature -->
           <div v-if="signStep === 1">
             <p class="cabania-muted">Dibuja tu firma con el dedo o con el mouse:</p>
@@ -153,7 +189,7 @@
             <button class="cabania-btn cabania-btn--ghost cabania-btn--sm" @click="clearSignature">Limpiar</button>
           </div>
 
-          <!-- Step 2: photo -->
+          <!-- Step 2: person photo -->
           <div v-if="signStep === 2">
             <p class="cabania-muted">Toma una foto para verificar tu identidad:</p>
             <div v-if="!capturedPhoto" class="cabania-photo-stage">
@@ -165,19 +201,43 @@
               <button class="cabania-btn cabania-btn--ghost cabania-btn--sm" @click="retakePhoto">Repetir</button>
             </div>
           </div>
+
+          <!-- Step 3: document photo -->
+          <div v-if="signStep === 3">
+            <p class="cabania-muted">Toma una foto clara de tu documento de identidad:</p>
+            <div v-if="!capturedDoc" class="cabania-photo-stage">
+              <video ref="videoEl" autoplay playsinline></video>
+              <button class="cabania-btn cabania-btn--gradient" @click="captureDoc">Tomar foto</button>
+            </div>
+            <div v-else class="cabania-photo-stage">
+              <img :src="capturedDoc" alt="Documento capturado" />
+              <button class="cabania-btn cabania-btn--ghost cabania-btn--sm" @click="retakeDoc">Repetir</button>
+            </div>
+          </div>
         </div>
         <footer class="cabania-modal__footer">
           <button class="cabania-btn cabania-btn--ghost" @click="closeSignModal">Cancelar</button>
           <button
+            v-if="signStep === 0"
+            class="cabania-btn cabania-btn--gradient"
+            @click="beginSignature"
+          >Comenzar</button>
+          <button
             v-if="signStep === 1"
             class="cabania-btn cabania-btn--gradient"
             :disabled="!hasSignature"
-            @click="nextSignStep"
+            @click="goToPhotoStep"
           >Siguiente</button>
           <button
             v-if="signStep === 2"
             class="cabania-btn cabania-btn--gradient"
-            :disabled="signing || !capturedPhoto"
+            :disabled="!capturedPhoto"
+            @click="goToDocStep"
+          >Siguiente</button>
+          <button
+            v-if="signStep === 3"
+            class="cabania-btn cabania-btn--gradient"
+            :disabled="signing || !capturedDoc"
             @click="submitSignature"
           >
             <span v-if="signing" class="cabania-spinner cabania-spinner--sm"></span>
@@ -186,12 +246,20 @@
         </footer>
       </div>
     </div>
+
+    <!-- Image lightbox -->
+    <div v-if="lightboxUrl" class="cabania-lightbox" @click="lightboxUrl = null">
+      <button class="cabania-lightbox__close" aria-label="Cerrar" @click="lightboxUrl = null">&times;</button>
+      <img :src="lightboxUrl" alt="Documento adjunto" @click.stop />
+    </div>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
+import { renderMarkdown } from '@/utils/contractMarkdown'
+import { protectedContractImageUrl } from '@/utils/contractImage'
 
 const THEME_KEY = 'coreui-free-vue-admin-template-theme'
 
@@ -209,10 +277,26 @@ const signStep = ref(1)
 const hasSignature = ref(false)
 const signing = ref(false)
 const capturedPhoto = ref(null)
+const capturedDoc = ref(null)
 const signatureCanvas = ref(null)
 const videoEl = ref(null)
 let signaturePad = null
 let videoStream = null
+
+const lightboxUrl = ref(null)
+
+const venueName = computed(() => contract.value?.venue_branding?.name || '')
+
+const modalTitle = computed(() => ({
+  0: 'Antes de firmar',
+  1: 'Firma Digital',
+  2: 'Foto de Identidad',
+  3: 'Foto del Documento',
+}[signStep.value] || 'Firmar'))
+
+function protectedAttachmentUrl(att) {
+  return protectedContractImageUrl(att.image_url, venueName.value)
+}
 
 // Theme
 const theme = ref(localStorage.getItem(THEME_KEY) || 'auto')
@@ -277,18 +361,6 @@ function toggleSection(idx) {
   expandedSections.value = { ...expandedSections.value, [idx]: !expandedSections.value[idx] }
 }
 
-function renderMarkdown(content) {
-  if (!content) return ''
-  const escape = (s) => s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-  return escape(content)
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/\n/g, '<br>')
-}
-
 function formatDateTime(date) {
   if (!date) return '—'
   return new Date(date).toLocaleString('es-CO', {
@@ -307,10 +379,15 @@ function printContract() {
 
 // --- Signing ---
 function startSigning() {
-  signStep.value = 1
+  signStep.value = 0
   hasSignature.value = false
   capturedPhoto.value = null
+  capturedDoc.value = null
   showSignModal.value = true
+}
+
+function beginSignature() {
+  signStep.value = 1
   nextTick(() => initSignaturePad())
 }
 
@@ -374,8 +451,14 @@ function clearSignature() {
   hasSignature.value = false
 }
 
-async function nextSignStep() {
+async function goToPhotoStep() {
   signStep.value = 2
+  await nextTick()
+  startCamera()
+}
+
+async function goToDocStep() {
+  signStep.value = 3
   await nextTick()
   startCamera()
 }
@@ -406,6 +489,22 @@ function capturePhoto() {
 
 function retakePhoto() {
   capturedPhoto.value = null
+  nextTick(() => startCamera())
+}
+
+function captureDoc() {
+  const video = videoEl.value
+  const canvas = document.createElement('canvas')
+  canvas.width = video.videoWidth || 640
+  canvas.height = video.videoHeight || 480
+  const ctx = canvas.getContext('2d')
+  ctx.drawImage(video, 0, 0)
+  capturedDoc.value = canvas.toDataURL('image/jpeg', 0.85)
+  stopCamera()
+}
+
+function retakeDoc() {
+  capturedDoc.value = null
   nextTick(() => startCamera())
 }
 
@@ -443,6 +542,22 @@ async function submitSignature() {
       const photoBlob = await fetch(capturedPhoto.value).then(r => r.blob())
       photoUrl = await uploadContractAsset(photoBlob, 'signer-photo.jpg')
       photoSepiaUrl = photoUrl.replace('/upload/', '/upload/e_sepia/')
+    }
+
+    // Subir foto del documento y crear el adjunto ANTES de firmar
+    // (tras firmar, el endpoint de adjuntos queda bloqueado).
+    if (capturedDoc.value) {
+      const docBlob = await fetch(capturedDoc.value).then(r => r.blob())
+      const docUrl = await uploadContractAsset(docBlob, 'documento.jpg')
+      await fetch(`/api/public/contracts/${token.value}/attachments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'document',
+          image_url: docUrl,
+          description: 'Documento de identidad',
+        }),
+      })
     }
 
     const signRes = await fetch(`/api/public/contracts/${token.value}/sign`, {
@@ -713,6 +828,99 @@ onUnmounted(() => {
 }
 .cabania-contract__section-content.is-expanded { display: block; }
 .cabania-contract__section-content :deep(strong) { color: var(--cc-text); }
+.cabania-contract__section-content :deep(ol),
+.cabania-contract__section-content :deep(ul) {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+.cabania-contract__section-content :deep(ol) { list-style: decimal; }
+.cabania-contract__section-content :deep(ul) { list-style: disc; }
+.cabania-contract__section-content :deep(li) { margin-bottom: 0.4rem; }
+.cabania-contract__section-content :deep(li::marker) { color: var(--cc-text); font-weight: 600; }
+
+/* --- Attachments --- */
+.cabania-contract__attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+.cabania-contract__attachment {
+  margin: 0;
+}
+.cabania-contract__attachment img {
+  width: 220px;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  border: 1px solid var(--cc-divider);
+  cursor: zoom-in;
+  transition: transform 0.15s;
+}
+.cabania-contract__attachment img:hover {
+  transform: scale(1.02);
+}
+
+/* --- Lightbox --- */
+.cabania-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  cursor: zoom-out;
+}
+.cabania-lightbox img {
+  max-width: 95vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  cursor: default;
+}
+.cabania-lightbox__close {
+  position: absolute;
+  top: 1rem;
+  right: 1.25rem;
+  width: 44px;
+  height: 44px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+}
+.cabania-lightbox__close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* --- Signing intro --- */
+.cabania-sign-intro__list {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.cabania-sign-intro__list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 1rem;
+}
+.cabania-sign-intro__list li span { font-size: 1.4rem; }
+.cabania-sign-intro__note {
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.4);
+  font-size: 0.95rem;
+}
 
 /* --- Signed block --- */
 .cabania-contract__signed { padding: 1.5rem 1.75rem; }
@@ -897,6 +1105,9 @@ onUnmounted(() => {
    PRINT — force black on white, expand all
    ============================================ */
 @media print {
+  /* Secciones marcadas como "no imprimir" */
+  .cabania-no-print { display: none !important; }
+
   /* Reset all the glass/gradient stuff */
   .cabania-contract,
   .cabania-contract[data-theme="dark"] {

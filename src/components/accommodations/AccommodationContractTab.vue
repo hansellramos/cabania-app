@@ -6,7 +6,15 @@
 
     <div v-else-if="!contract" class="text-center py-5">
       <p class="text-muted mb-3">Este hospedaje aun no tiene un contrato generado.</p>
-      <CButton color="primary" :disabled="creating" @click="createContract">
+      <div v-if="activeTemplates.length" class="mb-3 mx-auto text-start" style="max-width: 380px;">
+        <label class="small text-muted d-block mb-1">Plantilla a usar</label>
+        <CFormSelect v-model="selectedTemplateId">
+          <option v-for="t in activeTemplates" :key="t.id" :value="t.id">{{ templateLabel(t) }}</option>
+        </CFormSelect>
+        <div class="form-text">Se preseleccionó según el plan de la reserva. Puedes cambiarla.</div>
+      </div>
+      <div v-else class="text-warning small mb-3">Este venue no tiene plantillas de contrato activas.</div>
+      <CButton color="primary" :disabled="creating || !activeTemplates.length" @click="createContract">
         <CIcon name="cil-file" class="me-1" />
         {{ creating ? 'Generando...' : 'Generar contrato' }}
       </CButton>
@@ -22,10 +30,13 @@
             Firmado el {{ formatDateTime(contract.accepted_at) }}
           </span>
         </div>
-        <div v-if="contract.status === 'draft'" class="d-flex gap-2">
-          <CButton color="warning" variant="outline" size="sm" :disabled="regenerating" @click="regenerateContract">
+        <div v-if="contract.status === 'draft'" class="d-flex gap-2 align-items-center">
+          <CFormSelect v-if="activeTemplates.length" v-model="selectedTemplateId" size="sm" style="min-width: 200px;">
+            <option v-for="t in activeTemplates" :key="t.id" :value="t.id">{{ templateLabel(t) }}</option>
+          </CFormSelect>
+          <CButton color="warning" variant="outline" size="sm" :disabled="regenerating" @click="regenerateContract" style="white-space: nowrap;">
             <CIcon name="cil-reload" class="me-1" />
-            {{ regenerating ? 'Regenerando...' : 'Regenerar snapshot' }}
+            {{ regenerating ? 'Regenerando...' : 'Regenerar' }}
           </CButton>
         </div>
       </div>
@@ -121,28 +132,6 @@
         </CCardBody>
       </CCard>
 
-      <!-- Attachments -->
-      <CCard v-if="contract.attachments && contract.attachments.length > 0" class="mb-3">
-        <CCardBody>
-          <h6 class="mb-3">Adjuntos ({{ contract.attachments.length }})</h6>
-          <div class="d-flex flex-wrap gap-2">
-            <a
-              v-for="att in contract.attachments"
-              :key="att.id"
-              :href="att.image_url"
-              target="_blank"
-            >
-              <img
-                :src="att.image_url"
-                :alt="att.description || att.type"
-                style="width: 100px; height: 100px; object-fit: cover; border-radius: 4px;"
-                :title="att.description || att.type"
-              />
-            </a>
-          </div>
-        </CCardBody>
-      </CCard>
-
       <!-- Contract preview (collapsible sections) -->
       <CCard class="mb-3">
         <CCardHeader class="d-flex justify-content-between align-items-center">
@@ -170,18 +159,84 @@
                 <strong>{{ section.title }}</strong>
                 <CIcon :name="expanded[idx] ? 'cil-chevron-top' : 'cil-chevron-bottom'" />
               </div>
-              <div v-if="expanded[idx]" class="p-3" style="white-space: pre-wrap;">{{ section.content }}</div>
+              <div v-if="expanded[idx]" class="p-3 contract-section-content" v-html="renderMarkdown(section.content)"></div>
             </div>
           </div>
         </CCardBody>
       </CCard>
+
+      <!-- Attachments -->
+      <CCard class="mb-3">
+        <CCardBody>
+          <h6 class="mb-3">Adjuntos ({{ contract.attachments?.length || 0 }})</h6>
+
+          <!-- Existentes -->
+          <div v-if="contract.attachments && contract.attachments.length" class="d-flex flex-wrap gap-3 mb-3">
+            <div v-for="att in contract.attachments" :key="att.id" class="attachment-thumb">
+              <img
+                :src="att.image_url"
+                :alt="att.description || att.type"
+                :title="att.description || att.type"
+                style="cursor: zoom-in;"
+                @click="modalImageUrl = att.image_url"
+              />
+              <button type="button" class="attachment-remove" title="Eliminar" @click="deleteAttachment(att)">&times;</button>
+            </div>
+          </div>
+
+          <!-- Zona para pegar / subir -->
+          <div
+            class="attachment-upload-area"
+            :class="{ 'is-dragging': dragging, 'is-uploading': uploadingAttachment }"
+            tabindex="0"
+            @paste="handlePasteAttachment"
+            @drop.prevent="handleDropAttachment"
+            @dragover.prevent="dragging = true"
+            @dragleave="dragging = false"
+          >
+            <div v-if="uploadingAttachment" class="text-muted small">
+              <CSpinner size="sm" class="me-1" /> Subiendo...
+            </div>
+            <template v-else>
+              <div class="text-muted small mb-2">
+                Pega una imagen (haz clic aquí y Ctrl/Cmd+V), arrástrala, o:
+              </div>
+              <div class="d-flex gap-2 justify-content-center">
+                <CButton size="sm" color="primary" variant="outline" @click="attachInput?.click()">Seleccionar</CButton>
+                <CButton size="sm" color="secondary" variant="outline" @click="pasteAttachmentFromClipboard">Pegar imagen</CButton>
+              </div>
+            </template>
+            <input ref="attachInput" type="file" accept="image/*" class="d-none" @change="handleFileAttachment" />
+          </div>
+          <div v-if="attachError" class="text-danger small mt-2">{{ attachError }}</div>
+        </CCardBody>
+      </CCard>
     </template>
+
+    <CModal
+      :visible="!!modalImageUrl"
+      @close="modalImageUrl = null"
+      size="xl"
+      :keyboard="true"
+      backdrop="true"
+    >
+      <CModalHeader close-button>
+        <CModalTitle>Adjunto</CModalTitle>
+      </CModalHeader>
+      <CModalBody class="text-center p-4">
+        <img :src="modalImageUrl" class="img-fluid rounded" style="max-height: 70vh;" />
+      </CModalBody>
+      <CModalFooter class="justify-content-center">
+        <CButton color="secondary" variant="outline" @click="modalImageUrl = null">Cerrar</CButton>
+      </CModalFooter>
+    </CModal>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import QRCode from 'qrcode'
+import { renderMarkdown } from '@/utils/contractMarkdown'
 
 const props = defineProps({
   accommodationId: { type: String, required: true },
@@ -197,6 +252,44 @@ const qrDataUrl = ref('')
 const copyMsg = ref('')
 const expanded = ref({})
 const parseError = ref('')
+const attachInput = ref(null)
+const dragging = ref(false)
+const uploadingAttachment = ref(false)
+const attachError = ref('')
+const modalImageUrl = ref(null)
+const templates = ref([])
+const selectedTemplateId = ref(null)
+
+const activeTemplates = computed(() => templates.value.filter(t => t.is_active))
+
+function templateLabel(t) {
+  return t.name + (t.plan_name ? ` — ${t.plan_name}` : '')
+}
+
+function autoSelectTemplate() {
+  const list = activeTemplates.value
+  const planId = props.accommodation?.plan_id
+  const pick =
+    (contract.value?.template_id && list.find(t => t.id === contract.value.template_id)) ||
+    (planId && list.find(t => t.plan_id === planId)) ||
+    list.find(t => t.is_default) ||
+    list[0]
+  selectedTemplateId.value = pick?.id || null
+}
+
+async function loadTemplates() {
+  const venueId = props.accommodation?.venue
+  if (!venueId) return
+  try {
+    const res = await fetch(`/api/venues/${venueId}/contract-templates`, { credentials: 'include' })
+    if (res.ok) {
+      templates.value = await res.json()
+      autoSelectTemplate()
+    }
+  } catch (e) {
+    console.error('Error loading templates:', e)
+  }
+}
 
 const publicUrl = computed(() => {
   if (!contract.value?.qr_token) return ''
@@ -249,6 +342,7 @@ async function loadContract() {
     if (res.ok) {
       const data = await res.json()
       contract.value = data || null
+      autoSelectTemplate()
     } else {
       contract.value = null
     }
@@ -268,7 +362,7 @@ async function createContract() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({})
+      body: JSON.stringify({ template_id: selectedTemplateId.value || null })
     })
     if (res.ok) {
       contract.value = await res.json()
@@ -285,20 +379,21 @@ async function createContract() {
 }
 
 async function regenerateContract() {
-  if (!confirm('¿Regenerar el snapshot del contrato? Se perderan los datos actuales del borrador.')) return
+  if (!confirm('¿Regenerar el contrato con la plantilla actual? Se actualizará el contenido; los adjuntos, el link y el código se conservan.')) return
   regenerating.value = true
   try {
-    const delRes = await fetch(`/api/accommodations/${props.accommodationId}/contract`, {
-      method: 'DELETE',
-      credentials: 'include'
+    const res = await fetch(`/api/accommodations/${props.accommodationId}/contract/regenerate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ template_id: selectedTemplateId.value || null })
     })
-    if (!delRes.ok && delRes.status !== 404) {
-      const err = await delRes.json().catch(() => ({}))
+    if (res.ok) {
+      contract.value = await res.json()
+    } else {
+      const err = await res.json().catch(() => ({}))
       alert(err.error || 'No se pudo regenerar')
-      return
     }
-    contract.value = null
-    await createContract()
   } catch (e) {
     console.error('Error regenerating contract:', e)
     alert('Error al regenerar el contrato')
@@ -368,15 +463,165 @@ function formatDateTime(value) {
   }
 }
 
+async function uploadAttachmentFile(file) {
+  if (!file || !file.type.startsWith('image/')) {
+    attachError.value = 'El archivo no es una imagen'
+    return
+  }
+  uploadingAttachment.value = true
+  attachError.value = ''
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const upRes = await fetch('/api/uploads/receipt', { method: 'POST', credentials: 'include', body: fd })
+    if (!upRes.ok) throw new Error('Error al subir la imagen')
+    const { imageUrl } = await upRes.json()
+
+    const attRes = await fetch(`/api/accommodations/${props.accommodationId}/contract/attachments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ type: 'document', image_url: imageUrl }),
+    })
+    if (!attRes.ok) {
+      const e = await attRes.json().catch(() => ({}))
+      throw new Error(e.error || 'Error al adjuntar')
+    }
+    await loadContract()
+  } catch (e) {
+    attachError.value = e.message
+  } finally {
+    uploadingAttachment.value = false
+  }
+}
+
+function handleFileAttachment(e) {
+  const file = e.target.files?.[0]
+  if (file) uploadAttachmentFile(file)
+  e.target.value = ''
+}
+
+function handleDropAttachment(e) {
+  dragging.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file) uploadAttachmentFile(file)
+}
+
+function handlePasteAttachment(e) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      const file = item.getAsFile()
+      if (file) uploadAttachmentFile(file)
+      break
+    }
+  }
+}
+
+async function pasteAttachmentFromClipboard() {
+  try {
+    const items = await navigator.clipboard.read()
+    for (const item of items) {
+      const t = item.types.find((x) => x.startsWith('image/'))
+      if (t) {
+        const blob = await item.getType(t)
+        uploadAttachmentFile(new File([blob], 'pegado.png', { type: t }))
+        return
+      }
+    }
+    attachError.value = 'No hay imagen en el portapapeles'
+  } catch {
+    attachError.value = 'No se pudo leer el portapapeles. Haz clic en el área y usa Ctrl/Cmd+V.'
+  }
+}
+
+async function deleteAttachment(att) {
+  if (!confirm('¿Eliminar este adjunto?')) return
+  try {
+    const res = await fetch(`/api/accommodations/${props.accommodationId}/contract/attachments/${att.id}`, {
+      method: 'DELETE',
+      credentials: 'include',
+    })
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({}))
+      throw new Error(e.error || 'No se pudo eliminar')
+    }
+    await loadContract()
+  } catch (e) {
+    alert(e.message)
+  }
+}
+
 watch(() => contract.value?.qr_token, () => {
   generateQR()
 })
 
+watch(() => props.accommodation?.venue, (v) => {
+  if (v) loadTemplates()
+})
+
 onMounted(() => {
+  loadTemplates()
   loadContract()
 })
 </script>
 
 <style scoped>
 .cursor-pointer { cursor: pointer; }
+.contract-section-content :deep(ol),
+.contract-section-content :deep(ul) {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+.contract-section-content :deep(ol) { list-style: decimal; }
+.contract-section-content :deep(ul) { list-style: disc; }
+.contract-section-content :deep(li) { margin-bottom: 0.4rem; }
+
+.attachment-thumb {
+  position: relative;
+  width: 100px;
+  height: 100px;
+}
+.attachment-thumb img {
+  width: 100px;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--cui-border-color, #ccc);
+}
+.attachment-remove {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: none;
+  background: #e55353;
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+.attachment-upload-area {
+  border: 2px dashed var(--cui-border-color, #ccc);
+  border-radius: 8px;
+  padding: 1.25rem;
+  text-align: center;
+  transition: all 0.2s;
+  outline: none;
+}
+.attachment-upload-area:focus,
+.attachment-upload-area.is-dragging {
+  border-color: #321fdb;
+  background: rgba(50, 31, 219, 0.05);
+}
+.attachment-upload-area.is-uploading {
+  opacity: 0.7;
+}
 </style>

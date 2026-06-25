@@ -26,7 +26,7 @@ import { getContactById, createContact, updateContact } from '@/services/contact
 
 const route = useRoute()
 const router = useRouter()
-let form = ref({ fullname: '', whatsapp: '', city: '', state: '', country: '', organizationId: '' })
+let form = ref({ fullname: '', whatsapp: '', instagram: '', city: '', state: '', country: '', organizationId: '' })
 const isEdit = computed(() => !!route.params.id)
 
 onMounted(async () => {

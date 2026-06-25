@@ -24,6 +24,7 @@
             <CTableHead>
               <CTableRow>
                 <CTableHeaderCell>Nombre</CTableHeaderCell>
+                <CTableHeaderCell>Plan</CTableHeaderCell>
                 <CTableHeaderCell>Secciones</CTableHeaderCell>
                 <CTableHeaderCell>Default</CTableHeaderCell>
                 <CTableHeaderCell>Estado</CTableHeaderCell>
@@ -33,6 +34,10 @@
             <CTableBody>
               <CTableRow v-for="t in templates" :key="t.id">
                 <CTableDataCell>{{ t.name }}</CTableDataCell>
+                <CTableDataCell>
+                  <CBadge v-if="t.plan_name" color="info">{{ t.plan_name }}</CBadge>
+                  <span v-else class="text-muted small">General</span>
+                </CTableDataCell>
                 <CTableDataCell>{{ t.sections?.length || 0 }}</CTableDataCell>
                 <CTableDataCell>
                   <CBadge :color="t.is_default ? 'success' : 'secondary'">{{ t.is_default ? 'Si' : 'No' }}</CBadge>
@@ -151,6 +156,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { renderMarkdown } from '@/utils/contractMarkdown'
 
 const route = useRoute()
 const router = useRouter()
@@ -274,14 +280,6 @@ async function deleteTemplate(t) {
   }
 }
 
-function renderMarkdown(content) {
-  if (!content) return ''
-  return content
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/\n/g, '<br>')
-}
-
 onMounted(() => loadTemplates())
 </script>
 
@@ -296,4 +294,12 @@ onMounted(() => loadTemplates())
 .section-content {
   line-height: 1.8;
 }
+.section-content :deep(ol),
+.section-content :deep(ul) {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+}
+.section-content :deep(ol) { list-style: decimal; }
+.section-content :deep(ul) { list-style: disc; }
+.section-content :deep(li) { margin-bottom: 0.4rem; }
 </style>

@@ -15,7 +15,18 @@
             </div>
 
             <div class="mb-3">
-              <CFormCheck v-model="form.is_default" label="Plantilla por defecto para este venue" />
+              <CFormLabel>Plan asociado</CFormLabel>
+              <CFormSelect v-model="form.plan_id">
+                <option :value="null">— General / por defecto (sin plan específico) —</option>
+                <option v-for="plan in plans" :key="plan.id" :value="plan.id">{{ plan.name }}</option>
+              </CFormSelect>
+              <div class="form-text">
+                Si la asocias a un plan, los contratos de reservas con ese plan usarán esta plantilla automáticamente.
+              </div>
+            </div>
+
+            <div class="mb-3">
+              <CFormCheck v-model="form.is_default" label="Plantilla por defecto del venue (fallback cuando el plan no tiene plantilla)" />
             </div>
 
             <hr />
@@ -29,17 +40,36 @@
               <div class="d-flex gap-2">
                 <CFormInput
                   v-model="aiPrompt"
-                  placeholder="Ej: Genera un contrato para pasadia, Agrega seccion de mascotas, Hazlo mas estricto..."
+                  placeholder="Ej: Genera basándote en la plantilla 'Contrato Pasadía con Comida', Agrega sección de mascotas, Separa las políticas por categorías..."
                   @keyup.enter="generateWithAI"
                 />
                 <CButton color="warning" :disabled="!aiPrompt || aiGenerating" @click="generateWithAI" style="white-space: nowrap;">
                   {{ aiGenerating ? 'Generando...' : 'Generar' }}
                 </CButton>
               </div>
-              <div v-if="aiGenerating" class="mt-2 small text-muted">
-                <CSpinner size="sm" class="me-1" /> Analizando con IA, puede tomar unos segundos...
+              <div v-if="aiGenerating" class="mt-2 small text-muted d-flex align-items-center">
+                <CSpinner size="sm" class="me-2" />
+                <span>{{ aiStatus || 'Analizando con IA…' }}</span>
               </div>
               <div v-if="aiError" class="mt-2 text-danger small">{{ aiError }}</div>
+
+              <!-- Preview de cambios propuestos por la IA -->
+              <div v-if="aiPreview" class="mt-3 border rounded bg-body">
+                <div class="p-2 border-bottom d-flex justify-content-between align-items-center">
+                  <strong class="small">Vista previa de los cambios propuestos</strong>
+                  <div class="d-flex gap-2">
+                    <CButton color="success" size="sm" @click="applyAiPreview">Aplicar cambios</CButton>
+                    <CButton color="secondary" size="sm" variant="outline" @click="discardAiPreview">Descartar</CButton>
+                  </div>
+                </div>
+                <div v-if="aiPreview.summary" class="p-2 border-bottom small ai-preview-summary" v-html="renderMarkdown(aiPreview.summary)"></div>
+                <div class="p-2">
+                  <div v-for="(s, i) in aiPreview.sections" :key="i" class="mb-2">
+                    <div class="fw-bold small">#{{ i + 1 }} · {{ s.title }}</div>
+                    <div class="small text-body-secondary ai-preview-content" v-html="renderMarkdown(s.content)"></div>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <hr />
@@ -71,6 +101,14 @@
               </CCard>
             </CCollapse>
 
+            <!-- Formato / sintaxis -->
+            <div class="small text-muted mb-3">
+              <CIcon name="cil-lightbulb" size="sm" class="me-1" />
+              Formato: <code>**negrita**</code>, <code>*itálica*</code>.
+              Listas numeradas: empieza cada línea con <code>1.</code> (se renumeran solas, puedes reordenar sin renumerar).
+              Viñetas: empieza con <code>- </code>. Deja una línea en blanco para cerrar una lista.
+            </div>
+
             <!-- Sections -->
             <div v-for="(section, idx) in form.sections" :key="idx" class="mb-3 border rounded">
               <div class="d-flex justify-content-between align-items-center p-3 bg-body-tertiary rounded-top">
@@ -88,6 +126,11 @@
               </div>
               <div class="p-3">
                 <CFormTextarea v-model="section.content" rows="6" placeholder="Contenido con {{placeholders}}..." style="font-family: monospace; font-size: 0.85rem;" />
+                <CFormCheck
+                  v-model="section.print_hidden"
+                  class="mt-2"
+                  :label="'Ocultar esta sección en la versión de impresión / PDF'"
+                />
               </div>
             </div>
 
@@ -107,6 +150,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { renderMarkdown } from '@/utils/contractMarkdown'
 
 const route = useRoute()
 const router = useRouter()
@@ -121,11 +165,16 @@ const placeholders = ref([])
 const aiPrompt = ref('')
 const aiGenerating = ref(false)
 const aiError = ref('')
+const aiPreview = ref(null)
+const aiStatus = ref('')
+
+const plans = ref([])
 
 const form = ref({
   name: '',
+  plan_id: null,
   is_default: false,
-  sections: [{ title: '', content: '', sort_order: 0 }],
+  sections: [{ title: '', content: '', sort_order: 0, print_hidden: false }],
 })
 
 const groupedPlaceholders = computed(() => {
@@ -136,6 +185,15 @@ const groupedPlaceholders = computed(() => {
   })
   return groups
 })
+
+async function loadPlans() {
+  try {
+    const res = await fetch(`/api/venue-plans?venue_id=${venueId}`, { credentials: 'include' })
+    if (res.ok) plans.value = await res.json()
+  } catch (e) {
+    console.error(e)
+  }
+}
 
 async function loadPlaceholders() {
   try {
@@ -155,8 +213,9 @@ async function loadTemplate() {
       const data = await res.json()
       form.value = {
         name: data.name,
+        plan_id: data.plan_id ?? null,
         is_default: data.is_default,
-        sections: data.sections.map(s => ({ title: s.title, content: s.content, sort_order: s.sort_order })),
+        sections: data.sections.map(s => ({ title: s.title, content: s.content, sort_order: s.sort_order, print_hidden: s.print_hidden ?? false })),
       }
     }
   } catch (e) {
@@ -167,7 +226,7 @@ async function loadTemplate() {
 }
 
 function addSection() {
-  form.value.sections.push({ title: '', content: '', sort_order: form.value.sections.length })
+  form.value.sections.push({ title: '', content: '', sort_order: form.value.sections.length, print_hidden: false })
 }
 
 function moveSection(idx, dir) {
@@ -184,14 +243,28 @@ function copyPlaceholder(key) {
   navigator.clipboard.writeText(`{{${key}}}`)
 }
 
+function parseSSEChunk(chunk) {
+  const lines = chunk.split('\n')
+  let event = 'message'
+  let data = ''
+  for (const line of lines) {
+    if (line.startsWith('event:')) event = line.slice(6).trim()
+    else if (line.startsWith('data:')) data += line.slice(5).trim()
+  }
+  if (!data) return null
+  try { return { event, data: JSON.parse(data) } } catch { return null }
+}
+
 async function generateWithAI() {
   if (!aiPrompt.value) return
   aiGenerating.value = true
   aiError.value = ''
+  aiPreview.value = null
+  aiStatus.value = 'Analizando tu solicitud…'
 
   try {
-    const currentSections = form.sections.length > 0 && form.sections[0].title
-      ? form.sections.map(s => ({ title: s.title, content: s.content }))
+    const currentSections = form.value.sections.length > 0 && form.value.sections[0].title
+      ? form.value.sections.map(s => ({ title: s.title, content: s.content }))
       : null
 
     const res = await fetch('/api/contract-templates/ai-generate', {
@@ -201,29 +274,71 @@ async function generateWithAI() {
       body: JSON.stringify({
         prompt: aiPrompt.value,
         current_sections: currentSections,
+        venue_id: venueId,
+        template_id: templateId || null,
       }),
     })
 
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Error al generar')
-
-    if (data.template) {
-      if (!form.value.name && data.template.name) {
-        form.value.name = data.template.name
-      }
-      form.value.sections = data.template.sections.map((s, i) => ({
-        title: s.title,
-        content: s.content,
-        sort_order: i,
-      }))
+    if (!res.ok || !res.body) {
+      const data = await res.json().catch(() => ({}))
+      throw new Error(data.error || 'Error al generar')
     }
 
-    aiPrompt.value = ''
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finished = false
+    while (!finished) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const chunks = buffer.split('\n\n')
+      buffer = chunks.pop()
+      for (const chunk of chunks) {
+        const ev = parseSSEChunk(chunk)
+        if (!ev) continue
+        if (ev.event === 'status') {
+          aiStatus.value = ev.data.label
+        } else if (ev.event === 'done') {
+          const tpl = ev.data.template
+          if (tpl) {
+            aiPreview.value = {
+              name: tpl.name,
+              summary: ev.data.summary || tpl.summary || '',
+              sections: tpl.sections.map((s, i) => ({
+                title: s.title,
+                content: s.content,
+                sort_order: i,
+                print_hidden: s.print_hidden ?? false,
+              })),
+            }
+          }
+          finished = true
+        } else if (ev.event === 'error') {
+          throw new Error(ev.data.error || 'Error al generar')
+        }
+      }
+    }
   } catch (e) {
     aiError.value = e.message
   } finally {
     aiGenerating.value = false
+    aiStatus.value = ''
   }
+}
+
+function applyAiPreview() {
+  if (!aiPreview.value) return
+  if (!form.value.name && aiPreview.value.name) {
+    form.value.name = aiPreview.value.name
+  }
+  form.value.sections = aiPreview.value.sections.map((s, i) => ({ ...s, sort_order: i }))
+  aiPreview.value = null
+  aiPrompt.value = ''
+}
+
+function discardAiPreview() {
+  aiPreview.value = null
 }
 
 async function save() {
@@ -231,6 +346,7 @@ async function save() {
   try {
     const body = {
       venue_id: venueId,
+      plan_id: form.value.plan_id || null,
       name: form.value.name,
       is_default: form.value.is_default,
       sections: form.value.sections.map((s, i) => ({ ...s, sort_order: i })),
@@ -257,7 +373,19 @@ async function save() {
 }
 
 onMounted(() => {
+  loadPlans()
   loadPlaceholders()
   loadTemplate()
 })
 </script>
+
+<style scoped>
+.ai-preview-content :deep(ol),
+.ai-preview-content :deep(ul) {
+  margin: 0.25rem 0;
+  padding-left: 1.25rem;
+}
+.ai-preview-content :deep(ol) { list-style: decimal; }
+.ai-preview-content :deep(ul) { list-style: disc; }
+.ai-preview-summary :deep(ul) { margin: 0; padding-left: 1.1rem; }
+</style>

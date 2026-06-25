@@ -46,7 +46,7 @@ function formatTime(time) {
 /**
  * Build placeholder values from accommodation + related data
  */
-function buildPlaceholders({ accommodation, customer, venue, organization, plan, commissionAgent, payments, deposit }) {
+function buildPlaceholders({ accommodation, customer, venue, organization, plan, commissionAgent, commissionAgentContact, payments, deposit }) {
   const agreedPrice = parseFloat(accommodation.agreed_price) || parseFloat(accommodation.calculated_price) || 0;
   const totalPaid = (payments || []).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
 
@@ -56,6 +56,7 @@ function buildPlaceholders({ accommodation, customer, venue, organization, plan,
     customer_id: customer?.whatsapp || '—',
     customer_phone: customer?.whatsapp || '—',
     customer_email: customer?.email || '—',
+    customer_instagram: customer?.instagram || '—',
 
     // Accommodation
     accommodation_date: formatDate(accommodation.date),
@@ -93,9 +94,14 @@ function buildPlaceholders({ accommodation, customer, venue, organization, plan,
     plan_name: plan?.name || '—',
 
     // Commission agent
+    // El teléfono del comisionista vive en el contacto vinculado a su usuario
+    // (contacts.whatsapp), con fallback al teléfono del provider.
     commission_agent_name: commissionAgent?.name || commissionAgent?.provider?.name || '—',
-    commission_agent_phone: commissionAgent?.provider?.phone || '—',
-    commission_agent_instagram: commissionAgent?.provider?.instagram || '—',
+    commission_agent_phone:
+      (commissionAgentContact?.whatsapp != null ? String(commissionAgentContact.whatsapp) : null) ||
+      commissionAgent?.provider?.phone ||
+      '—',
+    commission_agent_instagram: commissionAgentContact?.instagram || commissionAgent?.provider?.instagram || '—',
   };
 }
 
@@ -119,6 +125,7 @@ function renderContract(sections, data) {
     title: replacePlaceholders(section.title, values),
     content: replacePlaceholders(section.content, values),
     sort_order: section.sort_order,
+    print_hidden: section.print_hidden ?? false,
   }));
 
   return { renderedSections, placeholderValues: values };
@@ -133,6 +140,7 @@ function getAvailablePlaceholders() {
     { key: 'customer_id', label: 'Documento del cliente', category: 'Cliente' },
     { key: 'customer_phone', label: 'Teléfono del cliente', category: 'Cliente' },
     { key: 'customer_email', label: 'Email del cliente', category: 'Cliente' },
+    { key: 'customer_instagram', label: 'Instagram del cliente', category: 'Cliente' },
     { key: 'accommodation_date', label: 'Fecha del hospedaje', category: 'Hospedaje' },
     { key: 'check_in', label: 'Fecha y hora de entrada', category: 'Hospedaje' },
     { key: 'check_out', label: 'Fecha y hora de salida', category: 'Hospedaje' },
