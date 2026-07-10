@@ -446,8 +446,9 @@ function shareWhatsApp() {
     `Hola ${customerName}, te comparto el contrato de tu reserva en ${venueName}.\n\n` +
     `Link: ${publicUrl.value}\n` +
     `Codigo de acceso: ${contract.value.access_code}`
-  const phone = props.accommodation?.customer_data?.phone || ''
-  const cleanPhone = String(phone).replace(/[^0-9]/g, '')
+  const whatsapp = props.accommodation?.customer_data?.whatsapp || props.accommodation?.customer_data?.phone || ''
+  const digits = String(whatsapp).replace(/[^0-9]/g, '')
+  const cleanPhone = digits ? (digits.startsWith('57') ? digits : `57${digits}`) : ''
   const url = cleanPhone
     ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
     : `https://wa.me/?text=${encodeURIComponent(message)}`

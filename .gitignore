@@ -43,6 +43,7 @@ test-results/
 
 # Screenshots (Playwright, debug, etc.)
 *.png
+.pw/
 
 # Claude / AI
 .claude/settings.local.json
@@ -54,3 +55,7 @@ test-results/
 .eslintcache
 *.timestamp-*-*.mjs
 .vercel
+
+# DB backups / local tooling (never deploy)
+backup_*.sql
+.neon
