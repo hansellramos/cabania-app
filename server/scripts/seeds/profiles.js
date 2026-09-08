@@ -6,6 +6,7 @@ const data = [
     permissions: [
       'organizations:view', 'venues:view', 'accommodations:view',
       'payments:view', 'deposits:view', 'contacts:view',
+      'contracts:view',
     ],
     is_system: true,
   },
@@ -20,6 +21,7 @@ const data = [
       'payments:view', 'payments:create', 'payments:edit', 'payments:delete', 'payments:verify',
       'deposits:view', 'deposits:create', 'deposits:edit', 'deposits:delete',
       'contacts:view', 'contacts:create', 'contacts:edit', 'contacts:delete',
+      'contracts:view', 'contracts:manage', 'contracts:templates:manage',
       'ai-usage:view',
     ],
     is_system: true,
@@ -41,6 +43,8 @@ const data = [
       'payments:create',             // puede registrar pagos en sus reservas
       'payments:verify:own',         // puede verificar pagos de sus reservas
       'deposits:view:own',           // solo depósitos de sus reservas
+      'contracts:view:own',          // solo contratos de sus reservas
+      'contracts:manage:own',        // puede generar/regenerar contratos solo en sus reservas
     ],
     is_system: true,
   },

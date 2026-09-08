@@ -35,11 +35,16 @@
             </CNavItem>
             <CNavItem>
               <CNavLink href="javascript:void(0)" :active="activeTab === 3" @click="activeTab = 3">
-                Comisiones y Gastos
+                Contrato
               </CNavLink>
             </CNavItem>
             <CNavItem>
               <CNavLink href="javascript:void(0)" :active="activeTab === 4" @click="activeTab = 4">
+                Comisiones y Gastos
+              </CNavLink>
+            </CNavItem>
+            <CNavItem>
+              <CNavLink href="javascript:void(0)" :active="activeTab === 5" @click="activeTab = 5">
                 Mensajes
               </CNavLink>
             </CNavItem>
@@ -334,6 +339,33 @@
                   </CCol>
                 </CRow>
 
+                <template v-if="deposit.status === 'claimed' && deposit.refund_amount">
+                  <CRow class="mt-3">
+                    <CCol :md="4">
+                      <h6 class="text-muted mb-1">Monto Devuelto</h6>
+                      <p class="fw-bold text-success mb-0">{{ formatCurrency(deposit.refund_amount) }}</p>
+                    </CCol>
+                    <CCol :md="4">
+                      <h6 class="text-muted mb-1">Fecha de Devolución</h6>
+                      <p class="mb-0">{{ formatPaymentDate(deposit.refund_date) }}</p>
+                    </CCol>
+                    <CCol :md="4" v-if="deposit.refund_reference">
+                      <h6 class="text-muted mb-1">Referencia Devolución</h6>
+                      <p class="mb-0">{{ deposit.refund_reference }}</p>
+                    </CCol>
+                  </CRow>
+                </template>
+
+                <CAlert v-if="deposit.status === 'claimed' && depositPendingBalance > 0 && !deposit.refund_amount" color="warning" class="mt-3 d-flex justify-content-between align-items-center">
+                  <div>
+                    <strong>Saldo pendiente de devolver:</strong> {{ formatCurrency(depositPendingBalance) }}
+                    <div class="small text-muted">Depósito {{ formatCurrency(deposit.amount) }} − Retención {{ formatCurrency(deposit.damage_amount) }}</div>
+                  </div>
+                  <CButton color="success" size="sm" @click="openRefundBalanceModal">
+                    Devolver Saldo
+                  </CButton>
+                </CAlert>
+
                 <div class="mt-3 d-flex gap-2" v-if="deposit.status === 'pending'">
                   <CButton color="success" size="sm" @click="openRefundModal">
                     Liberar Depósito
@@ -373,8 +405,16 @@
               </div>
             </CTabPane>
 
-            <!-- Tab Comisiones y Gastos -->
+            <!-- Tab Contrato -->
             <CTabPane :visible="activeTab === 3">
+              <AccommodationContractTab
+                :accommodation-id="route.params.id"
+                :accommodation="accommodation"
+              />
+            </CTabPane>
+
+            <!-- Tab Comisiones y Gastos -->
+            <CTabPane :visible="activeTab === 4">
               <CommissionCalculator
                 :accommodation-id="route.params.id"
                 :accommodation="accommodation"
@@ -422,7 +462,7 @@
             </CTabPane>
 
             <!-- Tab Mensajes -->
-            <CTabPane :visible="activeTab === 4">
+            <CTabPane :visible="activeTab === 5">
               <MessageSuggestions :accommodation="accommodation" />
             </CTabPane>
           </CTabContent>
@@ -478,17 +518,38 @@
       </div>
       <div class="mb-3">
         <label class="form-label">Comprobante de Devolución</label>
-        <div class="d-flex gap-2 mb-2">
-          <CButton color="primary" size="sm" @click="$refs.refundFileInput?.click()">
-            <CIcon name="cil-folder-open" class="me-1" /> Seleccionar archivo
-          </CButton>
-          <CButton color="info" size="sm" @click="$refs.refundCameraInput?.click()">
-            <CIcon name="cil-camera" class="me-1" /> Tomar Foto
-          </CButton>
+        <div
+          class="receipt-upload-area"
+          :class="{ 'is-dragging': refundDragging }"
+          @paste="handleRefundPaste"
+          @drop.prevent="handleRefundDrop"
+          @dragover.prevent="refundDragging = true"
+          @dragleave="refundDragging = false"
+          @click="$refs.refundFileInput?.click()"
+          tabindex="0"
+        >
+          <div v-if="refundFile" class="text-center">
+            <CIcon name="cil-check-circle" class="text-success me-1" />
+            {{ refundFile.name || 'Imagen seleccionada' }}
+          </div>
+          <div v-else class="text-center">
+            <CIcon name="cil-cloud-upload" size="xl" class="mb-2 text-secondary" />
+            <div class="mb-2">Arrastrar imagen aquí o Ctrl+V para pegar</div>
+            <div class="d-flex justify-content-center gap-2 flex-wrap">
+              <CButton color="primary" size="sm" @click.stop="$refs.refundFileInput?.click()">
+                <CIcon name="cil-folder-open" class="me-1" /> Seleccionar archivo
+              </CButton>
+              <CButton color="info" size="sm" @click.stop="$refs.refundCameraInput?.click()">
+                <CIcon name="cil-camera" class="me-1" /> Tomar Foto
+              </CButton>
+              <CButton color="secondary" size="sm" @click.stop="pasteRefundFromClipboard">
+                <CIcon name="cil-clipboard" class="me-1" /> Pegar
+              </CButton>
+            </div>
+          </div>
         </div>
         <input ref="refundFileInput" type="file" accept="image/*" class="d-none" @change="handleRefundFile" />
         <input ref="refundCameraInput" type="file" accept="image/*" capture="environment" class="d-none" @change="handleRefundFile" />
-        <div class="small text-muted">Adjunta el comprobante de la transferencia</div>
       </div>
     </CModalBody>
     <CModalFooter>
@@ -657,10 +718,16 @@
           <CIcon name="cil-check-circle" class="me-1" />
           {{ verifying ? 'Verificando...' : 'Verificar pago' }}
         </CButton>
-        <span v-if="selectedPayment?.verified" class="text-success">
-          <CIcon name="cil-lock-locked" class="me-1" />
-          Pago bloqueado (verificado)
-        </span>
+        <CButton
+          v-if="selectedPayment?.verified"
+          color="warning"
+          variant="outline"
+          :disabled="verifying"
+          @click="unverifyPayment"
+        >
+          <CIcon name="cil-x-circle" class="me-1" />
+          {{ verifying ? 'Procesando...' : 'Quitar verificación' }}
+        </CButton>
       </div>
       <div>
         <CButton color="secondary" variant="outline" @click="showReceiptModal = false">
@@ -678,6 +745,7 @@ import { CIcon } from '@coreui/icons-vue'
 import { CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
 import MessageSuggestions from '@/components/accommodations/MessageSuggestions.vue'
 import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
+import AccommodationContractTab from '@/components/accommodations/AccommodationContractTab.vue'
 import { deleteAccommodation } from '@/services/accommodationService'
 
 const route = useRoute()
@@ -765,6 +833,39 @@ async function verifyPayment() {
   } catch (error) {
     console.error('Error verifying payment:', error)
     alert('Error al verificar el pago')
+  } finally {
+    verifying.value = false
+  }
+}
+
+async function unverifyPayment() {
+  if (!selectedPayment.value) return
+
+  if (!confirm('¿Quitar la verificación de este pago? Se eliminará el ingreso asociado.')) return
+
+  verifying.value = true
+  try {
+    const res = await fetch(`/api/payments/${selectedPayment.value.id}/verify`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ verified: false })
+    })
+
+    if (res.ok) {
+      const updated = await res.json()
+      selectedPayment.value = updated
+      const idx = payments.value.findIndex(p => p.id === updated.id)
+      if (idx !== -1) {
+        payments.value[idx] = updated
+      }
+    } else {
+      const err = await res.json()
+      alert(err.error || 'Error al quitar la verificación')
+    }
+  } catch (error) {
+    console.error('Error unverifying payment:', error)
+    alert('Error al quitar la verificación')
   } finally {
     verifying.value = false
   }
@@ -1003,9 +1104,24 @@ async function confirmDeleteDeposit() {
   }
 }
 
+const depositPendingBalance = computed(() => {
+  if (!deposit.value || deposit.value.status !== 'claimed') return 0
+  return (parseFloat(deposit.value.amount) || 0) - (parseFloat(deposit.value.damage_amount) || 0)
+})
+
 function openRefundModal() {
   refundForm.value = {
     refund_amount: deposit.value?.amount || '',
+    refund_date: new Date().toISOString().split('T')[0],
+    refund_reference: ''
+  }
+  refundFile.value = null
+  showRefundModal.value = true
+}
+
+function openRefundBalanceModal() {
+  refundForm.value = {
+    refund_amount: depositPendingBalance.value,
     refund_date: new Date().toISOString().split('T')[0],
     refund_reference: ''
   }
@@ -1022,8 +1138,46 @@ function openClaimModal() {
   showClaimModal.value = true
 }
 
+const refundDragging = ref(false)
+
 function handleRefundFile(event) {
   refundFile.value = event.target.files[0] || null
+}
+
+function handleRefundDrop(e) {
+  refundDragging.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (file && file.type.startsWith('image/')) {
+    refundFile.value = file
+  }
+}
+
+function handleRefundPaste(e) {
+  const items = e.clipboardData?.items
+  if (!items) return
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      refundFile.value = item.getAsFile()
+      break
+    }
+  }
+}
+
+async function pasteRefundFromClipboard() {
+  try {
+    const clipboardItems = await navigator.clipboard.read()
+    for (const clipboardItem of clipboardItems) {
+      for (const type of clipboardItem.types) {
+        if (type.startsWith('image/')) {
+          const blob = await clipboardItem.getType(type)
+          refundFile.value = new File([blob], 'pasted-image.png', { type })
+          return
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error reading clipboard:', error)
+  }
 }
 
 function handleClaimFile(event) {
@@ -1148,3 +1302,24 @@ onMounted(() => {
   loadExpenses()
 })
 </script>
+
+<style scoped>
+.receipt-upload-area {
+  border: 2px dashed #ccc;
+  border-radius: 8px;
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.receipt-upload-area:hover,
+.receipt-upload-area:focus {
+  border-color: #321fdb;
+  background-color: #f8f9fa;
+}
+
+.receipt-upload-area.is-dragging {
+  border-color: #321fdb;
+  background-color: #e7f1ff;
+}
+</style>

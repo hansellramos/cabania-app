@@ -5,9 +5,9 @@
         <CCardHeader>
           <strong>Settings</strong>
         </CCardHeader>
-        <CCardBody>
+        <CCardBody v-if="user?.is_super_admin">
           <div class="mb-3">
-            <CFormCheck 
+            <CFormCheck
               id="developmentMode"
               v-model="settingsStore.developmentMode"
               label="Development Mode"
@@ -19,8 +19,8 @@
         </CCardBody>
       </CCard>
     </CCol>
-    
-    <CCol :xs="12">
+
+    <CCol :xs="12" v-if="user?.is_super_admin">
       <CCard class="mb-4">
         <CCardHeader>
           <strong>Sistema</strong>

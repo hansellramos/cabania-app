@@ -10,10 +10,14 @@ const user = ref(null);
 const isLoading = ref(true);
 const error = ref(null);
 const supportsPasskeys = ref(false);
+// Firefox on macOS desktop has a known bug that freezes the browser during passkey ceremonies
+// https://bugzilla.mozilla.org/show_bug.cgi?id=1990064
+const passkeyBlocked = ref(false);
 
-// Check WebAuthn support on load
 if (typeof window !== 'undefined') {
+  const isFirefoxMac = /Firefox/i.test(navigator.userAgent) && /Macintosh/i.test(navigator.userAgent);
   supportsPasskeys.value = browserSupportsWebAuthn();
+  passkeyBlocked.value = supportsPasskeys.value && isFirefoxMac;
 }
 
 async function fetchUser() {
@@ -86,15 +90,23 @@ async function logout() {
   window.location.href = '/#/pages/login';
 }
 
-async function loginWithPasskey() {
+async function loginWithPasskey(email) {
   try {
     error.value = null;
 
-    // 1. Get challenge from server
+    // Require a valid email before starting the ceremony
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      error.value = 'Ingresa tu email para iniciar con Passkey';
+      return false;
+    }
+
+    // 1. Get challenge from server (with email to get allowCredentials)
+    const body = { email };
     const optionsRes = await fetch('/api/auth/passkey/login/options', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
+      body: JSON.stringify(body),
     });
     if (!optionsRes.ok) {
       const data = await optionsRes.json();
@@ -209,6 +221,46 @@ async function deletePasskey(id) {
   }
 }
 
+async function impersonate(targetUserId) {
+  try {
+    error.value = null;
+    const response = await fetch('/api/auth/impersonate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ targetUserId }),
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Error al impersonar usuario');
+    }
+    await fetchUser();
+    return true;
+  } catch (err) {
+    error.value = err.message;
+    return false;
+  }
+}
+
+async function stopImpersonating() {
+  try {
+    error.value = null;
+    const response = await fetch('/api/auth/stop-impersonating', {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Error al restaurar sesión');
+    }
+    await fetchUser();
+    return true;
+  } catch (err) {
+    error.value = err.message;
+    return false;
+  }
+}
+
 async function requestLoginCode(email) {
   try {
     error.value = null;
@@ -266,6 +318,7 @@ export function useAuth() {
     isAuthenticated,
     error,
     supportsPasskeys,
+    passkeyBlocked,
     login,
     loginWithPasskey,
     logout,
@@ -275,6 +328,8 @@ export function useAuth() {
     deletePasskey,
     requestLoginCode,
     verifyLoginCode,
+    impersonate,
+    stopImpersonating,
   };
 }
 

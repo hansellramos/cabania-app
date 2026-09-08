@@ -39,17 +39,20 @@ const routes = [
         path: '/users',
         name: 'UsersList',
         component: () => import('@/views/users/UsersList.vue'),
+        meta: { permission: 'users:view' },
       },
       {
         path: '/users/create',
         name: 'UserCreate',
         component: () => import('@/views/users/UserFormView.vue'),
+        meta: { permission: 'users:edit' },
       },
       {
         path: '/users/:id/edit',
         name: 'UserEdit',
         component: () => import('@/views/users/UserFormView.vue'),
         props: true,
+        meta: { permission: 'users:view' },
       },
       {
         path: '/profile',
@@ -65,6 +68,7 @@ const routes = [
         path: '/settings',
         name: 'Settings',
         component: () => import('@/views/pages/Settings.vue'),
+        meta: { permission: 'settings:view' },
       },
       {
         path: '/next',
@@ -450,55 +454,55 @@ const routes = [
         path: '/invitations',
         name: 'Invitations',
         component: () => import('@/views/invitations/InvitationsView.vue'),
-        meta: { breadcrumb: 'Invitaciones' },
+        meta: { breadcrumb: 'Invitaciones', permission: 'invitations:view' },
       },
       {
         path: '/admin/amenities',
         name: 'AmenityList',
         component: () => import('@/views/amenities/AmenityListView.vue'),
-        meta: { breadcrumb: 'Amenidades' },
+        meta: { breadcrumb: 'Amenidades', permission: 'amenities:manage' },
       },
       {
         path: '/admin/expense-categories',
         name: 'ExpenseCategoryList',
         component: () => import('@/views/expense-categories/ExpenseCategoryListView.vue'),
-        meta: { breadcrumb: 'Categorías de Gastos' },
+        meta: { breadcrumb: 'Categorías de Gastos', permission: 'expenses:view' },
       },
       {
         path: '/admin/inventory-categories',
         name: 'InventoryCategoryList',
         component: () => import('@/views/inventory-categories/InventoryCategoryListView.vue'),
-        meta: { breadcrumb: 'Categorías de Inventario' },
+        meta: { breadcrumb: 'Categorías de Inventario', permission: 'inventory:view' },
       },
       {
         path: '/admin/maintenance-zones',
         name: 'MaintenanceZoneList',
         component: () => import('@/views/maintenance-zones/MaintenanceZoneListView.vue'),
-        meta: { breadcrumb: 'Zonas de Mantenimiento' },
+        meta: { breadcrumb: 'Zonas de Mantenimiento', permission: 'maintenance:view' },
       },
       {
         path: '/admin/message-templates',
         name: 'MessageTemplatesList',
         component: () => import('@/views/message-templates/MessageTemplatesView.vue'),
-        meta: { breadcrumb: 'Plantillas de Mensajes' },
+        meta: { breadcrumb: 'Plantillas de Mensajes', permission: 'templates:manage' },
       },
       {
         path: '/admin/llm-providers',
         name: 'LLMProviders',
         component: () => import('@/views/llm-providers/LLMProvidersView.vue'),
-        meta: { breadcrumb: 'Proveedores LLM' },
+        meta: { breadcrumb: 'Proveedores LLM', permission: 'ai:manage' },
       },
       {
         path: '/admin/system-whatsapp',
         name: 'SystemWhatsApp',
         component: () => import('@/views/settings/SystemWhatsAppView.vue'),
-        meta: { breadcrumb: 'WhatsApp del Sistema' },
+        meta: { breadcrumb: 'WhatsApp del Sistema', permission: 'whatsapp:manage' },
       },
       {
         path: '/admin/ai-settings',
         name: 'AISettings',
         component: () => import('@/views/settings/AISettingsView.vue'),
-        meta: { breadcrumb: 'Configuración IA' },
+        meta: { breadcrumb: 'Configuración IA', permission: 'ai:manage' },
       },
       {
         path: '/venues/:id/chat',
@@ -522,6 +526,27 @@ const routes = [
         meta: { breadcrumb: 'Metodos de Pago' },
       },
       {
+        path: '/business/venues/:venueId/contract-templates',
+        name: 'ContractTemplateList',
+        component: () => import('@/views/contracts/ContractTemplateListView.vue'),
+        props: true,
+        meta: { breadcrumb: 'Plantillas de Contrato' },
+      },
+      {
+        path: '/business/venues/:venueId/contract-templates/create',
+        name: 'ContractTemplateCreate',
+        component: () => import('@/views/contracts/ContractTemplateFormView.vue'),
+        props: true,
+        meta: { breadcrumb: 'Nueva Plantilla' },
+      },
+      {
+        path: '/business/venues/:venueId/contract-templates/:templateId/edit',
+        name: 'ContractTemplateEdit',
+        component: () => import('@/views/contracts/ContractTemplateFormView.vue'),
+        props: true,
+        meta: { breadcrumb: 'Editar Plantilla' },
+      },
+      {
         path: '/business/venues/:id/plans',
         name: 'VenuePlans',
         component: () => import('@/views/venues/VenuePlansView.vue'),
@@ -532,20 +557,20 @@ const routes = [
         path: '/business/expenses',
         name: 'ExpensesList',
         component: () => import('@/views/expenses/ExpensesListView.vue'),
-        meta: { breadcrumb: 'Reporte de Egresos' },
+        meta: { breadcrumb: 'Reporte de Egresos', permission: 'expenses:view' },
       },
       {
         path: '/business/expenses/create',
         name: 'ExpenseCreate',
         component: () => import('@/views/expenses/ExpenseFormView.vue'),
-        meta: { breadcrumb: 'Crear Gasto' },
+        meta: { breadcrumb: 'Crear Gasto', permission: 'expenses:view' },
       },
       {
         path: '/business/expenses/:id/edit',
         name: 'ExpenseEdit',
         component: () => import('@/views/expenses/ExpenseFormView.vue'),
         props: true,
-        meta: { breadcrumb: 'Editar Gasto' },
+        meta: { breadcrumb: 'Editar Gasto', permission: 'expenses:view' },
       },
       {
         path: '/business/deposits',
@@ -583,7 +608,7 @@ const routes = [
         path: '/admin/ai-usage',
         name: 'AIUsage',
         component: () => import('@/views/analytics/AIUsageView.vue'),
-        meta: { breadcrumb: 'Uso de IA' },
+        meta: { breadcrumb: 'Uso de IA', permission: 'ai:manage' },
       },
       {
         path: '/business/estimates',
@@ -631,6 +656,18 @@ const routes = [
     path: '/invitation/accept',
     name: 'AcceptInvitation',
     component: () => import('@/views/invitations/AcceptInvitationView.vue'),
+  },
+  {
+    path: '/contract/:token',
+    name: 'PublicContract',
+    component: () => import('@/views/contracts/PublicContractView.vue'),
+    props: true,
+  },
+  {
+    path: '/contract/code/:accommodationId',
+    name: 'PublicContractCode',
+    component: () => import('@/views/contracts/PublicContractCodeView.vue'),
+    props: true,
   },
   {
     path: '/p/:slug',
@@ -700,7 +737,7 @@ const router = createRouter({
 const { posthog } = usePostHog()
 
 // Public routes that don't require authentication
-const publicRoutes = ['/availability', '/p/', '/pages/login', '/pages/register', '/pages/forgot-password', '/pages/code-login', '/pages/404', '/pages/500', '/payment-result', '/onboarding', '/invitation/accept']
+const publicRoutes = ['/availability', '/p/', '/contract/', '/pages/login', '/pages/register', '/pages/forgot-password', '/pages/code-login', '/pages/404', '/pages/500', '/payment-result', '/onboarding', '/invitation/accept']
 
 // Routes that don't require subscription
 const noSubscriptionRoutes = ['/no-subscription', '/profile']
@@ -770,16 +807,26 @@ router.beforeEach(async (to, from) => {
     return { path: '/pages/login' }
   }
   
-  // Super admins bypass subscription check
+  // Super admins bypass all checks
   if (authStatus.user?.is_super_admin) {
     return true
   }
-  
+
   // Check subscription for protected routes
   if (!authStatus.hasSubscription && !allowsNoSubscription(to.path)) {
     return { path: '/no-subscription' }
   }
-  
+
+  // Permission check based on route meta
+  const requiredPermission = to.meta?.permission
+  if (requiredPermission) {
+    const userPerms = authStatus.user?.profile?.permissions || []
+    const hasAccess = userPerms.some(p => p === requiredPermission || p.startsWith(requiredPermission + ':'))
+    if (!hasAccess) {
+      return { path: '/next' }
+    }
+  }
+
   return true
 })
 

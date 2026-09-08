@@ -47,6 +47,10 @@
                 <div v-if="result.existing_payment.reference">
                   <strong>Referencia:</strong> {{ result.existing_payment.reference }}
                 </div>
+                <div v-if="result.existing_payment.notes" class="mt-2">
+                  <strong>Notas:</strong>
+                  <div style="white-space: pre-wrap;">{{ result.existing_payment.notes }}</div>
+                </div>
                 <div v-if="result.existing_payment.expense_id" class="mt-2">
                   <RouterLink
                     :to="`/business/expenses/${result.existing_payment.expense_id}/edit`"
@@ -145,6 +149,10 @@
                 <div v-if="result.existing_payment.reference">
                   <strong>Referencia:</strong> {{ result.existing_payment.reference }}
                 </div>
+                <div v-if="result.existing_payment.notes">
+                  <strong>Notas:</strong>
+                  <div style="white-space: pre-wrap;">{{ result.existing_payment.notes }}</div>
+                </div>
               </div>
             </div>
 
@@ -232,6 +240,9 @@
                 </CButton>
                 <CButton color="info" size="sm" @click.stop="triggerCamera">
                   <CIcon name="cil-camera" class="me-1" /> Tomar Foto
+                </CButton>
+                <CButton color="secondary" size="sm" @click.stop="pasteFromClipboard">
+                  <CIcon name="cil-clipboard" class="me-1" /> Pegar
                 </CButton>
               </div>
             </div>
@@ -425,6 +436,24 @@ const handlePaste = (e) => {
       if (file) uploadFile(file)
       break
     }
+  }
+}
+
+const pasteFromClipboard = async () => {
+  try {
+    const clipboardItems = await navigator.clipboard.read()
+    for (const clipboardItem of clipboardItems) {
+      for (const type of clipboardItem.types) {
+        if (type.startsWith('image/')) {
+          const blob = await clipboardItem.getType(type)
+          const file = new File([blob], 'pasted-image.png', { type })
+          uploadFile(file)
+          return
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('No se pudo leer del portapapeles:', err)
   }
 }
 

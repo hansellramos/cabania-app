@@ -1,0 +1,11 @@
+node_modules
+server/node_modules
+dist
+.git
+screenshots
+attached_assets
+backup_*.sql
+*.md
+.neon
+.env
+.env.*

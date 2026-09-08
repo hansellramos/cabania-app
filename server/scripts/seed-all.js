@@ -12,6 +12,7 @@ const seeds = [
   { name: 'countries', fn: require('./seeds/countries') },
   { name: 'states', fn: require('./seeds/states') },
   { name: 'app_settings', fn: require('./seeds/app-settings') },
+  { name: 'contract_templates', fn: require('./seeds/contract-templates') },
 ];
 
 async function seedAll() {

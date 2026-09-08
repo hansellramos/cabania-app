@@ -19,7 +19,6 @@ webauthnUtils.originalOrigin = function(req) {
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const session = require('express-session');
-const connectPg = require('connect-pg-simple');
 const { prisma } = require('../db');
 
 const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
@@ -38,17 +37,52 @@ function getRpId(req) {
   return req.headers['host']?.split(':')[0] || 'localhost';
 }
 
+// Session store using Prisma (no direct pg connection needed)
+class PrismaSessionStore extends session.Store {
+  async get(sid, cb) {
+    try {
+      const row = await prisma.sessions.findUnique({ where: { sid } });
+      if (!row || row.expire < new Date()) return cb(null, null);
+      cb(null, typeof row.sess === 'string' ? JSON.parse(row.sess) : row.sess);
+    } catch (err) { cb(err); }
+  }
+
+  async set(sid, sess, cb) {
+    try {
+      const expire = sess.cookie?.expires
+        ? new Date(sess.cookie.expires)
+        : new Date(Date.now() + SESSION_TTL * 1000);
+      await prisma.sessions.upsert({
+        where: { sid },
+        create: { sid, sess, expire },
+        update: { sess, expire },
+      });
+      cb?.(null);
+    } catch (err) { cb?.(err); }
+  }
+
+  async destroy(sid, cb) {
+    try {
+      await prisma.sessions.delete({ where: { sid } }).catch(() => {});
+      cb?.(null);
+    } catch (err) { cb?.(err); }
+  }
+
+  async touch(sid, sess, cb) {
+    try {
+      const expire = sess.cookie?.expires
+        ? new Date(sess.cookie.expires)
+        : new Date(Date.now() + SESSION_TTL * 1000);
+      await prisma.sessions.update({ where: { sid }, data: { expire } }).catch(() => {});
+      cb?.(null);
+    } catch (err) { cb?.(err); }
+  }
+}
+
 function getSession() {
-  const pgStore = connectPg(session);
-  const sessionStore = new pgStore({
-    conString: process.env.DATABASE_URL,
-    createTableIfMissing: false,
-    ttl: SESSION_TTL,
-    tableName: 'sessions',
-  });
   return session({
     secret: process.env.SESSION_SECRET || 'dev-secret-change-me',
-    store: sessionStore,
+    store: new PrismaSessionStore(),
     resave: false,
     saveUninitialized: false,
     cookie: {
@@ -293,12 +327,83 @@ async function setupAuth(app) {
         where: { user_id: userId },
       });
 
+      // Impersonation info
+      const isImpersonating = !!req.session.originalUserId;
+      let impersonationInfo = null;
+      if (isImpersonating) {
+        const originalUser = await prisma.users.findUnique({
+          where: { id: req.session.originalUserId },
+          select: { id: true, email: true, display_name: true }
+        });
+        impersonationInfo = { originalUser };
+      }
+
       // Exclude password_hash from response
       const { password_hash, ...userData } = user;
-      res.json({ ...userData, permissionDetails, subscription, has_passkeys: passkeyCount > 0, passkey_count: passkeyCount });
+      res.json({ ...userData, permissionDetails, subscription, has_passkeys: passkeyCount > 0, passkey_count: passkeyCount, is_impersonating: isImpersonating, impersonation: impersonationInfo });
     } catch (error) {
       console.error('Error fetching user:', error);
       res.status(500).json({ message: 'Failed to fetch user' });
+    }
+  });
+
+  // --- Impersonation routes ---
+
+  app.post('/api/auth/impersonate', isAuthenticated, async (req, res) => {
+    try {
+      const { getUserPermissions, hasPermission } = require('./permissions');
+      const currentUserId = String(req.user.claims.sub);
+      const originalUserId = req.session.originalUserId || currentUserId;
+
+      // Check permission on the ORIGINAL user (not the impersonated one)
+      const originalPerms = await getUserPermissions(originalUserId);
+      if (!hasPermission(originalPerms, 'users:impersonate')) {
+        return res.status(403).json({ error: 'No tiene permiso para impersonar usuarios' });
+      }
+
+      const { targetUserId } = req.body;
+      if (!targetUserId) {
+        return res.status(400).json({ error: 'targetUserId requerido' });
+      }
+
+      const targetUser = await prisma.users.findUnique({ where: { id: targetUserId } });
+      if (!targetUser) {
+        return res.status(404).json({ error: 'Usuario no encontrado' });
+      }
+
+      // Store original user and switch session
+      req.session.originalUserId = originalUserId;
+      req.user.claims.sub = targetUserId;
+      req.session.passport.user = { claims: { sub: targetUserId }, expires_at: req.user.expires_at };
+
+      req.session.save((err) => {
+        if (err) return res.status(500).json({ error: 'Error al guardar sesión' });
+        res.json({ message: 'Impersonando usuario', targetUser: { id: targetUser.id, email: targetUser.email, display_name: targetUser.display_name } });
+      });
+    } catch (error) {
+      console.error('Error impersonating:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/auth/stop-impersonating', isAuthenticated, async (req, res) => {
+    try {
+      const originalUserId = req.session.originalUserId;
+      if (!originalUserId) {
+        return res.status(400).json({ error: 'No está impersonando a nadie' });
+      }
+
+      req.user.claims.sub = originalUserId;
+      req.session.passport.user = { claims: { sub: originalUserId }, expires_at: req.user.expires_at };
+      delete req.session.originalUserId;
+
+      req.session.save((err) => {
+        if (err) return res.status(500).json({ error: 'Error al guardar sesión' });
+        res.json({ message: 'Sesión restaurada' });
+      });
+    } catch (error) {
+      console.error('Error stopping impersonation:', error);
+      res.status(500).json({ error: error.message });
     }
   });
 
@@ -376,12 +481,36 @@ async function setupAuth(app) {
   });
 
   // Login options (public) — generates challenge for assertion
-  app.post('/api/auth/passkey/login/options', (req, res, next) => {
+  app.post('/api/auth/passkey/login/options', async (req, res, next) => {
     const options = {
       rpId: getRpId(req),
       userVerification: 'preferred',
       timeout: 60000,
     };
+
+    // If email is provided, include allowCredentials for browsers that don't support discoverable credentials (e.g. Firefox)
+    const { email } = req.body || {};
+    if (email) {
+      try {
+        const user = await prisma.users.findFirst({ where: { email: email.toLowerCase().trim() } });
+        if (user) {
+          const credentials = await prisma.passkey_credentials.findMany({
+            where: { user_id: user.id },
+            select: { credential_id: true },
+          });
+          if (credentials.length > 0) {
+            options.allowCredentials = credentials.map(c => ({
+              id: c.credential_id,
+              type: 'public-key',
+              transports: ['internal', 'hybrid'],
+            }));
+          }
+        }
+      } catch (e) {
+        // Non-critical — continue without allowCredentials
+        console.error('Error fetching passkey credentials for email:', e.message);
+      }
+    }
 
     // The store generates its own challenge and returns it via callback
     challengeStore.challenge(req, options, (err, challenge) => {

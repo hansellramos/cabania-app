@@ -59,6 +59,13 @@
               </CBadge>
             </CTableDataCell>
             <CTableDataCell>
+              <CButton
+                v-if="canImpersonate(user)"
+                color="info"
+                size="sm"
+                class="me-2"
+                @click="onImpersonate(user)"
+              >Impersonar</CButton>
               <CButton color="primary" size="sm" @click="onEdit(user)">Editar</CButton>
               <CButton
                 v-if="user.is_locked"
@@ -108,6 +115,9 @@ import { ref, onMounted, computed, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import { fetchUsers, deleteUser, lockUser, unlockUser } from '@/services/userService'
+import { useAuth } from '@/composables/useAuth'
+
+const { user: currentUser, impersonate } = useAuth()
 
 const users = ref([])
 const searchQuery = ref('')
@@ -210,6 +220,24 @@ async function loadUsers() {
 onMounted(() => {
   loadUsers()
 })
+
+function canImpersonate(u) {
+  if (!currentUser.value) return false
+  if (u.id === currentUser.value.id) return false
+  return currentUser.value.is_super_admin ||
+    currentUser.value.profile?.permissions?.includes('users:impersonate')
+}
+
+async function onImpersonate(u) {
+  if (confirm(`¿Impersonar a "${u.display_name || u.email}"? Verás la app como si fueras ese usuario.`)) {
+    const success = await impersonate(u.id)
+    if (success) {
+      window.location.reload()
+    } else {
+      alert('Error al impersonar usuario')
+    }
+  }
+}
 
 function onEdit(user) {
   router.push(`/users/${user.id}/edit`)

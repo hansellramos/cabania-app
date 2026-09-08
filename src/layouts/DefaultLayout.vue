@@ -3,6 +3,7 @@ import { CContainer } from '@coreui/vue'
 import AppFooter from '@/components/AppFooter.vue'
 import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
+import ImpersonationBanner from '@/components/ImpersonationBanner.vue'
 import TrialBanner from '@/components/TrialBanner.vue'
 import PasskeyBanner from '@/components/PasskeyBanner.vue'
 </script>
@@ -11,6 +12,7 @@ import PasskeyBanner from '@/components/PasskeyBanner.vue'
   <div>
     <AppSidebar />
     <div class="wrapper d-flex flex-column min-vh-100">
+      <ImpersonationBanner />
       <TrialBanner />
       <PasskeyBanner />
       <AppHeader />

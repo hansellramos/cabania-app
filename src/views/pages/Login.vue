@@ -91,6 +91,9 @@
 
         <div class="cabania-forgot-link">
           <router-link to="/pages/forgot-password">¿Olvidaste tu contraseña?</router-link>
+          <a v-if="hasRememberedEmail" href="#" class="cabania-forget-email" @click.prevent="forgetEmail">
+            Dejar de recordar
+          </a>
         </div>
 
         <button
@@ -109,7 +112,7 @@
           <button
             type="button"
             class="cabania-btn cabania-btn--passkey"
-            :disabled="submitting"
+            :disabled="submitting || passkeyBlocked"
             @click="handlePasskeyLogin"
           >
             <svg viewBox="0 0 24 24" fill="none" width="18" height="18">
@@ -119,6 +122,9 @@
             </svg>
             Iniciar con Passkey
           </button>
+          <p v-if="passkeyBlocked" class="cabania-passkey-blocked">
+            Passkeys no es compatible con Firefox en macOS. Usa Chrome o Safari.
+          </p>
         </template>
       </form>
     </div>
@@ -131,12 +137,15 @@ import { useRouter } from 'vue-router';
 import { useAuth } from '@/composables/useAuth';
 
 const THEME_KEY = 'coreui-free-vue-admin-template-theme';
+const REMEMBERED_EMAIL_KEY = 'cabania-remembered-email';
 const router = useRouter();
-const { user, isAuthenticated, isLoading, login, loginWithPasskey, supportsPasskeys, error } = useAuth();
+const { user, isAuthenticated, isLoading, login, loginWithPasskey, supportsPasskeys, passkeyBlocked, error } = useAuth();
 
-const email = ref('');
+const savedEmail = localStorage.getItem(REMEMBERED_EMAIL_KEY) || '';
+const email = ref(savedEmail);
 const password = ref('');
 const submitting = ref(false);
+const hasRememberedEmail = ref(!!savedEmail);
 
 // Theme management (syncs with CoreUI's color mode in the main app)
 const theme = ref(localStorage.getItem(THEME_KEY) || 'auto');
@@ -178,20 +187,34 @@ const goToDashboard = () => {
   router.push('/');
 };
 
+const rememberEmail = (val) => {
+  if (val) {
+    localStorage.setItem(REMEMBERED_EMAIL_KEY, val);
+    hasRememberedEmail.value = true;
+  }
+};
+
+const forgetEmail = () => {
+  localStorage.removeItem(REMEMBERED_EMAIL_KEY);
+  hasRememberedEmail.value = false;
+};
+
 const handleLogin = async () => {
   submitting.value = true;
   const success = await login(email.value, password.value);
   submitting.value = false;
   if (success) {
+    rememberEmail(email.value);
     router.push('/');
   }
 };
 
 const handlePasskeyLogin = async () => {
   submitting.value = true;
-  const success = await loginWithPasskey();
+  const success = await loginWithPasskey(email.value || undefined);
   submitting.value = false;
   if (success) {
+    rememberEmail(email.value);
     router.push('/');
   }
 };
@@ -566,7 +589,8 @@ const handlePasskeyLogin = async () => {
 
 /* --- Forgot password link --- */
 .cabania-forgot-link {
-  text-align: right;
+  display: flex;
+  justify-content: space-between;
   margin: -0.5rem 0 1rem;
 }
 .cabania-forgot-link a {
@@ -577,5 +601,14 @@ const handlePasskeyLogin = async () => {
 }
 .cabania-forgot-link a:hover {
   color: #10b981;
+}
+.cabania-forget-email:hover {
+  color: #ef4444 !important;
+}
+.cabania-passkey-blocked {
+  text-align: center;
+  color: var(--cl-text-muted);
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
 }
 </style>
