@@ -7406,6 +7406,12 @@ REGLAS:
 
         if (!senderId || !recipientId || !msgData) return;
 
+        // Ignore the "echo" of messages the account itself sends. Instagram
+        // also forwards outbound messages over the webhook with is_echo=true
+        // (and recipient.id = the customer's IGSID), causing a useless
+        // "No venue found".
+        if (msgData.is_echo) return;
+
         // Find venue by ig_user_id
         const conn = await prisma.instagram_connections.findFirst({
           where: { ig_user_id: recipientId }
@@ -7442,6 +7448,19 @@ REGLAS:
         }
 
         if (!userMessage) return;
+
+        // Instagram may redeliver the same webhook event (e.g. if it decides
+        // the first delivery was too slow) — skip if we already processed
+        // this message id to avoid duplicate messages / duplicate AI replies.
+        if (mid) {
+          const alreadyProcessed = await prisma.chat_messages.findFirst({
+            where: { external_id: mid }
+          });
+          if (alreadyProcessed) {
+            console.log(`[ig-webhook] Duplicate delivery for mid=${mid}, skipping`);
+            return;
+          }
+        }
 
         // Find or create conversation
         let conversation = await prisma.chat_conversations.findFirst({
@@ -7506,7 +7525,9 @@ REGLAS:
           conversation,
           source: 'instagram',
           media_url,
-          media_type
+          media_type,
+          contact_type: 'instagram',
+          contact_value: senderId
         });
 
         // Send AI response via Instagram
@@ -7594,7 +7615,7 @@ REGLAS:
         updateData.status = 'connected';
       }
 
-      await prisma.instagram_connections.upsert({
+      const conn = await prisma.instagram_connections.upsert({
         where: { venue_id },
         update: updateData,
         create: {
@@ -7603,7 +7624,26 @@ REGLAS:
         }
       });
 
-      res.json({ success: true });
+      // Subscribe the app to this Instagram account's webhooks. Without this
+      // Instagram does NOT forward DMs, even if the token is stored and the
+      // webhook is verified in Meta.
+      let subscription = null;
+      if (conn.ig_user_id && conn.access_token) {
+        try {
+          await metaInstagram.subscribeApp(conn.ig_user_id, conn.access_token, 'messages');
+          subscription = { subscribed: true };
+        } catch (subErr) {
+          console.error('[instagram/config] subscribed_apps failed:', subErr.message);
+          subscription = { subscribed: false, error: subErr.message };
+          // Mark the connection as error so the UI can show it.
+          await prisma.instagram_connections.update({
+            where: { venue_id },
+            data: { status: 'error' }
+          });
+        }
+      }
+
+      res.json({ success: true, subscription });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -8258,14 +8298,18 @@ REGLAS:
                              (parseFloat(matchingPlan.child_price) * children);
           }
 
-          // Create the estimate
+          // Create the estimate. Prefer the explicit contact_type; otherwise
+          // fall back to the conversation channel so an Instagram chat is not
+          // mislabeled as WhatsApp.
+          const estimateContactType = contact_type
+            || (source === 'instagram' ? 'instagram' : 'whatsapp');
           const estimate = await prisma.estimates.create({
             data: {
               venue_id,
               plan_id: matchingPlan?.id || null,
               customer_name: args.customer_name,
-              contact_type: contact_type || 'whatsapp',
-              contact_value: contact_value || '',
+              contact_type: estimateContactType,
+              contact_value: contact_value || conversation.phone || '',
               check_in: args.check_in ? new Date(args.check_in) : null,
               check_out: args.check_out ? new Date(args.check_out) : (args.check_in ? new Date(args.check_in) : null),
               adults: args.adults || 0,

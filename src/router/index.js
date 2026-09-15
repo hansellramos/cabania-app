@@ -519,6 +519,13 @@ const routes = [
         meta: { breadcrumb: 'WhatsApp - CabanIA' },
       },
       {
+        path: '/business/venues/:id/instagram',
+        name: 'VenueInstagram',
+        component: () => import('@/views/venues/InstagramConnectionView.vue'),
+        props: true,
+        meta: { breadcrumb: 'Instagram - CabanIA' },
+      },
+      {
         path: '/business/venues/:id/payment-methods',
         name: 'VenuePaymentMethods',
         component: () => import('@/views/venues/VenuePaymentMethodsView.vue'),
