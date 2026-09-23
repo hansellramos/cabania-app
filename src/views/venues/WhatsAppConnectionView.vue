@@ -115,6 +115,14 @@
               />
             </div>
             <div class="mb-3">
+              <label class="form-label small fw-semibold">WhatsApp Business Account ID (WABA)</label>
+              <CFormInput
+                v-model="cloudConfig.meta_waba_id"
+                placeholder="Ej: 1803687113986428"
+                size="sm"
+              />
+            </div>
+            <div class="mb-3">
               <label class="form-label small fw-semibold">Access Token</label>
               <CFormInput
                 v-model="cloudConfig.meta_access_token"
@@ -473,6 +481,7 @@ const escSaveMsg = ref(null)
 const cloudConfig = ref({
   channel: 'baileys',
   meta_phone_number_id: '',
+  meta_waba_id: '',
   meta_access_token: '',
   meta_verify_token: ''
 })
@@ -686,6 +695,7 @@ async function fetchCloudConfig() {
       cloudConfig.value = {
         channel: data.channel || 'baileys',
         meta_phone_number_id: data.meta_phone_number_id || '',
+        meta_waba_id: data.meta_waba_id || '',
         meta_access_token: data.has_token ? '••••••' : '',
         meta_verify_token: data.meta_verify_token || ''
       }

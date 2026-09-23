@@ -7185,7 +7185,7 @@ REGLAS:
         if (value.messages && value.messages.length > 0) {
           for (const msg of value.messages) {
             try {
-              const from = msg.from; // sender phone
+              const from = msg.from || msg.from_user_id; // sender phone (some test numbers send from_user_id instead of from)
               const wamid = msg.id;
 
               // Check excluded phones
@@ -7667,6 +7667,7 @@ REGLAS:
       res.json({
         channel: conn?.channel || 'baileys',
         meta_phone_number_id: conn?.meta_phone_number_id || '',
+        meta_waba_id: conn?.meta_waba_id || '',
         meta_access_token: conn?.meta_access_token ? '••••••' : '',
         meta_verify_token: conn?.meta_verify_token || '',
         has_token: !!conn?.meta_access_token
@@ -7685,12 +7686,13 @@ REGLAS:
         return res.status(403).json({ error: 'Solo super admin' });
       }
 
-      const { channel, meta_phone_number_id, meta_access_token, meta_verify_token } = req.body;
+      const { channel, meta_phone_number_id, meta_waba_id, meta_access_token, meta_verify_token } = req.body;
       const venue_id = req.params.id;
 
       const updateData = {
         channel: channel || 'baileys',
         meta_phone_number_id: meta_phone_number_id || null,
+        meta_waba_id: meta_waba_id || null,
         meta_verify_token: meta_verify_token || null,
         updated_at: new Date()
       };
@@ -7705,7 +7707,7 @@ REGLAS:
         updateData.status = 'connected';
       }
 
-      await prisma.whatsapp_connections.upsert({
+      const conn = await prisma.whatsapp_connections.upsert({
         where: { venue_id },
         update: updateData,
         create: {
@@ -7716,7 +7718,26 @@ REGLAS:
         }
       });
 
-      res.json({ success: true });
+      // Subscribe the app to this WABA's webhooks. Without this Meta does NOT
+      // forward messages, even if the token is stored and the webhook is
+      // verified. WhatsApp subscribes at the WABA level, unlike Instagram
+      // which subscribes at the IG user level.
+      let subscription = null;
+      if (conn.channel === 'cloud_api' && conn.meta_waba_id && conn.meta_access_token) {
+        try {
+          await metaWhatsApp.subscribeApp(conn.meta_waba_id, conn.meta_access_token, 'messages');
+          subscription = { subscribed: true };
+        } catch (subErr) {
+          console.error('[whatsapp/cloud-config] subscribed_apps failed:', subErr.message);
+          subscription = { subscribed: false, error: subErr.message };
+          await prisma.whatsapp_connections.update({
+            where: { venue_id },
+            data: { status: 'error' }
+          });
+        }
+      }
+
+      res.json({ success: true, subscription });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

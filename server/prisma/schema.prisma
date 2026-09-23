@@ -968,6 +968,7 @@ model whatsapp_connections {
   meta_phone_number_id String?   @db.VarChar(50)
   meta_access_token    String?
   meta_verify_token    String?   @db.VarChar(100)
+  meta_waba_id         String?   @db.VarChar(50)
 }
 
 model instagram_connections {
