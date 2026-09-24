@@ -7141,14 +7141,34 @@ REGLAS:
   // ==================== Meta WhatsApp Cloud API Webhook ====================
 
   // GET /api/webhook/whatsapp — Meta verification challenge
-  app.get('/api/webhook/whatsapp', (req, res) => {
+  //
+  // Same precedence as the Instagram webhook: the token saved per venue from the UI
+  // (whatsapp_connections.meta_verify_token) wins, META_WEBHOOK_VERIFY_TOKEN is the
+  // fallback for venues that never set one.
+  app.get('/api/webhook/whatsapp', async (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    const verifyToken = process.env.META_WEBHOOK_VERIFY_TOKEN;
-    if (mode === 'subscribe' && token === verifyToken) {
-      console.log('[meta-webhook] Verification successful');
+    if (mode !== 'subscribe' || !token) {
+      console.warn('[meta-webhook] Verification failed', { mode, token: token?.slice(0, 6) });
+      return res.sendStatus(403);
+    }
+
+    let matched = null;
+    try {
+      matched = await prisma.whatsapp_connections.findFirst({
+        where: { meta_verify_token: token },
+        select: { venue_id: true }
+      });
+    } catch (err) {
+      console.error('[meta-webhook] verify_token lookup failed:', err.message);
+    }
+
+    if (matched || token === process.env.META_WEBHOOK_VERIFY_TOKEN) {
+      console.log('[meta-webhook] Verification successful', {
+        source: matched ? `connection:${matched.venue_id}` : 'env'
+      });
       return res.status(200).send(challenge);
     }
     console.warn('[meta-webhook] Verification failed', { mode, token: token?.slice(0, 6) });
@@ -7185,7 +7205,7 @@ REGLAS:
         if (value.messages && value.messages.length > 0) {
           for (const msg of value.messages) {
             try {
-              const from = msg.from; // sender phone
+              const from = msg.from || msg.from_user_id; // sender phone (some test numbers send from_user_id instead of from)
               const wamid = msg.id;
 
               // Check excluded phones
@@ -7372,14 +7392,35 @@ REGLAS:
   // ==================== Meta Instagram Messaging Webhook ====================
 
   // GET /api/webhook/instagram — Meta verification challenge
-  app.get('/api/webhook/instagram', (req, res) => {
+  //
+  // The token configured per venue from the UI (instagram_connections.verify_token)
+  // takes precedence; META_IG_WEBHOOK_VERIFY_TOKEN stays as a fallback for venues
+  // that never set one. Meta does not tell us which account it is verifying, so we
+  // accept the challenge when the token matches any stored connection.
+  app.get('/api/webhook/instagram', async (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    const verifyToken = process.env.META_IG_WEBHOOK_VERIFY_TOKEN;
-    if (mode === 'subscribe' && token === verifyToken) {
-      console.log('[ig-webhook] Verification successful');
+    if (mode !== 'subscribe' || !token) {
+      console.warn('[ig-webhook] Verification failed', { mode, token: token?.slice(0, 6) });
+      return res.sendStatus(403);
+    }
+
+    let matched = null;
+    try {
+      matched = await prisma.instagram_connections.findFirst({
+        where: { verify_token: token },
+        select: { venue_id: true }
+      });
+    } catch (err) {
+      console.error('[ig-webhook] verify_token lookup failed:', err.message);
+    }
+
+    if (matched || token === process.env.META_IG_WEBHOOK_VERIFY_TOKEN) {
+      console.log('[ig-webhook] Verification successful', {
+        source: matched ? `connection:${matched.venue_id}` : 'env'
+      });
       return res.status(200).send(challenge);
     }
     console.warn('[ig-webhook] Verification failed', { mode, token: token?.slice(0, 6) });
@@ -7667,6 +7708,7 @@ REGLAS:
       res.json({
         channel: conn?.channel || 'baileys',
         meta_phone_number_id: conn?.meta_phone_number_id || '',
+        meta_waba_id: conn?.meta_waba_id || '',
         meta_access_token: conn?.meta_access_token ? '••••••' : '',
         meta_verify_token: conn?.meta_verify_token || '',
         has_token: !!conn?.meta_access_token
@@ -7685,12 +7727,13 @@ REGLAS:
         return res.status(403).json({ error: 'Solo super admin' });
       }
 
-      const { channel, meta_phone_number_id, meta_access_token, meta_verify_token } = req.body;
+      const { channel, meta_phone_number_id, meta_waba_id, meta_access_token, meta_verify_token } = req.body;
       const venue_id = req.params.id;
 
       const updateData = {
         channel: channel || 'baileys',
         meta_phone_number_id: meta_phone_number_id || null,
+        meta_waba_id: meta_waba_id || null,
         meta_verify_token: meta_verify_token || null,
         updated_at: new Date()
       };
@@ -7705,7 +7748,7 @@ REGLAS:
         updateData.status = 'connected';
       }
 
-      await prisma.whatsapp_connections.upsert({
+      const conn = await prisma.whatsapp_connections.upsert({
         where: { venue_id },
         update: updateData,
         create: {
@@ -7716,7 +7759,26 @@ REGLAS:
         }
       });
 
-      res.json({ success: true });
+      // Subscribe the app to this WABA's webhooks. Without this Meta does NOT
+      // forward messages, even if the token is stored and the webhook is
+      // verified. WhatsApp subscribes at the WABA level, unlike Instagram
+      // which subscribes at the IG user level.
+      let subscription = null;
+      if (conn.channel === 'cloud_api' && conn.meta_waba_id && conn.meta_access_token) {
+        try {
+          await metaWhatsApp.subscribeApp(conn.meta_waba_id, conn.meta_access_token, 'messages');
+          subscription = { subscribed: true };
+        } catch (subErr) {
+          console.error('[whatsapp/cloud-config] subscribed_apps failed:', subErr.message);
+          subscription = { subscribed: false, error: subErr.message };
+          await prisma.whatsapp_connections.update({
+            where: { venue_id },
+            data: { status: 'error' }
+          });
+        }
+      }
+
+      res.json({ success: true, subscription });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
