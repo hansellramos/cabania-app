@@ -104,4 +104,52 @@ async function markAsRead(phoneNumberId, token, messageId) {
   });
 }
 
-module.exports = { sendText, sendImage, sendTemplate, downloadMedia, markAsRead };
+/**
+ * Subscribe this app to the WABA's webhook messaging events.
+ * Without this call Meta does NOT forward messages to the webhook, even if
+ * the webhook is verified and the `messages` field is subscribed at the app
+ * level. Unlike Instagram (subscribed at the IG user level), WhatsApp Cloud
+ * API subscribes at the WhatsApp Business Account (WABA) level.
+ * @param {string} wabaId - WhatsApp Business Account ID
+ * @param {string} token - Account/system access token
+ * @param {string} [fields='messages'] - Comma-separated fields to subscribe
+ */
+async function subscribeApp(wabaId, token, fields = 'messages') {
+  const res = await fetch(`${GRAPH_API}/${wabaId}/subscribed_apps`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ subscribed_fields: fields, access_token: token })
+  });
+  const body = await res.json();
+  if (!res.ok || body.success === false) {
+    throw new Error(`WABA subscribed_apps ${res.status}: ${JSON.stringify(body)}`);
+  }
+  return body;
+}
+
+/**
+ * List the apps subscribed to the WABA's webhooks. Useful to verify that
+ * subscribeApp() took effect.
+ * @param {string} wabaId - WhatsApp Business Account ID
+ * @param {string} token - Account/system access token
+ */
+async function getSubscribedApps(wabaId, token) {
+  const res = await fetch(
+    `${GRAPH_API}/${wabaId}/subscribed_apps?access_token=${encodeURIComponent(token)}`
+  );
+  const body = await res.json();
+  if (!res.ok) {
+    throw new Error(`WABA subscribed_apps GET ${res.status}: ${JSON.stringify(body)}`);
+  }
+  return body.data || [];
+}
+
+module.exports = {
+  sendText,
+  sendImage,
+  sendTemplate,
+  downloadMedia,
+  markAsRead,
+  subscribeApp,
+  getSubscribedApps
+};
