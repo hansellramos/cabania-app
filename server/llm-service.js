@@ -93,8 +93,17 @@ async function callOpenAICompatibleAPI(apiKey, baseUrl, model, messages, options
   if (tools && tools.length > 0) {
     body.tools = tools;
     body.tool_choice = 'auto';
+  } else if (messages.some(m => m.role === 'tool' || (Array.isArray(m.tool_calls) && m.tool_calls.length))) {
+    // Post-tool turn: the history contains tool_calls / 'tool' messages but the
+    // caller no longer passes `tools`. Strict providers (e.g. Groq) then fail
+    // with "Tool choice is none, but model called a tool" because they infer
+    // tool_choice='none'. The model may still legitimately want to call the
+    // next tool in the flow (e.g. get_payment_methods after create_estimate),
+    // so restate the toolset and leave the choice to the model.
+    body.tools = CHAT_TOOLS;
+    body.tool_choice = 'auto';
   }
-  
+
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
