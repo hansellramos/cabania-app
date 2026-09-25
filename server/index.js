@@ -8721,15 +8721,42 @@ REGLAS:
 
     console.log('[bold] Payment recorded', { link: link.bold_link_id, ...result });
 
+    // The contract is generated outside the payment transaction: a missing or
+    // broken template must not undo a payment the guest already made.
+    let contractUrl = null;
+    if (result.accommodationId) {
+      try {
+        let contract = await prisma.contracts.findFirst({ where: { accommodation_id: result.accommodationId } });
+        if (!contract) {
+          const accommodation = await prisma.accommodations.findUnique({ where: { id: result.accommodationId } });
+          const created = await createAccommodationContract(accommodation, 'system:bold');
+          contract = created.snapshot_html ? created : null;
+          if (!contract) {
+            // No active template for this venue: nothing the guest could sign.
+            await prisma.contracts.delete({ where: { id: created.id } });
+          }
+        }
+        if (contract && contract.status !== 'signed') {
+          contractUrl = `${appBaseUrl()}/#/contract/${contract.qr_token}`;
+        }
+        console.log('[bold] Contract', { accommodation: result.accommodationId, contract: contract?.id || null });
+      } catch (err) {
+        console.error('[bold] Contract could not be generated', { accommodation: result.accommodationId, error: err.message });
+      }
+    }
+
     if (link.conversation_id) {
       const conversation = await prisma.chat_conversations.findUnique({ where: { id: link.conversation_id } });
       if (conversation) {
         const venueName = result.venueName || 'la cabaña';
-        await notifyConversation(conversation, result.balance > 0
+        const confirmation = result.balance > 0
           ? `✅ ¡Pago recibido! Recibimos tu anticipo de ${money(link.amount)} y tu reserva en ${venueName} `
-            + `quedó confirmada. Saldo pendiente: ${money(result.balance)}. ¡Te esperamos! 🎉`
+            + `quedó confirmada. Saldo pendiente: ${money(result.balance)}.`
           : `✅ ¡Pago recibido! Confirmamos tu pago de ${money(link.amount)}. `
-            + `Tu reserva en ${venueName} quedó confirmada. ¡Te esperamos! 🎉`);
+            + `Tu reserva en ${venueName} quedó confirmada.`;
+        await notifyConversation(conversation, contractUrl
+          ? `${confirmation}\n\n📝 Por favor lee y firma tu contrato de alquiler aquí: ${contractUrl}\n\n¡Te esperamos! 🎉`
+          : `${confirmation} ¡Te esperamos! 🎉`);
       }
     }
   }
@@ -12739,6 +12766,22 @@ Responde con JSON EXACTAMENTE en este formato:
     return { snapshotHtml, templateId: template?.id || null };
   }
 
+  async function createAccommodationContract(accommodation, createdBy, templateId = null) {
+    const accessCode = String(Math.floor(100000 + Math.random() * 900000));
+    const snapshot = await buildContractSnapshot(accommodation, templateId);
+    return prisma.contracts.create({
+      data: {
+        accommodation_id: accommodation.id,
+        template_id: snapshot.templateId,
+        snapshot_html: snapshot.snapshotHtml,
+        access_code: accessCode,
+        status: 'draft',
+        created_by: createdBy,
+      },
+      include: { attachments: true },
+    });
+  }
+
   app.post('/api/accommodations/:id/contract', isAuthenticated, async (req, res) => {
     try {
       if (!(await canAccessAccommodationContract(req, req.params.id, 'manage'))) {
@@ -12751,21 +12794,7 @@ Responde con JSON EXACTAMENTE en este formato:
       const existing = await prisma.contracts.findFirst({ where: { accommodation_id: req.params.id } });
       if (existing) return res.status(400).json({ error: 'Ya existe un contrato para este hospedaje' });
 
-      const accessCode = String(Math.floor(100000 + Math.random() * 900000));
-      const { snapshotHtml, templateId } = await buildContractSnapshot(accommodation, req.body?.template_id || null);
-
-      const contract = await prisma.contracts.create({
-        data: {
-          accommodation_id: req.params.id,
-          template_id: templateId,
-          snapshot_html: snapshotHtml,
-          access_code: accessCode,
-          status: 'draft',
-          created_by: userId,
-        },
-        include: { attachments: true },
-      });
-
+      const contract = await createAccommodationContract(accommodation, userId, req.body?.template_id || null);
       res.json(contract);
     } catch (error) {
       res.status(500).json({ error: error.message });
