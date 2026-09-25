@@ -222,7 +222,45 @@ async function getQrPayment(referenceId) {
   };
 }
 
+/**
+ * Bold's fee per payment method, before the 19% VAT charged on the fee itself.
+ * The API does not report the fee of each transaction, so it is estimated.
+ * QR / Bre-B is the observed charge ($28,80 per $1.000 = 2,42% + IVA); the rest
+ * are Bold's published online rates (July 2026). BOLD_FEES (JSON, e.g.
+ * {"qr":{"rate":2.42,"fixed":0}}) overrides any of them.
+ */
+const DEFAULT_FEES = {
+  qr: { rate: 2.42, fixed: 0 },
+  pse: { rate: 2.89, fixed: 300 },
+  wallet: { rate: 1.5, fixed: 0 },
+  card: { rate: 3.29, fixed: 900 }
+};
+const FEE_VAT = 0.19;
+
+function feeGroup(paymentMethod) {
+  const method = String(paymentMethod || '').toUpperCase();
+  if (/QR|BRE/.test(method)) return 'qr';
+  if (/PSE/.test(method)) return 'pse';
+  if (/NEQUI|DAVIPLATA/.test(method)) return 'wallet';
+  // Cards and anything unknown: the highest rate, so the estimate never falls short.
+  return 'card';
+}
+
+function estimateFee(amount, paymentMethod) {
+  let overrides = {};
+  try {
+    overrides = JSON.parse(process.env.BOLD_FEES || '{}');
+  } catch {
+    console.error('[bold] BOLD_FEES is not valid JSON, using default fees');
+  }
+  const group = feeGroup(paymentMethod);
+  const { rate, fixed } = { ...DEFAULT_FEES[group], ...overrides[group] };
+  const fee = (Number(amount) * rate / 100 + fixed) * (1 + FEE_VAT);
+  return { group, rate, fixed, fee: Math.round(fee * 100) / 100 };
+}
+
 module.exports = {
+  estimateFee,
   isConfigured,
   isQrConfigured,
   createQrPayment,

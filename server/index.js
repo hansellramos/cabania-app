@@ -8691,6 +8691,33 @@ REGLAS:
           });
         }
 
+        // Bold keeps its fee from the deposit and the API does not report it:
+        // record the estimate so the venue's net income matches the account.
+        const fee = bold.estimateFee(link.amount, state.paymentMethod);
+        if (fee.fee > 0) {
+          const categoryName = 'Comisiones de pago';
+          const category = await tx.expense_categories.findFirst({ where: { name: categoryName } })
+            || await tx.expense_categories.create({
+              data: { name: categoryName, description: 'Comisiones de pasarelas de pago (Bold)', is_system: true }
+            });
+          await tx.expenses.create({
+            data: {
+              organization_id: venue?.organization || null,
+              venue_id: venueId,
+              accommodation_id: accommodationId,
+              category_id: category.id,
+              amount: fee.fee,
+              description: `Comisión Bold (${state.paymentMethod || 'link de pago'})`,
+              expense_date: now,
+              reference: state.transactionId || link.bold_link_id,
+              notes: `Estimada: ${fee.rate}%${fee.fixed ? ` + $${fee.fixed}` : ''} + IVA sobre ${money(link.amount)}. `
+                + 'Bold no informa la comisión por API; ajústala si el panel de Bold muestra otro valor.',
+              subcategory: 'Bold',
+              created_by: 'system:bold'
+            }
+          });
+        }
+
         await tx.bold_payment_links.update({
           where: { id: link.id },
           data: { payment_id: payment.id, accommodation_id: accommodationId }
