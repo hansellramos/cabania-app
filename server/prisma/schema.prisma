@@ -22,6 +22,14 @@ model accommodations {
   plan_id          String?   @db.Uuid
   created_by            String?   @db.VarChar(255)
   commission_agent_id   String?   @db.Uuid
+  // The guest did not show up. By contract what they paid is kept; the venue may
+  // still move the booking to another date as a courtesy (rescheduled_*).
+  no_show_at            DateTime? @db.Timestamptz(6)
+  no_show_by            String?   @db.VarChar(255)
+  no_show_note          String?   @db.Text
+  original_date         DateTime? @db.Date
+  rescheduled_at        DateTime? @db.Timestamptz(6)
+  rescheduled_by        String?   @db.VarChar(255)
 }
 
 model payments {

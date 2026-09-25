@@ -1729,6 +1729,92 @@ async function startServer() {
     }
   });
 
+  // ==================== No-show and courtesy reschedule ====================
+
+  /** The booking if the user may edit it (full permission, or their own with :own). */
+  async function findEditableAccommodation(req) {
+    if (!UUID_PATTERN.test(req.params.id)) return null;
+    const acc = await prisma.accommodations.findUnique({ where: { id: req.params.id } });
+    if (!acc) return null;
+    const perms = req.userPermissions;
+    if (hasPermission(perms, 'accommodations:edit')) return acc;
+    if (hasPermission(perms, 'accommodations:edit:own') && acc.created_by === String(req.user.claims?.sub)) return acc;
+    return null;
+  }
+
+  // POST /api/accommodations/:id/no-show — the guest did not come. Payments stay
+  // as they are (by contract the guest loses them).
+  app.post('/api/accommodations/:id/no-show', isAuthenticated, async (req, res) => {
+    try {
+      const acc = await findEditableAccommodation(req);
+      if (!acc) return res.status(404).json({ error: 'Alquiler no encontrado o sin permiso' });
+      const today = new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }));
+      if (acc.date && new Date(acc.date) > today) {
+        return res.status(400).json({ error: 'Solo se puede marcar después de la fecha del alquiler' });
+      }
+      const updated = await prisma.accommodations.update({
+        where: { id: acc.id },
+        data: {
+          no_show_at: new Date(),
+          no_show_by: String(req.user.claims?.sub),
+          no_show_note: String(req.body?.note || '').trim() || null
+        }
+      });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // DELETE /api/accommodations/:id/no-show — marked by mistake
+  app.delete('/api/accommodations/:id/no-show', isAuthenticated, async (req, res) => {
+    try {
+      const acc = await findEditableAccommodation(req);
+      if (!acc) return res.status(404).json({ error: 'Alquiler no encontrado o sin permiso' });
+      if (acc.rescheduled_at) return res.status(400).json({ error: 'Ya fue reagendado; cambia la fecha desde Editar si hace falta' });
+      const updated = await prisma.accommodations.update({
+        where: { id: acc.id },
+        data: { no_show_at: null, no_show_by: null, no_show_note: null }
+      });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/accommodations/:id/reschedule — courtesy new date for a no-show.
+  // Same booking: payments, contract and the agent's commission move with it.
+  app.post('/api/accommodations/:id/reschedule', isAuthenticated, async (req, res) => {
+    try {
+      const acc = await findEditableAccommodation(req);
+      if (!acc) return res.status(404).json({ error: 'Alquiler no encontrado o sin permiso' });
+      if (!acc.no_show_at) return res.status(400).json({ error: 'Primero márcalo como "No asistió"' });
+      const newDate = /^\d{4}-\d{2}-\d{2}$/.test(req.body?.date || '') ? new Date(`${req.body.date}T00:00:00.000Z`) : null;
+      if (!newDate) return res.status(400).json({ error: 'Fecha no válida' });
+      const today = new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }));
+      if (newDate < today) return res.status(400).json({ error: 'La nueva fecha ya pasó' });
+
+      const { conflict } = await findBookingConflict(acc.venue, newDate, newDate);
+      if (conflict && conflict.id !== acc.id) {
+        return res.status(409).json({ error: 'Esa fecha ya está reservada en la cabaña' });
+      }
+      const note = String(req.body?.note || '').trim();
+      const updated = await prisma.accommodations.update({
+        where: { id: acc.id },
+        data: {
+          original_date: acc.original_date || acc.date,
+          date: newDate,
+          rescheduled_at: new Date(),
+          rescheduled_by: String(req.user.claims?.sub),
+          ...(note && { no_show_note: [acc.no_show_note, `Reagendado: ${note}`].filter(Boolean).join('\n') })
+        }
+      });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.put('/api/accommodations/:id', isAuthenticated, async (req, res) => {
     try {
       // :own pattern — only allow editing own accommodations
