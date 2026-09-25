@@ -6,6 +6,12 @@ export default [
     meta: { breadcrumb: 'Reporte de Ingresos' }
   },
   {
+    path: '/business/payments/online',
+    name: 'BoldPayments',
+    component: () => import('@/views/payments/BoldPaymentsView.vue'),
+    meta: { breadcrumb: 'Pagos en línea' }
+  },
+  {
     path: '/business/payments/new',
     name: 'PaymentCreate',
     component: () => import('@/views/payments/PaymentFormView.vue'),

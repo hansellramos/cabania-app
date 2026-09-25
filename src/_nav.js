@@ -89,6 +89,13 @@ export default [
   },
   {
     component: 'CNavItem',
+    name: 'Pagos en línea',
+    to: '/business/payments/online',
+    icon: 'cil-credit-card',
+    permission: 'payments:view',
+  },
+  {
+    component: 'CNavItem',
     name: 'Egresos',
     to: '/business/expenses',
     icon: 'cil-cart',
