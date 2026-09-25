@@ -385,13 +385,24 @@ CONFIRMACIÓN DE RESERVA:
 - Una vez creada la cotización, confirma los detalles al cliente.
 
 FLUJO DE PAGO (después de crear cotización):
-1. Una vez creada la cotización, usa "get_payment_methods" para obtener los métodos de pago disponibles
-2. Presenta las opciones al cliente de forma clara (ej: "Puedes pagar por Nequi, Daviplata o Bancolombia")
-3. Cuando el cliente elija un método, usa "send_payment_info" con el estimate_id y el payment_method_id elegido
-4. El sistema enviará automáticamente el QR o datos de la cuenta al cliente
-5. Cuando el cliente envíe una imagen (comprobante), el sistema la procesará automáticamente
-6. NO confirmes el pago tú mismo — solo el venue puede verificar pagos
-7. Informa al cliente que su comprobante fue recibido y será verificado pronto
+0. Antes de cobrar, resume la cotización en pocas líneas (plan, fecha, personas, total y el anticipo si aplica: create_estimate devuelve advance_amount y balance_amount) y pregunta si quiere reservar. Solo avanza al pago cuando el cliente confirme, o si él mismo pide pagar. Pregunta una sola vez: si el cliente ya dijo que sí, continúa con el pago sin volver a pedir confirmación
+1. Con la confirmación, usa "get_payment_methods" para obtener los métodos de pago disponibles
+2. Si hay un solo método, envíalo directamente (paso 3) sin preguntar. Si hay varios, pregunta solo cuál prefiere (ej: "¿Nequi, Daviplata o Bancolombia?")
+3. Cuando el cliente elija un método (aunque sea el único disponible), usa "send_payment_info" de inmediato con el estimate_id y el payment_method_id elegido. No le vuelvas a pedir confirmación
+4. El sistema enviará automáticamente el QR, los datos de la cuenta o el link de pago al cliente
+5. Si el método es de pago en línea ("online": true), NO pidas comprobante: el pago se confirma solo y el sistema le avisará al cliente por este chat cuando se acredite
+6. Para los demás métodos, cuando el cliente envíe una imagen (comprobante), el sistema la procesará automáticamente
+7. NO confirmes el pago tú mismo — solo el venue o el sistema de pagos pueden confirmarlo
+8. Con un comprobante de un método que no es en línea, informa al cliente que fue recibido y será verificado pronto
+9. Nunca le muestres al cliente IDs internos (de cotización, método de pago, etc.)
+9b. Si send_payment_info dice que falta un contacto, pide al cliente su WhatsApp o su correo "para enviarte la confirmación y el contrato", guárdalo con save_contact_info y vuelve a llamar send_payment_info
+10. Si hay anticipo, explica que ese pago asegura la fecha y que el saldo se paga después según las condiciones de la cabaña
+11. No presiones con tiempos. Si el cliente pide pagar con QR o Bre-B, usa send_payment_info con format "qr"; si el QR se vence, ofrece enviar uno nuevo
+
+PREGUNTAS DE SÍ O NO:
+- Cuando le hagas al cliente una pregunta de sí o no (por ejemplo, confirmar la reserva), termina el mensaje con [[botones: <respuesta afirmativa corta> | Sigamos conversando]]. Ej: [[botones: Sí, reservar | Sigamos conversando]]
+- El chat muestra esas opciones como botones; no las repitas en el texto
+- Usa "Sigamos conversando" en lugar de "No": invita a seguir, no cierra la conversación
 
 ESCALAMIENTO A HUMANO:
 - Si el cliente pide hablar con un humano, una persona real, un encargado, el dueño, o similar → usa escalate_to_human con reason "client_requested"
@@ -592,9 +603,29 @@ const CHAT_TOOLS = [
           payment_amount: {
             type: 'number',
             description: 'Monto a pagar'
+          },
+          format: {
+            type: 'string',
+            enum: ['auto', 'qr'],
+            description: 'Solo para pago en línea: "qr" si el cliente pide pagar con QR o Bre-B desde la app de su banco; si no, "auto" (el sistema elige botón o QR según el dispositivo)'
           }
         },
         required: ['estimate_id', 'payment_method_id']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_contact_info',
+      description: 'Guarda el WhatsApp y/o el correo que el cliente compartió para enviarle la confirmación y el contrato. Úsala cuando send_payment_info indique que falta un contacto, apenas el cliente te dé el dato.',
+      parameters: {
+        type: 'object',
+        properties: {
+          whatsapp: { type: 'string', description: 'Número de WhatsApp con indicativo si lo dio (ej: 3001234567 o +57 300 123 4567)' },
+          email: { type: 'string', description: 'Correo electrónico' }
+        },
+        required: []
       }
     }
   },

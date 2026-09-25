@@ -91,11 +91,17 @@
           <CFormLabel>Nombre Visible</CFormLabel>
           <CFormInput v-model="form.label" placeholder="Ej: Nequi, Bancolombia Ahorros" required />
         </div>
-        <div class="mb-3">
+        <CAlert v-if="form.method_type === 'bold'" color="info" class="small py-2">
+          Por WhatsApp e Instagram el cliente recibe un QR de Bold para pagar desde la app de su
+          banco (vence en 10 minutos) y un link de respaldo (QR, Nequi, PSE, Botón Bancolombia o
+          tarjeta). La reserva se confirma automáticamente cuando Bold aprueba el pago. No hace
+          falta cargar cuenta ni QR.
+        </CAlert>
+        <div v-if="form.method_type !== 'bold'" class="mb-3">
           <CFormLabel>Numero / Cuenta / Llave</CFormLabel>
           <CFormInput v-model="form.account_info" placeholder="Ej: 300-123-4567, @casabaluna" />
         </div>
-        <div class="mb-3">
+        <div v-if="form.method_type !== 'bold'" class="mb-3">
           <CFormLabel>Titular de la Cuenta</CFormLabel>
           <CFormInput v-model="form.holder_name" placeholder="Ej: Juan Perez" />
         </div>
@@ -103,7 +109,7 @@
           <CFormLabel>Instrucciones Adicionales</CFormLabel>
           <CFormTextarea v-model="form.instructions" rows="2" placeholder="Instrucciones para el cliente al pagar..." />
         </div>
-        <div class="mb-3">
+        <div v-if="form.method_type !== 'bold'" class="mb-3">
           <CFormLabel>Imagen QR</CFormLabel>
           <CFormInput type="file" accept="image/*" @change="onFileChange" />
           <div v-if="form.qr_image_url && !form.qr_file" class="mt-2">
@@ -153,7 +159,7 @@ import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CSpinner, CBadge,
   CModal, CModalHeader, CModalTitle, CModalBody, CModalFooter,
   CForm, CFormLabel, CFormInput, CFormSelect, CFormTextarea, CFormCheck,
-  CToaster, CToast, CToastBody
+  CToaster, CToast, CToastBody, CAlert
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 import { getVenueById } from '@/services/venueService'

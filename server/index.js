@@ -14,6 +14,7 @@ const llmService = require('./llm-service');
 const whatsappClient = require('./services/whatsappClient');
 const metaWhatsApp = require('./services/metaWhatsApp');
 const metaInstagram = require('./services/metaInstagram');
+const bold = require('./services/bold');
 
 /**
  * Calculate the next resume time at given hour in America/Bogota timezone.
@@ -178,7 +179,7 @@ app.use(express.json({
   // HMAC over the exact bytes Meta sent, so re-serializing the parsed object
   // would not reproduce it.
   verify: (req, _res, buf) => {
-    if (req.originalUrl && req.originalUrl.startsWith('/api/webhook/')) {
+    if (req.originalUrl && (req.originalUrl.startsWith('/api/webhook/') || req.originalUrl.startsWith('/api/bold/webhook'))) {
       req.rawBody = buf;
     }
   }
@@ -839,7 +840,7 @@ async function startServer() {
         include: {
           messages: {
             orderBy: { created_at: 'asc' },
-            select: { role: true, content: true, created_at: true }
+            select: { role: true, content: true, created_at: true, media_url: true }
           }
         }
       });
@@ -848,11 +849,27 @@ async function startServer() {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
-      const messages = conversation.messages.map(m => ({
-        role: m.role,
-        content: m.content.replace(/\n<!-- \{.*?\} -->/g, ''),
-        created_at: m.created_at
-      }));
+      const messages = conversation.messages.map(m => {
+        // Payment messages carry the button / QR data in a hidden marker.
+        let payment = null;
+        const marker = m.content.match(/<!-- (\{"payment".*\}) -->/);
+        if (marker) {
+          try { payment = JSON.parse(marker[1]).payment || null; } catch { payment = null; }
+        }
+        let quickReplies = null;
+        const repliesMarker = m.content.match(/<!-- (\{"quick_replies".*?\}) -->/);
+        if (repliesMarker) {
+          try { quickReplies = JSON.parse(repliesMarker[1]).quick_replies || null; } catch { quickReplies = null; }
+        }
+        return {
+          role: m.role,
+          content: m.content.replace(/\n<!-- \{.*?\} -->/g, ''),
+          created_at: m.created_at,
+          media_url: m.media_url || null,
+          payment,
+          quick_replies: quickReplies
+        };
+      });
 
       const messageCount = messages.filter(m => m.role === 'user').length;
       const limitSetting = await prisma.app_settings.findUnique({
@@ -1016,9 +1033,12 @@ async function startServer() {
 
   app.post('/api/venues', isAuthenticated, requirePermission('venues:create'), async (req, res) => {
     try {
-      const venue = await prisma.venues.create({
-        data: req.body
-      });
+      const data = { ...req.body };
+      if (data.advance_percentage !== undefined) {
+        const pct = parseInt(data.advance_percentage, 10);
+        data.advance_percentage = pct > 0 && pct <= 100 ? pct : null;
+      }
+      const venue = await prisma.venues.create({ data });
       res.json(venue);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -1033,6 +1053,10 @@ async function startServer() {
       }
       if (data.deposit_refund_hours !== undefined) {
         data.deposit_refund_hours = data.deposit_refund_hours ? parseInt(data.deposit_refund_hours, 10) : null;
+      }
+      if (data.advance_percentage !== undefined) {
+        const pct = parseInt(data.advance_percentage, 10);
+        data.advance_percentage = pct > 0 && pct <= 100 ? pct : null;
       }
       if (data.commission_percentage !== undefined) {
         data.commission_percentage = data.commission_percentage ? parseFloat(data.commission_percentage) : null;
@@ -1130,6 +1154,7 @@ async function startServer() {
     { type: 'bancolombia', label: 'Bancolombia', icon: 'cil-institution' },
     { type: 'davivienda', label: 'Davivienda', icon: 'cil-institution' },
     { type: 'breb', label: 'Bre-B', icon: 'cil-mobile' },
+    { type: 'bold', label: 'Pago en línea Bold (QR, Nequi, PSE, tarjeta)', icon: 'cil-credit-card' },
     { type: 'pse', label: 'PSE', icon: 'cil-laptop' },
     { type: 'credit_card_national', label: 'Tarjeta de Crédito Nacional', icon: 'cil-credit-card' },
     { type: 'credit_card_international', label: 'Tarjeta de Crédito Internacional', icon: 'cil-credit-card' },
@@ -1138,7 +1163,8 @@ async function startServer() {
   ];
 
   app.get('/api/venues/:id/payment-methods/catalog', isAuthenticated, async (req, res) => {
-    res.json(PAYMENT_METHOD_CATALOG);
+    // Bold only when the account keys are configured on the server.
+    res.json(PAYMENT_METHOD_CATALOG.filter(c => c.type !== 'bold' || bold.isConfigured()));
   });
 
   app.get('/api/venues/:id/payment-methods', isAuthenticated, async (req, res) => {
@@ -5162,6 +5188,112 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
     }
   });
 
+  /**
+   * Turn an estimate into an accommodation (booking): find or create the contact,
+   * create the accommodation and mark the estimate as converted. Shared by the
+   * manual conversion and by payments confirmed automatically.
+   * @param {object} estimate - estimates row
+   * @param {object} [db=prisma] - Prisma client or interactive transaction
+   * @returns {Promise<object>} the accommodation
+   */
+  /**
+   * Digits of a phone number, or null. A WhatsApp BSUID ("CO.123...") and Instagram
+   * ids are not phone numbers; copied numbers can carry invisible direction marks.
+   */
+  function cleanPhone(value) {
+    const text = String(value || '').replace(/[\u200e\u200f\u202a-\u202e]/g, '').trim();
+    if (!text || !/^\+?[\d\s().-]+$/.test(text)) return null;
+    const digits = text.replace(/\D/g, '');
+    return digits.length >= 8 && digits.length <= 15 ? digits : null;
+  }
+
+  /** An Instagram @username (not a numeric IGSID). */
+  function cleanInstagram(value) {
+    const text = String(value || '').trim();
+    return /^@?[A-Za-z0-9._]{1,30}$/.test(text) && !/^\d+$/.test(text.replace('@', ''))
+      ? (text.startsWith('@') ? text : `@${text}`)
+      : null;
+  }
+
+  /**
+   * Contact the booking can be reached at outside this chat, for the confirmation
+   * and the contract: a WhatsApp number, an Instagram @username or an email.
+   * Null when the guest only has an internal id.
+   */
+  function guestContact(estimate) {
+    const whatsapp = cleanPhone(estimate.contact_phone)
+      || (estimate.contact_type === 'whatsapp' ? cleanPhone(estimate.contact_value) : null);
+    const instagram = estimate.contact_type === 'instagram' ? cleanInstagram(estimate.contact_value) : null;
+    const email = estimate.contact_email || null;
+    return whatsapp || instagram || email ? { whatsapp, instagram, email } : null;
+  }
+
+  async function convertEstimateToAccommodation(estimate, db = prisma) {
+    const contact = guestContact(estimate) || {};
+    const whatsapp = contact.whatsapp ? Number(contact.whatsapp) : null;
+    const instagram = contact.instagram || null;
+    const email = contact.email || null;
+
+    // Only real conditions: an empty object in an OR matches every contact.
+    const conditions = [];
+    if (whatsapp !== null) conditions.push({ whatsapp });
+    if (instagram) conditions.push({ instagram });
+    if (email) conditions.push({ email });
+    if (estimate.customer_name) conditions.push({ fullname: estimate.customer_name });
+
+    let customerId = null;
+    if (conditions.length > 0) {
+      const existingContact = await db.contacts.findFirst({ where: { OR: conditions } });
+      if (existingContact) {
+        customerId = existingContact.id;
+        // Fill in what the existing contact was missing.
+        const missing = {};
+        if (whatsapp !== null && !existingContact.whatsapp) missing.whatsapp = whatsapp;
+        if (instagram && !existingContact.instagram) missing.instagram = instagram;
+        if (email && !existingContact.email) missing.email = email;
+        if (Object.keys(missing).length) {
+          await db.contacts.update({ where: { id: existingContact.id }, data: missing });
+        }
+      } else {
+        const newContact = await db.contacts.create({
+          data: { fullname: estimate.customer_name, whatsapp, instagram, email }
+        });
+        customerId = newContact.id;
+      }
+    }
+
+    const checkIn = estimate.check_in ? new Date(estimate.check_in) : new Date();
+    const checkOut = estimate.check_out ? new Date(estimate.check_out) : checkIn;
+    const durationMs = checkOut.getTime() - checkIn.getTime();
+    const durationSeconds = Math.max(43200, Math.floor(durationMs / 1000));
+
+    const accommodation = await db.accommodations.create({
+      data: {
+        venue: estimate.venue_id,
+        plan_id: estimate.plan_id,
+        customer: customerId,
+        date: checkIn,
+        duration: durationSeconds.toString(),
+        adults: estimate.adults || 0,
+        children: estimate.children || 0,
+        calculated_price: estimate.calculated_price,
+        agreed_price: estimate.agreed_price ?? estimate.calculated_price
+      }
+    });
+
+    await db.estimates.update({
+      where: { id: estimate.id },
+      data: {
+        status: 'converted',
+        converted_at: new Date(),
+        accommodation_id: accommodation.id,
+        updated_at: new Date()
+      }
+    });
+
+    return accommodation;
+  }
+
   app.post('/api/estimates/:id/convert', isAuthenticated, async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
@@ -5175,60 +5307,8 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         return res.status(400).json({ error: 'Esta cotización ya fue convertida' });
       }
       
-      let customerId = null;
-      if (estimate.customer_name || estimate.contact_value) {
-        const existingContact = await prisma.contacts.findFirst({
-          where: { 
-            OR: [
-              { whatsapp: estimate.contact_type === 'whatsapp' ? parseFloat(estimate.contact_value) : undefined },
-              { fullname: estimate.customer_name }
-            ].filter(c => Object.keys(c).length > 0)
-          }
-        });
-        
-        if (existingContact) {
-          customerId = existingContact.id;
-        } else {
-          const newContact = await prisma.contacts.create({
-            data: {
-              fullname: estimate.customer_name,
-              whatsapp: estimate.contact_type === 'whatsapp' ? parseFloat(estimate.contact_value) : null,
-              instagram: estimate.contact_type === 'instagram' ? estimate.contact_value : null
-            }
-          });
-          customerId = newContact.id;
-        }
-      }
-      
-      const checkIn = estimate.check_in ? new Date(estimate.check_in) : new Date();
-      const checkOut = estimate.check_out ? new Date(estimate.check_out) : checkIn;
-      const durationMs = checkOut.getTime() - checkIn.getTime();
-      const durationSeconds = Math.max(43200, Math.floor(durationMs / 1000));
-      
-      const accommodation = await prisma.accommodations.create({
-        data: {
-          venue: estimate.venue_id,
-          plan_id: estimate.plan_id,
-          customer: customerId,
-          date: checkIn,
-          duration: durationSeconds.toString(),
-          adults: estimate.adults || 0,
-          children: estimate.children || 0,
-          calculated_price: estimate.calculated_price,
-          agreed_price: estimate.calculated_price
-        }
-      });
-      
-      await prisma.estimates.update({
-        where: { id: req.params.id },
-        data: {
-          status: 'converted',
-          converted_at: new Date(),
-          accommodation_id: accommodation.id,
-          updated_at: new Date()
-        }
-      });
-      
+      const accommodation = await convertEstimateToAccommodation(estimate);
+
       res.json({ estimate_id: req.params.id, accommodation_id: accommodation.id, accommodation });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -7638,6 +7718,24 @@ REGLAS:
           data: { updated_at: new Date() }
         });
 
+        // The IGSID is a number nobody can use to find the guest: look up the
+        // @username once per conversation.
+        if (!conversation.metadata?.instagram_username) {
+          try {
+            const profile = await metaInstagram.getUserProfile(senderId, conn.access_token);
+            if (profile.username) {
+              const metadata = { ...(conversation.metadata || {}), instagram_username: profile.username };
+              const name = conversation.name || profile.name || `@${profile.username}`;
+              await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { metadata, name } });
+              conversation.metadata = metadata;
+              conversation.name = name;
+            }
+          } catch (profileErr) {
+            console.warn('[ig-webhook] Could not read the Instagram username:', profileErr.message);
+          }
+        }
+        const igUsername = conversation.metadata?.instagram_username;
+
         // Process with AI
         const result = await processChat({
           venue_id,
@@ -7647,7 +7745,7 @@ REGLAS:
           media_url,
           media_type,
           contact_type: 'instagram',
-          contact_value: senderId
+          contact_value: igUsername ? `@${igUsername}` : senderId
         });
 
         // Send AI response via Instagram
@@ -8173,6 +8271,602 @@ REGLAS:
     return null;
   }
 
+  // ==================== Bold payment links ====================
+
+  const BOLD_OPEN_STATUSES = ['ACTIVE', 'PROCESSING'];
+  const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const PUSH_SOURCES = ['instagram', 'cloud_api', 'baileys', 'whatsapp'];
+
+  /**
+   * Send a message to the guest on the channel of their conversation and keep it in
+   * the inbox. Web chat has no push channel, so there the message is only stored.
+   */
+  async function notifyConversation(conversation, text) {
+    const message = await prisma.chat_messages.create({
+      data: { conversation_id: conversation.id, role: 'assistant', content: text, status: 'pending' }
+    });
+    await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { updated_at: new Date() } });
+    try {
+      if (conversation.source === 'instagram' && conversation.phone) {
+        await sendInstagramReply(conversation.venue_id, conversation.phone, text, message.id);
+      } else if (PUSH_SOURCES.includes(conversation.source) && conversation.phone) {
+        await sendWhatsAppReply(conversation.venue_id, conversation.phone, text, message.id);
+      } else {
+        await prisma.chat_messages.update({ where: { id: message.id }, data: { status: 'delivered' } });
+      }
+    } catch (err) {
+      console.error('[bold] Could not notify conversation', { conversationId: conversation.id, error: err.message });
+      await prisma.chat_messages.update({
+        where: { id: message.id },
+        data: { status: 'failed', error_details: err.message }
+      });
+    }
+  }
+
+  /**
+   * Like notifyConversation, with an image. Instagram images take no caption, so
+   * there the image goes first and the text right after.
+   */
+  async function notifyConversationImage(conversation, imageUrl, caption) {
+    const message = await prisma.chat_messages.create({
+      data: {
+        conversation_id: conversation.id,
+        role: 'assistant',
+        content: caption,
+        media_url: imageUrl,
+        media_type: 'image',
+        status: 'pending'
+      }
+    });
+    await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { updated_at: new Date() } });
+    try {
+      if (conversation.source === 'instagram' && conversation.phone) {
+        const conn = await prisma.instagram_connections.findUnique({ where: { venue_id: conversation.venue_id } });
+        if (!conn?.ig_user_id || !conn?.access_token) throw new Error('Instagram is not connected');
+        await metaInstagram.sendImage(conn.ig_user_id, conn.access_token, conversation.phone, imageUrl);
+        await metaInstagram.sendText(conn.ig_user_id, conn.access_token, conversation.phone, caption);
+      } else if (PUSH_SOURCES.includes(conversation.source) && conversation.phone) {
+        await sendWhatsAppImage(conversation.venue_id, conversation.phone, imageUrl, caption);
+      }
+      await prisma.chat_messages.update({ where: { id: message.id }, data: { status: 'sent' } });
+    } catch (err) {
+      console.error('[bold] Could not send image to conversation', { conversationId: conversation.id, error: err.message });
+      await prisma.chat_messages.update({
+        where: { id: message.id },
+        data: { status: 'failed', error_details: err.message }
+      });
+    }
+  }
+
+  /**
+   * Payer data for a QR. Bold requires name, email and phone, although whoever
+   * scans the QR is the one who pays; the chat only knows the name and, on
+   * WhatsApp, the number.
+   */
+  function boldQrPayer(estimate, conversation, venue) {
+    const digits = String(conversation?.phone || '').replace(/\D/g, '');
+    // A Colombian WhatsApp number is 57 + 10 digits. Instagram ids and WhatsApp
+    // BSUIDs are not phone numbers.
+    const guestPhone = /^57\d{10}$/.test(digits) ? digits.slice(2) : null;
+    const venueDigits = venue?.whatsapp ? String(venue.whatsapp).replace(/\D/g, '') : '';
+    const venuePhone = /^(57)?\d{10}$/.test(venueDigits) ? venueDigits.slice(-10) : null;
+    const sharedPhone = cleanPhone(estimate.contact_phone);
+    return {
+      name: estimate.customer_name || 'Cliente',
+      email: estimate.contact_email || process.env.BOLD_PAYER_EMAIL || 'hola@cabania.co',
+      phone: (sharedPhone && sharedPhone.slice(-10)) || guestPhone || venuePhone || process.env.BOLD_PAYER_PHONE || '3000000000'
+    };
+  }
+
+  /**
+   * Create a new QR for the link's amount, upload the image (WhatsApp and Instagram
+   * send images by URL) and store it on the link. A QR lives 10 minutes, so each
+   * one gets its own reference.
+   */
+  async function refreshBoldQr(link, { total, description, payer }) {
+    const referenceId = `CAB-${link.id.slice(0, 8)}-${Date.now()}`;
+    const qr = await bold.createQrPayment({ referenceId, amount: total, description, payer });
+    const { uploadImage } = require('./upload-service');
+    const uploaded = await uploadImage(Buffer.from(qr.qrBase64, 'base64'), { type: 'chat_media', mimetype: 'image/png' });
+    return prisma.bold_payment_links.update({
+      where: { id: link.id },
+      data: {
+        qr_reference: referenceId,
+        qr_transaction_id: qr.transactionId,
+        qr_image_url: uploaded.secure_url,
+        qr_expires_at: qr.expiresAt,
+        qr_status: 'running',
+        is_sandbox: qr.test,
+        updated_at: new Date()
+      }
+    });
+  }
+
+  /**
+   * Share of the total charged online to confirm a booking, from the venue's
+   * advance_percentage. Null, 0 or 100 mean the full amount.
+   */
+  function advanceFor(venue, total) {
+    const pct = Number(venue?.advance_percentage);
+    const partial = pct > 0 && pct < 100;
+    const advance = partial ? Math.round((total * pct) / 100) : total;
+    return { percentage: partial ? pct : 100, advance, balance: total - advance };
+  }
+
+  const money = (value) => `$${Math.round(Number(value) || 0).toLocaleString('es-CO')}`;
+
+  /**
+   * Send a text with a "pay" button. WhatsApp Cloud API and Instagram render a real
+   * button; other channels, or a failed button, fall back to the text with the URL.
+   */
+  async function notifyConversationButton(conversation, { text, title, subtitle, buttonText, url }) {
+    const fallback = `${text}\n\n${url}`;
+    const message = await prisma.chat_messages.create({
+      data: { conversation_id: conversation.id, role: 'assistant', content: fallback, status: 'pending' }
+    });
+    await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { updated_at: new Date() } });
+    try {
+      if (conversation.source === 'instagram' && conversation.phone) {
+        const conn = await prisma.instagram_connections.findUnique({ where: { venue_id: conversation.venue_id } });
+        if (!conn?.ig_user_id || !conn?.access_token) throw new Error('Instagram is not connected');
+        await metaInstagram.sendText(conn.ig_user_id, conn.access_token, conversation.phone, text);
+        try {
+          await metaInstagram.sendButton(conn.ig_user_id, conn.access_token, conversation.phone, { title, subtitle, buttonTitle: buttonText, url });
+        } catch (buttonErr) {
+          console.warn('[bold] Instagram button failed, sending the link as text:', buttonErr.message);
+          await metaInstagram.sendText(conn.ig_user_id, conn.access_token, conversation.phone, url);
+        }
+      } else if (PUSH_SOURCES.includes(conversation.source) && conversation.phone) {
+        const conn = await prisma.whatsapp_connections.findUnique({ where: { venue_id: conversation.venue_id } });
+        let sent = false;
+        if (conn?.channel === 'cloud_api' && conn.meta_phone_number_id && conn.meta_access_token) {
+          try {
+            await metaWhatsApp.sendCtaUrl(conn.meta_phone_number_id, conn.meta_access_token, conversation.phone, text, buttonText, url);
+            sent = true;
+          } catch (buttonErr) {
+            console.warn('[bold] WhatsApp button failed, sending the link as text:', buttonErr.message);
+          }
+        }
+        if (!sent) await sendWhatsAppReply(conversation.venue_id, conversation.phone, fallback);
+      }
+      await prisma.chat_messages.update({ where: { id: message.id }, data: { status: 'sent' } });
+    } catch (err) {
+      console.error('[bold] Could not send payment button', { conversationId: conversation.id, error: err.message });
+      await prisma.chat_messages.update({
+        where: { id: message.id },
+        data: { status: 'failed', error_details: err.message }
+      });
+    }
+  }
+
+  /**
+   * Create (or reuse) a Bold payment link for an estimate's advance and send it to
+   * the guest, choosing the presentation by channel and device:
+   * - WhatsApp / Instagram (almost always a phone): a pay button. The QR only when
+   *   the guest asks for it (format: 'qr'), since on the same phone it has to be
+   *   saved and loaded from the bank app.
+   * - Web on a computer: QR (scanned with the phone) plus the button.
+   * - Web on a phone: the button; QR, downloadable, only when asked.
+   * Used by send_payment_info when the chosen method is Bold.
+   * @returns {Promise<object>} tool result for the LLM
+   */
+  async function sendBoldPaymentLink({ venueId, conversation, paymentMethod, estimateId, format }) {
+    const reject = (reason, message) => {
+      console.warn('[bold] Payment link not sent', { reason, venueId, estimateId });
+      return { success: false, message };
+    };
+    if (!bold.isConfigured()) {
+      return reject('not_configured', 'El pago en línea no está disponible. Ofrece otro método de pago.');
+    }
+    if (paymentMethod.venue_id !== venueId) {
+      return reject('method_other_venue', 'Método de pago no encontrado.');
+    }
+    // Tool results are not kept in the chat history, so on a later turn the model
+    // often sends a made-up or truncated estimate_id. Fall back to the latest pending
+    // estimate of this same conversation.
+    let estimate = estimateId && UUID_PATTERN.test(estimateId)
+      ? await prisma.estimates.findUnique({ where: { id: estimateId } })
+      : null;
+    if ((!estimate || estimate.conversation_id !== conversation?.id) && conversation?.id) {
+      estimate = await prisma.estimates.findFirst({
+        where: { conversation_id: conversation.id, venue_id: venueId, status: 'pending' },
+        orderBy: { created_at: 'desc' }
+      });
+    }
+    if (!estimate || estimate.venue_id !== venueId) {
+      return reject('estimate_not_found', 'Cotización no encontrada. Usa el estimate_id que devolvió create_estimate.');
+    }
+
+    // A paid booking must be reachable outside this chat (confirmation, contract).
+    if (!guestContact(estimate)) {
+      return reject('missing_contact',
+        'Antes de generar el pago falta un contacto del cliente para enviarle la confirmación y el contrato. '
+        + 'Pídele su número de WhatsApp o su correo, guárdalo con save_contact_info y luego vuelve a llamar send_payment_info.');
+    }
+
+    const venue = await prisma.venues.findUnique({
+      where: { id: venueId },
+      select: { name: true, whatsapp: true, advance_percentage: true }
+    });
+    // The amount always comes from the estimate and the venue's advance rule, never
+    // from the model.
+    const total = Math.round(Number(estimate.agreed_price || estimate.calculated_price || 0));
+    const { percentage, advance, balance } = advanceFor(venue, total);
+    if (!(advance >= 1000)) {
+      return reject('amount_too_low', 'El monto a pagar debe ser de al menos $1.000.');
+    }
+
+    // Reuse an open link for the same estimate and amount instead of creating duplicates.
+    let link = await prisma.bold_payment_links.findFirst({
+      where: {
+        estimate_id: estimate.id,
+        amount: advance,
+        status: { in: BOLD_OPEN_STATUSES },
+        expiration_date: { gt: new Date() }
+      },
+      orderBy: { created_at: 'desc' }
+    });
+    if (!link) {
+      const hours = Number(process.env.BOLD_LINK_EXPIRATION_HOURS) || 48;
+      const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
+      const description = (percentage < 100
+        ? `Anticipo ${percentage}% reserva ${venue?.name || ''}`
+        : `Reserva ${venue?.name || ''}`).trim();
+      const created = await bold.createPaymentLink({ amount: advance, description, expiresAt });
+      link = await prisma.bold_payment_links.create({
+        data: {
+          bold_link_id: created.linkId,
+          bold_url: created.url,
+          amount: advance,
+          description,
+          status: 'ACTIVE',
+          expiration_date: expiresAt,
+          estimate_id: estimate.id,
+          venue_id: venueId,
+          conversation_id: conversation?.id || null,
+          created_by: 'system:chat'
+        }
+      });
+    }
+
+    await prisma.estimates.update({
+      where: { id: estimate.id },
+      data: { payment_status: 'link_sent', payment_method_id: paymentMethod.id, updated_at: new Date() }
+    });
+
+    const channel = conversation?.source === 'instagram' ? 'instagram'
+      : PUSH_SOURCES.includes(conversation?.source) ? 'whatsapp'
+        : 'web';
+    const device = channel === 'web' ? (conversation?.metadata?.device || 'mobile') : 'mobile';
+    const wantsQr = format === 'qr' || (channel === 'web' && device === 'desktop');
+
+    let qrReady = false;
+    if (wantsQr && bold.isQrConfigured() && (channel === 'web' || conversation?.phone)) {
+      try {
+        if (link.qr_reference && link.qr_status === 'running') {
+          // The previous QR may have been paid right before this request.
+          if (await syncBoldLink(link, { checkLink: false }) === 'PAID') {
+            return { success: true, message: 'El cliente ya pagó esta reserva y el sistema ya le envió la confirmación.' };
+          }
+        }
+        const qrStillValid = link.qr_image_url && link.qr_status === 'running'
+          && link.qr_expires_at && link.qr_expires_at > new Date(Date.now() + 60 * 1000);
+        if (!qrStillValid) {
+          link = await refreshBoldQr(link, {
+            total: advance,
+            description: link.description || 'Reserva',
+            payer: boldQrPayer(estimate, conversation, venue)
+          });
+        }
+        qrReady = true;
+      } catch (qrErr) {
+        console.error('[bold] QR not generated, sending only the button:', qrErr);
+      }
+    }
+
+    const headline = percentage < 100
+      ? `💳 Anticipo de tu reserva (${percentage}%): ${money(advance)}`
+      : `💳 Pago de tu reserva: ${money(advance)}`;
+    const balanceLine = balance > 0 ? `\nSaldo pendiente: ${money(balance)}` : '';
+    const merchant = process.env.BOLD_MERCHANT_NAME
+      ? ` El cobro aparece a nombre de ${process.env.BOLD_MERCHANT_NAME}.`
+      : '';
+    // Real urgency only: the date is secured by the payment. The QR's 10-minute
+    // life is a technical limit, not something to rush the guest with.
+    const closing = 'Apenas se confirme el pago te avisamos por aquí y tu fecha queda asegurada. ✅';
+    const buttonText = `Pagar ${money(advance)}`;
+
+    if (channel !== 'web') {
+      if (qrReady) {
+        await notifyConversationImage(conversation, link.qr_image_url,
+          `${headline}${balanceLine}\n\n`
+          + 'Para pagar con Bre-B: mantén presionada la imagen, guárdala y cárgala desde la app de tu banco '
+          + 'en la opción de pagar con QR. Si el QR se vence, pídeme uno nuevo.\n\n'
+          + `¿Prefieres Nequi, PSE o tarjeta? Paga aquí: ${link.bold_url}\n\n${closing}`);
+      } else {
+        await notifyConversationButton(conversation, {
+          text: `${headline}${balanceLine}\n\nPaga de forma segura con Bold: Nequi, PSE, Bre-B o tarjeta.${merchant}\n\n${closing}`,
+          title: headline.replace('💳 ', ''),
+          subtitle: 'Nequi, PSE, Bre-B o tarjeta',
+          buttonText,
+          url: link.bold_url
+        });
+      }
+    } else {
+      // Web chat: the widget renders the button (and the QR) from this marker.
+      const payment = {
+        amount: advance,
+        percentage,
+        balance,
+        url: link.bold_url,
+        button_text: buttonText,
+        merchant: process.env.BOLD_MERCHANT_NAME || null,
+        qr_image_url: qrReady ? link.qr_image_url : null,
+        // Cloudinary serves the file as a download with fl_attachment.
+        qr_download_url: qrReady ? link.qr_image_url.replace('/upload/', '/upload/fl_attachment:qr-pago/') : null,
+        qr_expires_at: qrReady ? link.qr_expires_at : null
+      };
+      await notifyConversation(conversation, `${headline}${balanceLine}\n<!-- ${JSON.stringify({ payment })} -->`);
+    }
+
+    return {
+      success: true,
+      method_name: paymentMethod.label,
+      total,
+      advance_percentage: percentage,
+      amount_to_pay: advance,
+      balance,
+      message: channel !== 'web'
+        ? `Ya se le envió al cliente ${qrReady ? 'el QR para pagar con Bre-B y el link' : 'el botón de pago'} en un mensaje aparte: no lo repitas ni incluyas el link. Dile en una frase que al pagar recibirá la confirmación aquí y que no necesita enviar comprobante.`
+        : 'El chat ya le muestra al cliente el botón de pago' + (qrReady ? ' y el QR' : '') + ': NO incluyas el link en tu respuesta. Dile en una frase que puede pagar ahí y que recibirá la confirmación en este chat, sin enviar comprobante.'
+    };
+  }
+
+  /**
+   * Record a paid Bold link: convert the estimate into a booking, register the
+   * payment as verified with its income, and confirm to the guest. Idempotent: the
+   * first caller claims the link, so webhook retries and the reconciler are no-ops.
+   */
+  async function finalizeBoldPayment(link, state) {
+    const claimed = await prisma.bold_payment_links.updateMany({
+      where: { id: link.id, status: { not: 'PAID' } },
+      data: {
+        status: 'PAID',
+        bold_transaction_id: state.transactionId,
+        bold_payment_method: state.paymentMethod,
+        ...(state.viaQr && { qr_status: 'approved' }),
+        updated_at: new Date()
+      }
+    });
+    if (claimed.count === 0) return;
+
+    let result;
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        const estimate = link.estimate_id
+          ? await tx.estimates.findUnique({ where: { id: link.estimate_id } })
+          : null;
+        let accommodationId = link.accommodation_id || estimate?.accommodation_id || null;
+        if (!accommodationId && estimate) {
+          accommodationId = (await convertEstimateToAccommodation(estimate, tx)).id;
+        }
+        const accommodation = accommodationId
+          ? await tx.accommodations.findUnique({ where: { id: accommodationId } })
+          : null;
+        const venueId = link.venue_id || accommodation?.venue || estimate?.venue_id || null;
+        const venue = venueId
+          ? await tx.venues.findUnique({ where: { id: venueId }, select: { name: true, organization: true } })
+          : null;
+
+        const now = new Date();
+        const payment = await tx.payments.create({
+          data: {
+            accommodation: accommodationId,
+            amount: link.amount,
+            payment_method: state.paymentMethod ? `Bold - ${state.paymentMethod}` : 'Bold',
+            payment_date: now,
+            reference: state.transactionId || link.bold_link_id,
+            notes: `Pago confirmado automáticamente por Bold. Link: ${link.bold_link_id}`,
+            verified: true,
+            verified_at: now,
+            verified_by: 'system:bold',
+            created_by: 'system:bold',
+            type: 'accommodation'
+          }
+        });
+
+        if (accommodationId) {
+          const incomeData = {
+            organization_id: venue?.organization || null,
+            venue_id: venueId,
+            amount: link.amount,
+            type: 'accommodation',
+            date: now,
+            accrual_date: accommodation?.date || null
+          };
+          await tx.incomes.upsert({
+            where: { payment_id: payment.id },
+            update: incomeData,
+            create: { payment_id: payment.id, ...incomeData }
+          });
+        }
+
+        await tx.bold_payment_links.update({
+          where: { id: link.id },
+          data: { payment_id: payment.id, accommodation_id: accommodationId }
+        });
+        if (estimate) {
+          await tx.estimates.update({
+            where: { id: estimate.id },
+            data: { payment_status: 'verified', payment_id: payment.id, updated_at: now }
+          });
+        }
+        // What is still owed after this payment (advance bookings).
+        let balance = 0;
+        if (accommodation) {
+          const paid = await tx.payments.aggregate({
+            where: { accommodation: accommodationId, verified: true },
+            _sum: { amount: true }
+          });
+          const agreed = Number(accommodation.agreed_price ?? accommodation.calculated_price ?? 0);
+          balance = Math.max(0, agreed - Number(paid._sum.amount || 0));
+        }
+        return { venueName: venue?.name || null, accommodationId, paymentId: payment.id, balance };
+      });
+    } catch (err) {
+      // The link stays PAID without payment_id, which flags it for manual review.
+      console.error('[bold] Paid link could not be recorded', { link: link.bold_link_id, error: err.message });
+      return;
+    }
+
+    console.log('[bold] Payment recorded', { link: link.bold_link_id, ...result });
+
+    if (link.conversation_id) {
+      const conversation = await prisma.chat_conversations.findUnique({ where: { id: link.conversation_id } });
+      if (conversation) {
+        const venueName = result.venueName || 'la cabaña';
+        await notifyConversation(conversation, result.balance > 0
+          ? `✅ ¡Pago recibido! Recibimos tu anticipo de ${money(link.amount)} y tu reserva en ${venueName} `
+            + `quedó confirmada. Saldo pendiente: ${money(result.balance)}. ¡Te esperamos! 🎉`
+          : `✅ ¡Pago recibido! Confirmamos tu pago de ${money(link.amount)}. `
+            + `Tu reserva en ${venueName} quedó confirmada. ¡Te esperamos! 🎉`);
+      }
+    }
+  }
+
+  /**
+   * Ask Bold for the link's real state and act on it. A webhook body is never
+   * trusted on its own: it only triggers this check.
+   */
+  async function syncBoldLink(link, { checkLink = true } = {}) {
+    if (link.qr_reference && link.qr_status === 'running' && bold.isQrConfigured()) {
+      const qr = await bold.getQrPayment(link.qr_reference);
+      if (qr.status === 'approved') {
+        // Sandbox QRs approve themselves. With test keys in production that would
+        // confirm bookings nobody paid for.
+        if (link.is_sandbox && process.env.NODE_ENV === 'production' && process.env.BOLD_TEST_MODE !== 'true') {
+          console.error('[bold] Sandbox QR approval ignored in production', { reference: link.qr_reference });
+          await prisma.bold_payment_links.update({ where: { id: link.id }, data: { qr_status: 'sandbox_ignored' } });
+        } else {
+          await finalizeBoldPayment(link, { transactionId: qr.transactionId, paymentMethod: qr.paymentMethod, viaQr: true });
+          return 'PAID';
+        }
+      } else if (qr.status && qr.status !== 'running') {
+        await prisma.bold_payment_links.update({
+          where: { id: link.id },
+          data: { qr_status: qr.status, updated_at: new Date() }
+        });
+      }
+    }
+    if (!checkLink) return link.status;
+
+    const state = await bold.getPaymentLink(link.bold_link_id);
+    if (state.status === 'PAID' && state.raw?.is_sandbox === true
+        && process.env.NODE_ENV === 'production' && process.env.BOLD_TEST_MODE !== 'true') {
+      // Same guard as for QRs: a sandbox link paid with test keys in production
+      // would confirm a booking nobody paid for.
+      console.error('[bold] Sandbox link payment ignored in production', { link: link.bold_link_id });
+      await prisma.bold_payment_links.update({ where: { id: link.id }, data: { status: 'SANDBOX_IGNORED' } });
+      return 'SANDBOX_IGNORED';
+    }
+    if (state.status === 'PAID') {
+      await finalizeBoldPayment(link, state);
+    } else if (state.status && state.status !== link.status) {
+      await prisma.bold_payment_links.update({
+        where: { id: link.id },
+        data: { status: state.status, updated_at: new Date() }
+      });
+    }
+    return state.status;
+  }
+
+  /**
+   * Check every open link from the last week. Safety net for delayed or missed
+   * webhooks (Bold can take up to 10 minutes to notify some payments).
+   */
+  async function reconcileBoldLinks() {
+    if (!bold.isConfigured()) return;
+    const links = await prisma.bold_payment_links.findMany({
+      where: {
+        status: { in: BOLD_OPEN_STATUSES },
+        created_at: { gt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+      },
+      orderBy: { created_at: 'desc' },
+      take: 50
+    });
+    for (const link of links) {
+      try {
+        await syncBoldLink(link);
+      } catch (err) {
+        console.error('[bold] Reconcile failed', { link: link.bold_link_id, error: err.message });
+      }
+    }
+  }
+
+  /**
+   * QRs live 10 minutes, so they are checked every minute while they can still be
+   * paid (plus a grace period for payments made at the last second).
+   */
+  async function reconcileBoldQrs() {
+    if (!bold.isQrConfigured()) return;
+    const graceLimit = new Date(Date.now() - 15 * 60 * 1000);
+    const links = await prisma.bold_payment_links.findMany({
+      where: { qr_status: 'running', qr_expires_at: { gt: graceLimit } },
+      take: 50
+    });
+    for (const link of links) {
+      try {
+        await syncBoldLink(link, { checkLink: false });
+      } catch (err) {
+        console.error('[bold] QR reconcile failed', { reference: link.qr_reference, error: err.message });
+      }
+    }
+    await prisma.bold_payment_links.updateMany({
+      where: { qr_status: 'running', qr_expires_at: { lt: graceLimit } },
+      data: { qr_status: 'expired' }
+    });
+  }
+
+  // POST /api/bold/webhook — Bold payment events (SALE_APPROVED, SALE_REJECTED, ...)
+  app.post('/api/bold/webhook', (req, res) => {
+    if (!bold.validateWebhookSignature(req.rawBody, req.get('x-bold-signature'))) {
+      console.warn('[bold-webhook] Invalid or missing signature');
+      return res.sendStatus(401);
+    }
+    // Bold expects a 200 within 2 seconds; the work happens afterwards.
+    res.sendStatus(200);
+
+    (async () => {
+      const payload = req.body || {};
+      const data = payload.data || {};
+      console.log('[bold-webhook]', payload.type, {
+        payment_id: data.payment_id || null,
+        reference: data.metadata?.reference || null,
+        method: data.payment_method || null,
+        integration: data.integration || null,
+        data_keys: Object.keys(data)
+      });
+
+      // Which field carries the link id is not documented for payment links, so
+      // every candidate is tried. The state is then confirmed with Bold.
+      const candidates = [data.metadata?.reference, data.payment_link, data.reference, data.link_id, payload.subject]
+        .filter(v => typeof v === 'string' && v);
+      const link = candidates.length
+        ? await prisma.bold_payment_links.findFirst({
+            where: { OR: [{ bold_link_id: { in: candidates } }, { qr_reference: { in: candidates } }] }
+          })
+        : null;
+
+      if (link) {
+        await prisma.bold_payment_links.update({ where: { id: link.id }, data: { webhook_payload: payload } });
+        await syncBoldLink(link);
+      } else {
+        // Unknown shape or a sale that is not ours: check every open link.
+        await reconcileBoldLinks();
+      }
+    })().catch(err => console.error('[bold-webhook] Processing failed:', err.message));
+  });
+
   /**
    * Check if any WhatsApp channel is available for a venue.
    */
@@ -8318,8 +9012,12 @@ REGLAS:
       tools: llmService.CHAT_TOOLS
     });
 
-    // Handle tool calls (function calling)
-    if (llmResponse.tool_calls && llmResponse.tool_calls.length > 0) {
+    // Handle tool calls (function calling). Tools chain (e.g. get_payment_methods ->
+    // send_payment_info): each handler asks the model again, and the tool calls in
+    // that answer run in the next round. A single round dropped them and left replies
+    // like "sending it now, one moment..." with nothing sent.
+    let toolRounds = 0;
+    while (llmResponse.tool_calls && llmResponse.tool_calls.length > 0 && toolRounds++ < 4) {
       for (const toolCall of llmResponse.tool_calls) {
         if (toolCall.function.name === 'check_availability') {
           const args = JSON.parse(toolCall.function.arguments);
@@ -8667,7 +9365,23 @@ REGLAS:
           // mislabeled as WhatsApp.
           const estimateContactType = contact_type
             || (source === 'instagram' ? 'instagram' : 'whatsapp');
-          const estimate = await prisma.estimates.create({
+          const checkIn = args.check_in ? new Date(args.check_in) : null;
+
+          // The model tends to call create_estimate again on later turns ("your quote
+          // is ready..."). Reuse the conversation's pending estimate for the same plan,
+          // date and party instead of piling up duplicates.
+          const existingEstimate = await prisma.estimates.findFirst({
+            where: {
+              conversation_id: conversation.id,
+              status: 'pending',
+              plan_id: matchingPlan?.id || null,
+              check_in: checkIn,
+              adults: args.adults || 0,
+              children: args.children || 0
+            },
+            orderBy: { created_at: 'desc' }
+          });
+          const estimate = existingEstimate || await prisma.estimates.create({
             data: {
               venue_id,
               plan_id: matchingPlan?.id || null,
@@ -8696,7 +9410,18 @@ REGLAS:
             adults: args.adults,
             children: args.children || 0,
             calculated_price: calculatedPrice,
-            message: `Cotización creada exitosamente. El cliente ${args.customer_name} recibirá confirmación pronto.`
+            ...(estimate.calculated_price && (() => {
+              const a = advanceFor(venue, Number(estimate.calculated_price));
+              return { advance_percentage: a.percentage, advance_amount: a.advance, balance_amount: a.balance };
+            })()),
+            // Asking once is enough: a reused estimate was already shown to the guest,
+            // so a "yes" there means go ahead with the payment.
+            next_step: existingEstimate
+              ? 'Esta cotización ya se le presentó al cliente. Si ya confirmó que quiere reservar, continúa ahora con get_payment_methods y send_payment_info, sin volver a pedir confirmación.'
+              : 'Resume la cotización (plan, fecha, personas, total y el anticipo si aplica) y pregunta si quiere reservar, terminando el mensaje con [[botones: Sí, reservar | Sigamos conversando]]. No envíes el pago hasta que el cliente confirme.',
+            message: existingEstimate
+              ? 'Ya existía una cotización pendiente con estos datos en esta conversación; se reutilizó (no se creó otra).'
+              : `Cotización creada exitosamente. El cliente ${args.customer_name} recibirá confirmación pronto.`
           };
 
           const toolResultContent = JSON.stringify(estimateResult);
@@ -8715,20 +9440,22 @@ REGLAS:
             llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
           }
 
+          // With tools the model can go on to get_payment_methods in the same turn.
           llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
             maxTokens: 1024,
-            temperature: 0.7
+            temperature: 0.7,
+            tools: llmService.CHAT_TOOLS
           });
 
           llmResponse.tools_used = llmResponse.tools_used || [];
           llmResponse.tools_used.push('create_estimate');
         } else if (toolCall.function.name === 'get_payment_methods') {
           // Get active payment methods for this venue
-          const paymentMethods = await prisma.venue_payment_methods.findMany({
+          const paymentMethods = (await prisma.venue_payment_methods.findMany({
             where: { venue_id, is_active: true },
             orderBy: { sort_order: 'asc' },
             select: { id: true, method_type: true, label: true, account_info: true, holder_name: true, instructions: true, qr_image_url: true }
-          });
+          })).filter(m => m.method_type !== 'bold' || bold.isConfigured());
 
           const paymentResult = {
             methods: paymentMethods.map(m => ({
@@ -8738,10 +9465,19 @@ REGLAS:
               account_info: m.account_info,
               holder_name: m.holder_name,
               has_qr: !!m.qr_image_url,
-              instructions: m.instructions
+              instructions: m.method_type === 'bold'
+                ? (m.instructions || 'Pago en línea con confirmación automática: QR, Nequi, PSE, Botón Bancolombia o tarjeta.')
+                : m.instructions,
+              online: m.method_type === 'bold'
             })),
-            message: paymentMethods.length > 0
-              ? `Hay ${paymentMethods.length} método(s) de pago disponible(s).`
+            // Once the guest said yes to the booking, every extra question is friction:
+            // with a single method there is nothing to choose.
+            message: paymentMethods.length === 1
+              ? 'Hay un solo método de pago. Si el cliente ya confirmó que quiere reservar, llama ahora '
+                + 'send_payment_info con este método: no le preguntes cuál prefiere ni si quiere recibirlo.'
+              : paymentMethods.length > 1
+              ? `Hay ${paymentMethods.length} métodos de pago. Si el cliente ya eligió uno, llama ahora `
+                + 'send_payment_info con ese método; si no, pregúntale solo cuál prefiere.'
               : 'No hay métodos de pago configurados. El cliente deberá coordinar el pago directamente con el venue.'
           };
 
@@ -8772,14 +9508,31 @@ REGLAS:
         } else if (toolCall.function.name === 'send_payment_info') {
           const args = JSON.parse(toolCall.function.arguments);
 
-          // Fetch the payment method
-          const paymentMethod = args.payment_method_id
-            ? await prisma.venue_payment_methods.findUnique({ where: { id: args.payment_method_id } })
+          // Fetch the payment method. An invalid id (the model does not keep ids across
+          // turns) would make Prisma throw, so it is validated first.
+          const paymentMethod = args.payment_method_id && UUID_PATTERN.test(args.payment_method_id)
+            ? await prisma.venue_payment_methods.findFirst({ where: { id: args.payment_method_id, venue_id } })
             : null;
 
           let sendResult;
           if (!paymentMethod) {
             sendResult = { success: false, message: 'Método de pago no encontrado.' };
+          } else if (paymentMethod.method_type === 'bold') {
+            try {
+              sendResult = await sendBoldPaymentLink({
+                venueId: venue_id,
+                conversation,
+                paymentMethod,
+                estimateId: args.estimate_id,
+                format: args.format
+              });
+            } catch (boldErr) {
+              console.error('[bold] Could not create payment link:', boldErr);
+              sendResult = {
+                success: false,
+                message: 'No se pudo generar el link de pago en este momento. Ofrece otro método de pago o escala a un humano.'
+              };
+            }
           } else {
             // Update estimate
             if (args.estimate_id) {
@@ -8848,6 +9601,60 @@ REGLAS:
 
           llmResponse.tools_used = llmResponse.tools_used || [];
           llmResponse.tools_used.push('send_payment_info');
+        } else if (toolCall.function.name === 'save_contact_info') {
+          const args = JSON.parse(toolCall.function.arguments || '{}');
+          const phone = cleanPhone(args.whatsapp);
+          const email = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(args.email || '').trim())
+            ? String(args.email).trim().toLowerCase()
+            : null;
+          const pendingEstimate = await prisma.estimates.findFirst({
+            where: { conversation_id: conversation.id, venue_id, status: 'pending' },
+            orderBy: { created_at: 'desc' }
+          });
+
+          let contactResult;
+          if (!phone && !email) {
+            contactResult = { success: false, message: 'El número o el correo no son válidos. Pídeselo de nuevo al cliente.' };
+          } else if (!pendingEstimate) {
+            contactResult = { success: false, message: 'No hay una cotización pendiente en esta conversación. Crea la cotización primero.' };
+          } else {
+            await prisma.estimates.update({
+              where: { id: pendingEstimate.id },
+              data: {
+                ...(phone && { contact_phone: phone }),
+                ...(email && { contact_email: email }),
+                updated_at: new Date()
+              }
+            });
+            contactResult = {
+              success: true,
+              saved: { whatsapp: phone, email },
+              message: 'Contacto guardado. Si el cliente ya confirmó la reserva, llama ahora send_payment_info.'
+            };
+          }
+
+          const toolResultContent = JSON.stringify(contactResult);
+          if (chatModelConfig.provider === 'anthropic') {
+            llmMessages.push({
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
+            });
+            llmMessages.push({
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+            });
+          } else {
+            llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+            llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+          }
+
+          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            maxTokens: 1024,
+            temperature: 0.7,
+            tools: llmService.CHAT_TOOLS
+          });
+          llmResponse.tools_used = llmResponse.tools_used || [];
+          llmResponse.tools_used.push('save_contact_info');
         } else if (toolCall.function.name === 'escalate_to_human') {
           const args = JSON.parse(toolCall.function.arguments);
 
@@ -8999,10 +9806,24 @@ REGLAS:
     // Track if we used a tool in this request (for rate limiting)
     const toolsUsed = llmResponse.tools_used || [];
 
+    // The model marks yes/no questions with [[botones: A | B]]. The web chat shows
+    // them as buttons; the tag is removed from the text on every channel.
+    let quickReplies = null;
+    const buttonsTag = (llmResponse.content || '').match(/\[\[\s*botones\s*:\s*([^\]]+)\]\]/i);
+    if (buttonsTag) {
+      llmResponse.content = llmResponse.content.replace(buttonsTag[0], '').trim();
+      const options = buttonsTag[1].split('|').map(o => o.trim()).filter(Boolean).slice(0, 3);
+      quickReplies = options.length >= 2 ? options.map(o => o.slice(0, 40)) : null;
+    }
+    llmResponse.quick_replies = quickReplies;
+
     // Save assistant response with tool metadata if applicable
-    const messageContent = toolsUsed.length > 0
+    let messageContent = toolsUsed.length > 0
       ? `${llmResponse.content}\n<!-- {"tool":"${toolsUsed[0]}"} -->`
       : llmResponse.content;
+    if (quickReplies) {
+      messageContent += `\n<!-- ${JSON.stringify({ quick_replies: quickReplies })} -->`;
+    }
 
     const assistantMessage = await prisma.chat_messages.create({
       data: {
@@ -9127,6 +9948,15 @@ REGLAS:
             data: updateData
           });
         }
+      }
+
+      // Web visitors report their device so payments can show a QR on a computer
+      // and a button on a phone.
+      const device = ['mobile', 'desktop'].includes(req.body.device) ? req.body.device : null;
+      if (device && conversation.metadata?.device !== device) {
+        const metadata = { ...(conversation.metadata || {}), device };
+        await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { metadata } });
+        conversation.metadata = metadata;
       }
 
       // Check free tier limit for public (non-authenticated) requests
@@ -12170,6 +13000,12 @@ Responde con JSON EXACTAMENTE en este formato:
       console.error('[instagram/refresh] Unhandled error:', err.message));
     setTimeout(runIgRefresh, 60 * 1000);
     setInterval(runIgRefresh, 24 * 60 * 60 * 1000);
+
+    // Safety net for Bold payments whose webhook is delayed or never arrives.
+    setInterval(() => reconcileBoldLinks().catch(err =>
+      console.error('[bold] Reconcile error:', err.message)), 5 * 60 * 1000);
+    setInterval(() => reconcileBoldQrs().catch(err =>
+      console.error('[bold] QR reconcile error:', err.message)), 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });

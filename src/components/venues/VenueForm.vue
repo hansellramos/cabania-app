@@ -174,6 +174,21 @@
       <div class="form-text">Información sobre domicilios y servicios de entrega para los huéspedes.</div>
     </div>
     <div class="mb-4">
+      <CFormLabel for="advancePercentage">Anticipo para reservar (%)</CFormLabel>
+      <CFormInput
+        id="advancePercentage"
+        v-model="form.advance_percentage"
+        type="number"
+        min="1"
+        max="100"
+        placeholder="Ej: 50"
+        style="max-width: 160px;"
+      />
+      <div class="form-text">
+        Porcentaje del total que se cobra en línea para confirmar la reserva. Vacío = el total.
+      </div>
+    </div>
+    <div class="mb-4">
       <div
         class="d-flex align-items-center justify-content-between p-2 border rounded cursor-pointer"
         style="cursor: pointer;"

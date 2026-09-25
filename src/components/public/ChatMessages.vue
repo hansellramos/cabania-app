@@ -11,6 +11,31 @@
     >
       <div :class="['msg-bubble', msg.role === 'user' ? 'bubble-user' : 'bubble-bot']">
         <div class="msg-text" v-html="formatMessage(msg.content)"></div>
+
+        <!-- Payment card: QR (computer, or when asked) + pay button + plain link fallback -->
+        <div v-if="msg.payment && msg.payment.paid" class="pay-card">
+          <p class="pay-paid">✅ Pagado</p>
+        </div>
+        <div v-else-if="msg.payment" class="pay-card">
+          <template v-if="msg.payment.qr_image_url">
+            <template v-if="!qrExpired(msg.payment)">
+              <img :src="msg.payment.qr_image_url" class="pay-qr" alt="Código QR para pagar con Bre-B" />
+              <p class="pay-hint">Escanéalo con la app de tu banco (Bre-B).</p>
+              <a :href="msg.payment.qr_download_url" class="pay-download" download>Descargar QR</a>
+            </template>
+            <p v-else class="pay-hint">El QR venció. Pídeme uno nuevo si quieres pagar con Bre-B.</p>
+          </template>
+          <a :href="msg.payment.url" class="pay-button" target="_blank" rel="noopener">
+            {{ msg.payment.button_text || 'Pagar' }}
+          </a>
+          <p class="pay-fallback">
+            Si el botón no abre, copia este enlace en tu navegador para pagar de forma segura con Bold:
+            <span class="pay-url">{{ msg.payment.url }}</span>
+          </p>
+          <p v-if="msg.payment.merchant" class="pay-fallback">
+            El cobro aparece a nombre de {{ msg.payment.merchant }}.
+          </p>
+        </div>
       </div>
     </div>
     <div v-if="sending" class="msg-row msg-bot">
@@ -32,6 +57,9 @@ const props = defineProps({
 })
 
 const container = ref(null)
+
+const qrExpired = (payment) =>
+  !!payment.qr_expires_at && new Date(payment.qr_expires_at).getTime() < Date.now()
 
 const formatMessage = (text) => {
   if (!text) return ''
@@ -112,6 +140,71 @@ defineExpose({ scrollToBottom })
 }
 
 .msg-text { word-break: break-word; }
+
+/* Payment card */
+.pay-card {
+  margin-top: 0.6rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+}
+
+.pay-qr {
+  width: 180px;
+  max-width: 100%;
+  align-self: center;
+  border-radius: 8px;
+  background: #fff;
+  padding: 6px;
+}
+
+.pay-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--cabania-text-secondary, #475569);
+}
+
+.pay-download {
+  align-self: center;
+  font-size: 0.8rem;
+  color: #0d9488;
+  text-decoration: underline;
+}
+
+.pay-button {
+  display: block;
+  text-align: center;
+  padding: 0.6rem 0.9rem;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #1AA15F, #2B6FDF);
+  color: #fff !important;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.pay-button:hover { filter: brightness(1.05); }
+
+.pay-paid {
+  margin: 0;
+  text-align: center;
+  font-weight: 600;
+  color: #10b981;
+}
+
+.pay-fallback {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--cabania-text-muted, #64748b);
+}
+
+.pay-url {
+  display: block;
+  word-break: break-all;
+  user-select: all;
+}
 
 /* Typing indicator */
 .typing {

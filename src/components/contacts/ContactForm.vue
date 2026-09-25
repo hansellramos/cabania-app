@@ -30,6 +30,10 @@
         <CFormInput id="contactInstagram" v-model="form.instagram" type="text" placeholder="@usuario de Instagram" />
       </div>
       <div class="mb-3">
+        <CFormLabel for="contactEmail">Correo</CFormLabel>
+        <CFormInput id="contactEmail" v-model="form.email" type="email" placeholder="correo@ejemplo.com" />
+      </div>
+      <div class="mb-3">
         <CFormLabel for="contactCountry">País</CFormLabel>
         <CFormSelect id="contactCountry" v-model="form.country">
           <option value="">Selecciona un país</option>

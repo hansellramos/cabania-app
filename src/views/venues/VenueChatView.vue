@@ -140,7 +140,7 @@
                 <div v-if="msg.media_url" class="message-media mb-2">
                   <img :src="msg.media_url" class="chat-image" alt="Imagen" @click="imageModalUrl = msg.media_url" />
                 </div>
-                <div class="message-content">{{ msg.content }}</div>
+                <div class="message-content">{{ stripMarkers(msg.content) }}</div>
                 <div class="message-footer">
                   <small v-if="msg.created_at" class="message-time">{{ formatTime(msg.created_at) }}</small>
                   <span v-if="msg.role === 'assistant' && msg.status" class="message-status ms-1" :title="msg.status === 'failed' ? (msg.error_details || 'Error') : msg.status">
@@ -198,6 +198,9 @@
 </template>
 
 <script setup>
+// Assistant messages can carry hidden markers (tools used, payment data): not for display.
+const stripMarkers = (text) => (text || '').replace(/\n?<!-- \{.*?\} -->/g, '')
+
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
