@@ -693,8 +693,8 @@ const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          client_name: { type: 'string', description: 'Nombre del cliente del comisionista. Pásalo siempre que el comisionista lo haya dado en cualquier mensaje de la conversación.' },
-          client_phone: { type: 'string', description: 'WhatsApp del cliente. Pásalo siempre que el comisionista lo haya dado en cualquier mensaje de la conversación.' },
+          customer_name: { type: 'string', description: 'Nombre del cliente del comisionista, tal como lo dio en la conversación (no en notes). Cadena vacía solo si no lo dio.' },
+          customer_phone: { type: 'string', description: 'WhatsApp del cliente, solo dígitos, tal como lo dio en la conversación (no en notes). Cadena vacía solo si no lo dio.' },
           without_client_data: { type: 'boolean', description: 'true solo si el comisionista dijo explícitamente que no tiene o no quiere dar los datos del cliente (la reserva queda a su nombre).' },
           plan_name: { type: 'string', description: 'Nombre del plan elegido.' },
           check_in: { type: 'string', description: 'Fecha de llegada, formato YYYY-MM-DD.' },
@@ -703,9 +703,9 @@ const AGENT_TOOLS = [
           children: { type: 'integer', description: 'Número de niños.' },
           agreed_price: { type: 'number', description: 'Precio total acordado con el cliente, en pesos. Omitir para usar el precio del plan.' },
           charge_amount: { type: 'number', description: 'Monto a cobrar ahora con el link, en pesos. Omitir para usar el anticipo de la cabaña.' },
-          notes: { type: 'string', description: 'Notas de la reserva.' }
+          notes: { type: 'string', description: 'Solo solicitudes especiales de la reserva. Los datos del cliente NO van aquí.' }
         },
-        required: ['plan_name', 'check_in', 'adults']
+        required: ['customer_name', 'customer_phone', 'plan_name', 'check_in', 'adults']
       }
     }
   }
@@ -725,7 +725,7 @@ Quien escribe es ${agent.name}, comisionista (aliado) de ${venue?.name || 'la ca
 - Luego pide lo que falte: nombre y WhatsApp del cliente (con ellos la reserva y el contrato salen a nombre del cliente), plan y niños (0 si no dice).
 - Precio: el del plan, salvo que te dé un precio total acordado distinto. Monto a cobrar ahora: ${advance}, salvo que te indique otro monto.
 - Con todo listo, resume en una sola respuesta (cliente, plan, fecha, personas, total, monto a cobrar ahora) y pide confirmación una vez, terminando con [[botones: Sí, generar cobro | Cambiar algo]].
-- Cuando confirme, usa create_agent_charge con TODOS los datos, incluidos client_name y client_phone si los dio en cualquier mensaje. Con el comisionista NUNCA uses create_estimate, send_payment_info ni save_contact_info, y no le pidas sus propios datos: ya está identificado.
+- Cuando confirme, usa create_agent_charge con TODOS los datos, incluidos customer_name y customer_phone si los dio en cualquier mensaje. Con el comisionista NUNCA uses create_estimate, send_payment_info ni save_contact_info, y no le pidas sus propios datos: ya está identificado.
 - El link le llega a él para que se lo reenvíe a su cliente. Cuando el cliente pague, el sistema le confirma aquí la reserva, su comisión y el link del contrato.`;
 }
 

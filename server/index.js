@@ -8541,6 +8541,34 @@ REGLAS:
    * keep it as a pending estimate tied to the agent, and send the agent the Bold
    * link to forward. The booking itself is created when the client pays.
    */
+  /**
+   * The agent's client from the tool arguments. Models often put the client in the
+   * notes ("Cliente: Laura Gómez, WhatsApp 3009998877") instead of the fields, so
+   * the notes are the fallback.
+   */
+  function agentClientFromArgs(args) {
+    const notes = String(args.notes || '');
+    let phone = cleanPhone(args.customer_phone || args.client_phone || args.phone);
+    let phoneMatch = null;
+    if (!phone) {
+      phoneMatch = notes.match(/(?:\+?57[\s-]?)?3\d{2}[\s-]?\d{3}[\s-]?\d{4}/);
+      phone = phoneMatch ? cleanPhone(phoneMatch[0]) : null;
+    }
+    let name = String(args.customer_name || args.client_name || args.name || '').trim();
+    if (!name && notes) {
+      // "Cliente: Laura Gómez", or the capitalized words right before the phone.
+      const labeled = notes.match(/[Cc]liente\s*:?\s*([A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ]+){0,3})/);
+      if (labeled) {
+        name = labeled[1];
+      } else if (phoneMatch) {
+        const before = notes.slice(0, phoneMatch.index).split(/[,;:\n]/).pop();
+        const words = before.trim().split(/\s+/).filter(w => /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/.test(w));
+        name = words.slice(-3).join(' ');
+      }
+    }
+    return { name: name || null, phone: phone || null };
+  }
+
   /** "sábado, 3 de octubre" for a booking date stored as a UTC day. */
   function formatBookingDate(value) {
     if (!value) return '';
@@ -8586,13 +8614,12 @@ REGLAS:
       return fail('La cabaña no tiene cobro en línea (Bold) activo. Dile que el dueño debe activarlo.');
     }
 
-    const clientPhone = cleanPhone(args.client_phone);
-    const clientName = String(args.client_name || '').trim() || null;
+    const { name: clientName, phone: clientPhone } = agentClientFromArgs(args);
     // The model tends to drop details given a few messages earlier; without them
     // the booking and contract end up under the agent, so that must be explicit.
     if (!clientName && !clientPhone && args.without_client_data !== true) {
       return fail('Faltan los datos del cliente. Si el comisionista ya dio el nombre o el WhatsApp del cliente en la conversación, '
-        + 'vuelve a llamar create_agent_charge incluyendo client_name y client_phone. Si no los tiene, pregúntale; '
+        + 'vuelve a llamar create_agent_charge incluyendo customer_name y customer_phone (no en notes). Si no los tiene, pregúntale; '
         + 'solo si dice que no los dará, llama con without_client_data: true.');
     }
     const data = {
@@ -8892,12 +8919,18 @@ REGLAS:
     ].filter(Boolean);
     const link = `/business/accommodations/${acc.id}`;
 
+    // The commission agent who sold it gets their own version (below), even when
+    // they are also a member of the organization.
+    const seller = acc.commission_agent_id
+      ? await prisma.commission_agents.findUnique({ where: { id: acc.commission_agent_id }, select: { user_id: true } })
+      : null;
+
     // In-app: always, to everyone in the organization.
     if (venue.organization) {
-      const members = await prisma.user_organizations.findMany({
+      const members = (await prisma.user_organizations.findMany({
         where: { organization_id: venue.organization },
         select: { user_id: true }
-      });
+      })).filter(m => m.user_id !== seller?.user_id);
       if (members.length) {
         await prisma.notifications.createMany({
           data: members.map(m => ({
@@ -8911,6 +8944,29 @@ REGLAS:
           }))
         });
       }
+    }
+
+    // The commission agent who sold it hears too, with their commission. Unlike
+    // the chat confirmation, this one has no 24-hour window.
+    if (seller?.user_id) {
+      const commission = await prisma.commission_payments.findFirst({
+        where: { agent_id: acc.commission_agent_id, accommodation_id: acc.id }
+      });
+      const client = customer?.fullname ? `Tu cliente ${customer.fullname}` : 'Tu cliente';
+      await prisma.notifications.create({
+        data: {
+          user_id: seller.user_id,
+          organization_id: venue.organization || null,
+          venue_id: venue.id,
+          type: 'agent_booking_confirmed',
+          title: `Alquiler confirmado: ${date}`,
+          body: `${client} confirmó su alquiler para el ${date} en ${venue.name}: ${people}.`
+            + (commission
+              ? ` Tu comisión: ${money(commission.calculated_amount)} (${commission.status === 'paid' ? 'pagada' : 'pendiente de pago'}).`
+              : ''),
+          link
+        }
+      });
     }
 
     const appUrl = `${appBaseUrl()}/#${link}`;
@@ -10582,7 +10638,8 @@ REGLAS:
     // Sent as is, the guest gets nothing and the flow stalls: ask once more, then
     // fall back to a message built from what the tools returned.
     const visibleText = (text) => (text || '').replace(/<!--[\s\S]*?-->/g, '').trim();
-    if (!visibleText(llmResponse.content) && !(llmResponse.tool_calls?.length)) {
+    // Also when the tool rounds ran out with a call still pending: nothing to send.
+    if (!visibleText(llmResponse.content)) {
       console.warn('[chat] Empty model reply, retrying', { conversation: conversation.id, tools: llmResponse.tools_used || [] });
       const toolsUsedSoFar = llmResponse.tools_used || [];
       try {
