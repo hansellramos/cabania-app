@@ -351,7 +351,7 @@ async function setupAuth(app) {
 
   app.post('/api/auth/impersonate', isAuthenticated, async (req, res) => {
     try {
-      const { getUserPermissions, hasPermission } = require('./permissions');
+      const { getUserPermissions, hasPermission, getAccessibleOrganizationIds } = require('./permissions');
       const currentUserId = String(req.user.claims.sub);
       const originalUserId = req.session.originalUserId || currentUserId;
 
@@ -369,6 +369,24 @@ async function setupAuth(app) {
       const targetUser = await prisma.users.findUnique({ where: { id: targetUserId } });
       if (!targetUser) {
         return res.status(404).json({ error: 'Usuario no encontrado' });
+      }
+
+      // users:impersonate alone used to allow switching to ANY user, super admins
+      // included. Outside super admins, only users that share an organization with
+      // the original user can be impersonated, and never a super admin.
+      if (!originalPerms.isSuperAdmin) {
+        if (targetUser.is_super_admin) {
+          return res.status(403).json({ error: 'No puede impersonar a un super administrador' });
+        }
+        const orgIds = await getAccessibleOrganizationIds(originalPerms);
+        if (orgIds !== null) {
+          const shared = orgIds.length > 0 && await prisma.user_organizations.findFirst({
+            where: { user_id: targetUserId, organization_id: { in: orgIds } }
+          });
+          if (!shared) {
+            return res.status(403).json({ error: 'Solo puede impersonar usuarios de su organización' });
+          }
+        }
       }
 
       // Store original user and switch session
