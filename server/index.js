@@ -9044,6 +9044,7 @@ REGLAS:
     // that answer run in the next round. A single round dropped them and left replies
     // like "sending it now, one moment..." with nothing sent.
     let toolRounds = 0;
+    let lastEstimateResult = null;
     while (llmResponse.tool_calls && llmResponse.tool_calls.length > 0 && toolRounds++ < 4) {
       for (const toolCall of llmResponse.tool_calls) {
         if (toolCall.function.name === 'check_availability') {
@@ -9452,6 +9453,7 @@ REGLAS:
           };
 
           const toolResultContent = JSON.stringify(estimateResult);
+          lastEstimateResult = estimateResult;
 
           if (chatModelConfig.provider === 'anthropic') {
             llmMessages.push({
@@ -9779,6 +9781,39 @@ REGLAS:
           llmResponse.tools_used = llmResponse.tools_used || [];
           llmResponse.tools_used.push('escalate_to_human');
         }
+      }
+    }
+
+    // Some models (seen with grok-4) answer a tool result with an empty message.
+    // Sent as is, the guest gets nothing and the flow stalls: ask once more, then
+    // fall back to a message built from what the tools returned.
+    const visibleText = (text) => (text || '').replace(/<!--[\s\S]*?-->/g, '').trim();
+    if (!visibleText(llmResponse.content) && !(llmResponse.tool_calls?.length)) {
+      console.warn('[chat] Empty model reply, retrying', { conversation: conversation.id, tools: llmResponse.tools_used || [] });
+      const toolsUsedSoFar = llmResponse.tools_used || [];
+      try {
+        const retry = await llmService.callLLMByCode(chatProviderCode, [
+          ...llmMessages,
+          { role: 'user', content: '[Sistema] Tu respuesta anterior llegó vacía. Responde ahora al cliente con el mensaje que corresponde según el último resultado de la herramienta.' }
+        ], { maxTokens: 1024, temperature: 0.7 });
+        if (visibleText(retry.content)) llmResponse = { ...retry, tools_used: toolsUsedSoFar };
+      } catch (err) {
+        console.error('[chat] Retry after empty reply failed', { error: err.message });
+      }
+      if (!visibleText(llmResponse.content)) {
+        const e = lastEstimateResult;
+        llmResponse = {
+          ...llmResponse,
+          tool_calls: null,
+          tools_used: toolsUsedSoFar,
+          content: e && e.calculated_price
+            ? `Esta es tu cotización:\n\n• Plan: ${e.plan}\n• Fecha: ${e.check_in}\n• Personas: ${e.adults || 0} adulto(s)`
+              + `${e.children ? ` y ${e.children} niño(s)` : ''}\n• Total: ${money(e.calculated_price)}`
+              + (e.advance_amount && e.advance_amount < e.calculated_price
+                ? `\n• Anticipo para reservar (${e.advance_percentage}%): ${money(e.advance_amount)}` : '')
+              + `\n\n¿Quieres reservar? [[botones: Sí, reservar | Sigamos conversando]]`
+            : 'Disculpa, tuve un problema al responderte. ¿Me repites por favor lo último que me dijiste?'
+        };
       }
     }
 
