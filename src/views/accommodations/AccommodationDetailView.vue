@@ -5,6 +5,14 @@
         <CCardHeader class="d-flex justify-content-between align-items-center">
           <strong>Detalle del Hospedaje</strong>
           <div class="d-flex gap-2 flex-wrap">
+            <CButton
+              v-if="accommodation && !accommodation.no_show_at && isPastOrToday"
+              color="secondary"
+              size="sm"
+              @click="openNoShow"
+            >
+              No asistió
+            </CButton>
             <CButton color="warning" size="sm" @click="$router.push(`/business/accommodations/${route.params.id}/edit`)">
               Editar
             </CButton>
@@ -17,6 +25,22 @@
           </div>
         </CCardHeader>
         <CCardBody v-if="accommodation">
+          <CAlert v-if="accommodation.no_show_at && !accommodation.rescheduled_at" color="warning" class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div>
+              <strong>No asistió</strong> · marcado el {{ formatDateTimeShort(accommodation.no_show_at) }}.
+              Por contrato, lo pagado no se reembolsa.
+              <div v-if="accommodation.no_show_note" class="small mt-1" style="white-space: pre-line">{{ accommodation.no_show_note }}</div>
+            </div>
+            <div class="d-flex gap-2">
+              <CButton color="primary" size="sm" @click="openReschedule">Reagendar por cortesía</CButton>
+              <CButton color="secondary" size="sm" variant="outline" :disabled="savingNoShow" @click="undoNoShow">Quitar marca</CButton>
+            </div>
+          </CAlert>
+          <CAlert v-if="accommodation.rescheduled_at" color="info">
+            <strong>Reagendado por cortesía</strong>: no asistió el {{ formatDate(accommodation.original_date) }}
+            y se movió al {{ formatDate(accommodation.date) }}. Los pagos, el contrato y la comisión siguen con este alquiler.
+            <div v-if="accommodation.no_show_note" class="small mt-1" style="white-space: pre-line">{{ accommodation.no_show_note }}</div>
+          </CAlert>
           <CNav variant="tabs" class="mb-3">
             <CNavItem>
               <CNavLink href="javascript:void(0)" :active="activeTab === 0" @click="activeTab = 0">
@@ -741,6 +765,44 @@
       </div>
     </CModalFooter>
   </CModal>
+
+  <CModal :visible="showNoShow" @close="showNoShow = false">
+    <CModalHeader close-button>
+      <CModalTitle>Marcar como "No asistió"</CModalTitle>
+    </CModalHeader>
+    <CModalBody>
+      <p class="small text-muted">
+        El alquiler queda registrado como no asistido y lo pagado se conserva (por contrato no se reembolsa).
+        Después, si quieres, lo puedes reagendar por cortesía.
+      </p>
+      <CFormTextarea v-model="noShowNote" rows="3" placeholder="Nota (opcional): qué pasó, si avisó, etc." />
+      <div v-if="noShowError" class="text-danger small mt-2">{{ noShowError }}</div>
+    </CModalBody>
+    <CModalFooter>
+      <CButton color="secondary" variant="outline" @click="showNoShow = false">Cancelar</CButton>
+      <CButton color="warning" :disabled="savingNoShow" @click="markNoShow">Marcar como no asistió</CButton>
+    </CModalFooter>
+  </CModal>
+
+  <CModal :visible="showReschedule" @close="showReschedule = false">
+    <CModalHeader close-button>
+      <CModalTitle>Reagendar por cortesía</CModalTitle>
+    </CModalHeader>
+    <CModalBody>
+      <p class="small text-muted">
+        Se mueve la fecha de este mismo alquiler. Los pagos, el contrato y la comisión del comisionista siguen con él,
+        y queda registrado que no asistió el {{ formatDate(accommodation?.original_date || accommodation?.date) }}.
+      </p>
+      <CFormLabel for="rescheduleDate">Nueva fecha</CFormLabel>
+      <CFormInput id="rescheduleDate" v-model="rescheduleDate" type="date" :min="todayIso" class="mb-2" style="max-width: 220px" />
+      <CFormTextarea v-model="rescheduleNote" rows="2" placeholder="Nota (opcional)" />
+      <div v-if="rescheduleError" class="text-danger small mt-2">{{ rescheduleError }}</div>
+    </CModalBody>
+    <CModalFooter>
+      <CButton color="secondary" variant="outline" @click="showReschedule = false">Cancelar</CButton>
+      <CButton color="primary" :disabled="savingNoShow || !rescheduleDate" @click="reschedule">Reagendar</CButton>
+    </CModalFooter>
+  </CModal>
 </template>
 
 <script setup>
@@ -757,6 +819,71 @@ import { deleteAccommodation } from '@/services/accommodationService'
 const route = useRoute()
 const router = useRouter()
 const accommodation = ref(null)
+
+// No-show and courtesy reschedule
+const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+const isPastOrToday = computed(() => !accommodation.value?.date || String(accommodation.value.date).slice(0, 10) <= todayIso)
+const showNoShow = ref(false)
+const showReschedule = ref(false)
+const noShowNote = ref('')
+const noShowError = ref('')
+const rescheduleDate = ref('')
+const rescheduleNote = ref('')
+const rescheduleError = ref('')
+const savingNoShow = ref(false)
+
+function openNoShow() {
+  noShowNote.value = ''
+  noShowError.value = ''
+  showNoShow.value = true
+}
+
+function openReschedule() {
+  rescheduleDate.value = ''
+  rescheduleNote.value = ''
+  rescheduleError.value = ''
+  showReschedule.value = true
+}
+
+async function noShowRequest(path, method, body) {
+  savingNoShow.value = true
+  try {
+    const res = await fetch(`/api/accommodations/${route.params.id}/${path}`, {
+      method,
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || 'No se pudo guardar')
+    await load()
+    return null
+  } catch (err) {
+    return err.message
+  } finally {
+    savingNoShow.value = false
+  }
+}
+
+async function markNoShow() {
+  noShowError.value = await noShowRequest('no-show', 'POST', { note: noShowNote.value })
+  if (!noShowError.value) showNoShow.value = false
+}
+
+async function undoNoShow() {
+  const error = await noShowRequest('no-show', 'DELETE')
+  if (error) window.alert(error)
+}
+
+async function reschedule() {
+  rescheduleError.value = await noShowRequest('reschedule', 'POST', { date: rescheduleDate.value, note: rescheduleNote.value })
+  if (!rescheduleError.value) showReschedule.value = false
+}
+
+function formatDateTimeShort(value) {
+  if (!value) return '—'
+  return new Date(value).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' })
+}
 const payments = ref([])
 const showReceiptModal = ref(false)
 const selectedReceiptUrl = ref('')
