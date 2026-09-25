@@ -7484,7 +7484,7 @@ REGLAS:
               // Find or create conversation
               let conversation = await prisma.chat_conversations.findFirst({
                 where: { venue_id, phone: from, source: 'cloud_api' },
-                include: { messages: { orderBy: { created_at: 'asc' }, take: 20 } }
+                include: { messages: { orderBy: { created_at: 'desc' }, take: 20 } }
               });
 
               if (!conversation) {
@@ -7739,7 +7739,7 @@ REGLAS:
         // Find or create conversation
         let conversation = await prisma.chat_conversations.findFirst({
           where: { venue_id, phone: senderId, source: 'instagram' },
-          include: { messages: { orderBy: { created_at: 'asc' }, take: 20 } }
+          include: { messages: { orderBy: { created_at: 'desc' }, take: 20 } }
         });
 
         if (!conversation) {
@@ -8353,6 +8353,13 @@ REGLAS:
   const BOLD_RECENT_LINK_MINUTES = 12;
   // Chat history the model sees when a commission agent writes.
   const AGENT_HISTORY_HOURS = 12;
+  // Typed in any chat, makes the model start over (see processChat).
+  const CHAT_RESET_COMMAND = /^\/(reiniciar|restart|clean|nuevo|nueva)$/i;
+  /** Epoch ms of the last "/reiniciar" in the conversation, or 0. */
+  const contextResetAt = (conversation) => {
+    const at = conversation?.metadata?.context_reset_at;
+    return at ? new Date(at).getTime() || 0 : 0;
+  };
 
   /** Append to a link's audit trail. Never throws: auditing must not break a payment. */
   async function logBoldEvent(linkId, type, { source = 'system', fromStatus = null, toStatus = null, detail = null, actor = null } = {}) {
@@ -8580,8 +8587,9 @@ REGLAS:
     return new Date(value).toLocaleDateString('es-CO', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' });
   }
 
-  async function createAgentCharge({ venue, plans, conversation, agent, args }) {
+  async function prepareAgentCharge({ venue, plans, conversation, agent, args, confirmed = false }) {
     const fail = (message, extra = {}) => ({ success: false, message, ...extra });
+    console.log('[agent] prepare', { conversation: conversation.id, plan: args.plan_name, check_in: args.check_in, adults: args.adults });
     const planName = String(args.plan_name || '').toLowerCase();
     const plan = plans.find(p => p.name.toLowerCase().includes(planName) || planName.includes(p.name.toLowerCase()));
     if (!plan) {
@@ -8624,7 +8632,7 @@ REGLAS:
     // the booking and contract end up under the agent, so that must be explicit.
     if (!clientName && !clientPhone && args.without_client_data !== true) {
       return fail('Faltan los datos del cliente. Si el comisionista ya dio el nombre o el WhatsApp del cliente en la conversación, '
-        + 'vuelve a llamar create_agent_charge incluyendo customer_name y customer_phone (no en notes). Si no los tiene, pregúntale; '
+        + 'vuelve a llamar prepare_agent_charge incluyendo customer_name y customer_phone (no en notes). Si no los tiene, pregúntale; '
         + 'solo si dice que no los dará, llama con without_client_data: true.');
     }
     const data = {
@@ -8648,21 +8656,40 @@ REGLAS:
       created_by: 'chat_agent'
     };
     // The model may call the tool again for the same booking: reuse it.
-    const estimate = await prisma.estimates.findFirst({
+    const existing = await prisma.estimates.findFirst({
       where: {
         conversation_id: conversation.id, status: 'pending', commission_agent_id: agent.id,
-        plan_id: plan.id, check_in: checkIn, adults, children, agreed_price: agreedPrice, charge_amount: charge
+        plan_id: plan.id, check_in: checkIn, adults, children, agreed_price: agreedPrice, charge_amount: charge,
+        customer_name: clientName, contact_phone: clientPhone
       }
-    }) || await prisma.estimates.create({ data });
-
-    const sent = await sendBoldPaymentLink({ venueId: venue.id, conversation, paymentMethod, estimateId: estimate.id });
-    if (!sent.success) return sent;
+    });
+    // The agent just said yes to this very summary and the model prepared it
+    // again instead of confirming: the data is what they approved, so send it.
+    if (existing && confirmed && existing.payment_status !== 'link_sent') {
+      return confirmAgentCharge({ venue, conversation, agent, args: { draft_id: existing.id } });
+    }
+    const estimate = existing || await prisma.estimates.create({ data });
 
     const commission = await computeCommission({ agentId: agent.id, planType: plan.plan_type, adults, agreedPrice });
+    const people = `${adults} adulto${adults === 1 ? '' : 's'}${children ? ` y ${children} niño${children === 1 ? '' : 's'}` : ''}`;
+    const summary = [
+      `👤 Cliente: ${clientName || 'sin nombre'}${clientPhone ? ` (${clientPhone})` : ''}`,
+      `🏡 ${plan.name} · ${people}`,
+      `📅 ${formatBookingDate(checkIn)}`,
+      `💰 Total: ${money(agreedPrice)}`,
+      `💳 Cobrar ahora: ${money(charge)}${agreedPrice > charge ? ` · Saldo: ${money(agreedPrice - charge)}` : ''}`,
+      ...(commission.no_rules ? [] : [`💼 Tu comisión: ${money(commission.total)}`])
+    ].join('\n');
     return {
-      ...sent,
-      estimate_id: estimate.id,
+      success: true,
+      draft_id: estimate.id,
+      summary,
+      next_step: 'Responde con "Este es el cobro:" seguido del campo summary tal cual (sin cambiarlo), luego pregunta "¿Lo genero?" '
+        + 'y termina con [[botones: Sí, generar cobro | Cambiar algo]]. Cuando confirme, llama confirm_agent_charge con este draft_id. '
+        + 'Si quiere cambiar algo, vuelve a llamar prepare_agent_charge con los datos corregidos.',
+      charge_now: charge,
       client_name: clientName,
+      client_phone: clientPhone,
       plan: plan.name,
       check_in: args.check_in,
       adults,
@@ -8673,6 +8700,43 @@ REGLAS:
         ? 'El contrato saldrá a nombre del cliente.'
         : 'Sin datos del cliente, la reserva y el contrato quedan a nombre del comisionista.'
     };
+  }
+
+  /**
+   * Send the agent the Bold link for a draft they confirmed. Only the draft id
+   * travels: the model never re-types dates, client or amounts at this step, which
+   * is where it used to get them wrong.
+   */
+  async function confirmAgentCharge({ venue, conversation, agent, args }) {
+    const since = new Date(Math.max(Date.now() - AGENT_HISTORY_HOURS * 60 * 60 * 1000, contextResetAt(conversation)));
+    let draft = args.draft_id && UUID_PATTERN.test(args.draft_id)
+      ? await prisma.estimates.findFirst({
+        where: { id: args.draft_id, conversation_id: conversation.id, commission_agent_id: agent.id, status: 'pending' }
+      })
+      : null;
+    // The model often loses ids between turns: the conversation's latest draft.
+    if (!draft) {
+      draft = await prisma.estimates.findFirst({
+        where: { conversation_id: conversation.id, commission_agent_id: agent.id, status: 'pending', created_at: { gte: since } },
+        orderBy: { created_at: 'desc' }
+      });
+    }
+    if (!draft) {
+      return { success: false, message: 'No hay un cobro preparado para confirmar. Llama primero prepare_agent_charge con los datos de la reserva.' };
+    }
+    const paymentMethod = await prisma.venue_payment_methods.findFirst({
+      where: { venue_id: venue.id, method_type: 'bold', is_active: true }
+    });
+    if (!paymentMethod || !bold.isConfigured()) {
+      return { success: false, message: 'La cabaña no tiene cobro en línea (Bold) activo. Dile que el dueño debe activarlo.' };
+    }
+    // The date may have been taken since the draft was made.
+    const { conflict } = await findBookingConflict(venue.id, new Date(draft.check_in), new Date(draft.check_out || draft.check_in));
+    if (conflict) {
+      return { success: false, message: 'Esa fecha se reservó mientras tanto. Pídele otra fecha y prepara el cobro de nuevo.' };
+    }
+    const sent = await sendBoldPaymentLink({ venueId: venue.id, conversation, paymentMethod, estimateId: draft.id });
+    return sent.success ? { ...sent, estimate_id: draft.id, client_name: draft.customer_name } : sent;
   }
 
   async function sendBoldPaymentLink({ venueId, conversation, paymentMethod, estimateId, format }) {
@@ -8694,7 +8758,10 @@ REGLAS:
       : null;
     if ((!estimate || estimate.conversation_id !== conversation?.id) && conversation?.id) {
       estimate = await prisma.estimates.findFirst({
-        where: { conversation_id: conversation.id, venue_id: venueId, status: 'pending' },
+        where: {
+          conversation_id: conversation.id, venue_id: venueId, status: 'pending',
+          created_at: { gte: new Date(contextResetAt(conversation)) }
+        },
         orderBy: { created_at: 'desc' }
       });
     }
@@ -9718,6 +9785,19 @@ REGLAS:
       throw Object.assign(new Error('Cabaña no encontrada'), { statusCode: 404 });
     }
 
+    // "/reiniciar": the model forgets this conversation so far (the stored history
+    // stays). For testing from scratch, and for an agent starting a new booking.
+    if (CHAT_RESET_COMMAND.test(String(userMessage || '').trim())) {
+      const metadata = { ...(conversation.metadata || {}), context_reset_at: new Date().toISOString() };
+      await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { metadata, updated_at: new Date() } });
+      conversation.metadata = metadata;
+      const content = '🔄 Listo, empezamos de cero. ¿En qué te puedo ayudar?';
+      const assistantMessage = await prisma.chat_messages.create({
+        data: { conversation_id: conversation.id, role: 'assistant', content, provider: 'system', status: source === 'baileys' ? 'pending' : null }
+      });
+      return { assistantMessage, llmResponse: { content, tools_used: [], quick_replies: null }, chatProviderCode: 'system', toolsUsed: [] };
+    }
+
     // Get venue plans
     const plans = await prisma.venue_plans.findMany({
       where: { venue_id, is_active: true }
@@ -9848,8 +9928,14 @@ REGLAS:
     // Add conversation history. A commission agent reuses the same chat for many
     // bookings (and may have written as a guest before): older turns make the
     // model mix up dates and clients, so only the recent ones count.
-    const historyFrom = commissionAgent ? Date.now() - AGENT_HISTORY_HOURS * 60 * 60 * 1000 : 0;
-    for (const msg of conversation.messages) {
+    const historyFrom = Math.max(
+      contextResetAt(conversation),
+      commissionAgent ? Date.now() - AGENT_HISTORY_HOURS * 60 * 60 * 1000 : 0
+    );
+    // Callers load the latest 20 messages newest first (the oldest 20 made the model
+    // answer to a morning conversation instead of the current one).
+    const history = [...conversation.messages].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    for (const msg of history) {
       if (historyFrom && msg.created_at && new Date(msg.created_at).getTime() < historyFrom) continue;
       llmMessages.push({ role: msg.role, content: msg.content });
     }
@@ -9868,21 +9954,23 @@ REGLAS:
       tools: chatTools
     });
 
+    // The agent's message is a yes ("sí", "dale", "listo, generar cobro"...).
+    const confirms = /^\s*(s[ií]|dale|listo|ok|okay|confirmo|confirmado|de una|hágale|hagale|genera|generar)(?=[\s,.!¡]|$)/i.test(userMessage || '');
+
     // A commission agent confirmed and the model answered "link sent" without
     // calling the tool (seen with grok): nothing was charged, so make it call it.
     // Past tense only: "¿quieres que te genere el link?" must not trigger a charge.
     const claimsCharge = (text) => /\b(link|cobro)\b/i.test(text || '')
       && /(enviad[oa]|envié|generad[oa]|generé|ya (te )?lleg[óo]|listo el (link|cobro))/i.test(text || '');
-    const confirms = /^\s*(s[ií]|dale|listo|ok|okay|confirmo|confirmado|de una|hágale|hagale|genera|generar)(?=[\s,.!¡]|$)/i.test(userMessage || '');
     if (commissionAgent && confirms && !llmResponse.tool_calls?.length && claimsCharge(llmResponse.content)) {
       console.warn('[agent] Charge claimed without the tool, forcing it', { conversation: conversation.id });
       llmMessages.push({ role: 'assistant', content: llmResponse.content });
       llmMessages.push({
         role: 'user',
-        content: '[Sistema] Todavía no se generó ningún cobro: no llamaste create_agent_charge. Llámala ahora con los datos del último resumen que el comisionista confirmó.'
+        content: '[Sistema] Todavía no se generó ningún cobro: no llamaste confirm_agent_charge. Llámala ahora.'
       });
       llmResponse = await callChatLLM(llmMessages, {
-        maxTokens: 1024, temperature: 0.3, tools: true, forceTool: 'create_agent_charge'
+        maxTokens: 1024, temperature: 0.3, tools: true, forceTool: 'confirm_agent_charge'
       });
     }
 
@@ -9908,7 +9996,8 @@ REGLAS:
             }
           });
 
-          if (recentChecks >= 5) {
+          // Commission agents check dates all day for their clients: no limit.
+          if (recentChecks >= 5 && !commissionAgent) {
             const availabilityData = {
               error: true,
               message: 'Has alcanzado el límite de consultas de disponibilidad (5 por hora). Por favor espera un momento o contacta directamente por WhatsApp para más información.'
@@ -10381,12 +10470,13 @@ REGLAS:
 
           llmResponse.tools_used = llmResponse.tools_used || [];
           llmResponse.tools_used.push('get_payment_methods');
-        } else if (toolCall.function.name === 'create_agent_charge') {
-          const args = JSON.parse(toolCall.function.arguments);
+        } else if (['prepare_agent_charge', 'confirm_agent_charge'].includes(toolCall.function.name)) {
+          const args = JSON.parse(toolCall.function.arguments || '{}');
+          const run = toolCall.function.name === 'prepare_agent_charge' ? prepareAgentCharge : confirmAgentCharge;
           let chargeResult;
           try {
             chargeResult = commissionAgent
-              ? await createAgentCharge({ venue, plans, conversation, agent: commissionAgent, args })
+              ? await run({ venue, plans, conversation, agent: commissionAgent, args, confirmed: confirms })
               : { success: false, message: 'Esta herramienta es solo para comisionistas.' };
           } catch (err) {
             console.error('[agent] Charge failed', { conversation: conversation.id, error: err.message });
@@ -10410,7 +10500,7 @@ REGLAS:
 
           llmResponse = await callChatLLM(llmMessages, { maxTokens: 1024, temperature: 0.7 });
           llmResponse.tools_used = llmResponse.tools_used || [];
-          llmResponse.tools_used.push('create_agent_charge');
+          llmResponse.tools_used.push(toolCall.function.name);
         } else if (toolCall.function.name === 'send_payment_info') {
           const args = JSON.parse(toolCall.function.arguments);
 
@@ -10860,7 +10950,7 @@ REGLAS:
       if (conversation_id && uuidRegex.test(conversation_id)) {
         conversation = await prisma.chat_conversations.findUnique({
           where: { id: conversation_id },
-          include: { messages: { orderBy: { created_at: 'asc' }, take: 20 } }
+          include: { messages: { orderBy: { created_at: 'desc' }, take: 20 } }
         });
       }
 

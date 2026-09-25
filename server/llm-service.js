@@ -690,8 +690,8 @@ const AGENT_TOOLS = [
   {
     type: 'function',
     function: {
-      name: 'create_agent_charge',
-      description: 'Solo en MODO COMISIONISTA. Crea la reserva tentativa de un cliente del comisionista y le envía al comisionista el link de pago de Bold para que se lo reenvíe al cliente. Verifica la disponibilidad por sí misma. Úsala cuando el comisionista confirmó el resumen.',
+      name: 'prepare_agent_charge',
+      description: 'Solo en MODO COMISIONISTA. Valida los datos (plan, fecha disponible, personas, montos) y guarda un borrador del cobro para un cliente del comisionista. NO envía nada: devuelve el resumen para que el comisionista lo confirme. Úsala en cuanto tengas los datos, antes de pedir confirmación.',
       parameters: {
         type: 'object',
         properties: {
@@ -710,6 +710,19 @@ const AGENT_TOOLS = [
         required: ['customer_name', 'customer_phone', 'plan_name', 'check_in', 'adults']
       }
     }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'confirm_agent_charge',
+      description: 'Solo en MODO COMISIONISTA. Envía al comisionista el link de pago del borrador que acaba de confirmar. No repite datos: usa el borrador guardado.',
+      parameters: {
+        type: 'object',
+        properties: {
+          draft_id: { type: 'string', description: 'El draft_id que devolvió prepare_agent_charge.' }
+        }
+      }
+    }
   }
 ];
 
@@ -726,8 +739,10 @@ Quien escribe es ${agent.name}, comisionista (aliado) de ${venue?.name || 'la ca
 - Apenas tengas fecha y número de personas, verifica la fecha con check_availability ANTES de pedir más datos: si está ocupada, díselo de una vez con las fechas alternativas.
 - Luego pide lo que falte: nombre y WhatsApp del cliente (con ellos la reserva y el contrato salen a nombre del cliente), plan y niños (0 si no dice).
 - Precio: el del plan, salvo que te dé un precio total acordado distinto. Monto a cobrar ahora: ${advance}, salvo que te indique otro monto.
-- Con todo listo, resume en una sola respuesta (cliente, plan, fecha, personas, total, monto a cobrar ahora) y pide confirmación una vez, terminando con [[botones: Sí, generar cobro | Cambiar algo]].
-- Cuando confirme, usa create_agent_charge con TODOS los datos, incluidos customer_name y customer_phone si los dio en cualquier mensaje. Con el comisionista NUNCA uses create_estimate, send_payment_info ni save_contact_info, y no le pidas sus propios datos: ya está identificado.
+- Con todo listo, llama prepare_agent_charge con TODOS los datos (customer_name y customer_phone en sus campos). Muestra el resumen que devuelve, tal cual, y pide confirmación una vez, terminando con [[botones: Sí, generar cobro | Cambiar algo]]. Nunca armes el resumen por tu cuenta.
+- Cuando confirme, llama confirm_agent_charge con el draft_id. Si quiere cambiar algo, vuelve a llamar prepare_agent_charge con los datos corregidos.
+- Nunca digas que el link fue enviado si confirm_agent_charge no respondió con éxito.
+- Con el comisionista NUNCA uses create_estimate, send_payment_info ni save_contact_info, y no le pidas sus propios datos: ya está identificado.
 - El link le llega a él para que se lo reenvíe a su cliente. Cuando el cliente pague, el sistema le confirma aquí la reserva, su comisión y el link del contrato.`;
 }
 
