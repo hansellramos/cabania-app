@@ -7,7 +7,7 @@
         </CCardHeader>
         <CCardBody>
           <CFormLabel for="homeView">Vista inicial</CFormLabel>
-          <CFormSelect id="homeView" v-model="homeView" style="max-width: 320px" :disabled="savingHome" @change="saveHomeView">
+          <CFormSelect id="homeView" :model-value="homeView" style="max-width: 320px" :disabled="savingHome" @change="saveHomeView($event.target.value)">
             <option v-for="view in homeViews" :key="view.value" :value="view.value">{{ view.label }}</option>
           </CFormSelect>
           <div class="form-text text-muted">
@@ -200,7 +200,10 @@ watch(user, (u) => {
   if (u?.preferences?.home_view) homeView.value = u.preferences.home_view
 }, { immediate: true })
 
-async function saveHomeView() {
+// Saves the option just picked: CFormSelect fires "change" before updating
+// v-model, so reading homeView here used to save the previous value.
+async function saveHomeView(view) {
+  homeView.value = view
   savingHome.value = true
   homeSaved.value = false
   homeError.value = ''
