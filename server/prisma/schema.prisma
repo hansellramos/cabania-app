@@ -538,6 +538,10 @@ model estimates {
   // WhatsApp user whose number is hidden behind a username).
   contact_phone    String?   @db.VarChar(50)
   contact_email    String?   @db.VarChar(255)
+  // Booked by a commission agent through the chat: the agent gets the payment
+  // link to forward, and the amount charged now is the one they chose.
+  commission_agent_id String? @db.Uuid
+  charge_amount    Decimal?  @db.Decimal
   check_in         DateTime? @db.Date
   check_out        DateTime? @db.Date
   adults           Int?      @default(0)
