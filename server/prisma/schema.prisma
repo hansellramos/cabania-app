@@ -252,6 +252,12 @@ model venues {
   // Percentage of the total charged online to confirm a booking (e.g. 50).
   // Null or 100 = the full amount.
   advance_percentage            Int?
+  // Who hears about a booking confirmed online (paid and with contract). The
+  // in-app notification always goes to the organization's users.
+  notify_booking_whatsapp       Boolean   @default(false)
+  notify_booking_whatsapp_phone String?   @db.VarChar(50)
+  notify_booking_email          Boolean   @default(false)
+  notify_booking_emails         String?   @db.VarChar(500)
   location_source               String?   @db.VarChar(20)
   brand_color_primary           String?   @db.VarChar(7)
   brand_color_secondary         String?   @db.VarChar(7)
@@ -866,6 +872,22 @@ model commission_payments {
 // ========================================
 // BOLD PAYMENT GATEWAY MODULE
 // ========================================
+
+// In-app notifications (header bell), one row per recipient user.
+model notifications {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         String    @db.VarChar(255)
+  organization_id String?   @db.Uuid
+  venue_id        String?   @db.Uuid
+  type            String    @db.VarChar(40)
+  title           String    @db.VarChar(255)
+  body            String?   @db.Text
+  link            String?   @db.VarChar(500)
+  read_at         DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([user_id, created_at])
+}
 
 // Audit trail of a Bold payment link: every status change, webhook, check and
 // manual action, with who or what caused it.

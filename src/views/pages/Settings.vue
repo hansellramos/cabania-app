@@ -3,6 +3,25 @@
     <CCol :xs="12">
       <CCard class="mb-4">
         <CCardHeader>
+          <strong>Preferencias</strong>
+        </CCardHeader>
+        <CCardBody>
+          <CFormLabel for="homeView">Vista inicial</CFormLabel>
+          <CFormSelect id="homeView" v-model="homeView" style="max-width: 320px" :disabled="savingHome" @change="saveHomeView">
+            <option v-for="view in homeViews" :key="view.value" :value="view.value">{{ view.label }}</option>
+          </CFormSelect>
+          <div class="form-text text-muted">
+            Lo primero que ves al entrar a CabanIA.
+            <span v-if="homeSaved" class="text-success ms-1">Guardado ✓</span>
+            <span v-if="homeError" class="text-danger ms-1">{{ homeError }}</span>
+          </div>
+        </CCardBody>
+      </CCard>
+    </CCol>
+
+    <CCol :xs="12">
+      <CCard class="mb-4">
+        <CCardHeader>
           <strong>Settings</strong>
         </CCardHeader>
         <CCardBody v-if="user?.is_super_admin">
@@ -161,9 +180,47 @@
 import { ref, computed, watch } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
+import { revalidateAuth } from '@/router'
 
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
+
+const homeViews = [
+  { value: '/dashboard', label: 'Análisis de Hospedajes' },
+  { value: '/next', label: 'Próximos alquileres' },
+  { value: '/availability', label: 'Disponibilidad' },
+  { value: '/analytics', label: 'Análisis Financiero' }
+]
+const homeView = ref('/dashboard')
+const savingHome = ref(false)
+const homeSaved = ref(false)
+const homeError = ref('')
+
+watch(user, (u) => {
+  if (u?.preferences?.home_view) homeView.value = u.preferences.home_view
+}, { immediate: true })
+
+async function saveHomeView() {
+  savingHome.value = true
+  homeSaved.value = false
+  homeError.value = ''
+  try {
+    const response = await fetch('/api/auth/preferences', {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ home_view: homeView.value })
+    })
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'No se pudo guardar')
+    // The router keeps the signed-in user cached: refresh it so the next login lands there.
+    await revalidateAuth()
+    homeSaved.value = true
+  } catch (err) {
+    homeError.value = err.message
+  } finally {
+    savingHome.value = false
+  }
+}
 
 const superAdmins = ref([])
 const allUsers = ref([])

@@ -188,6 +188,38 @@
         Porcentaje del total que se cobra en línea para confirmar la reserva. Vacío = el total.
       </div>
     </div>
+    <div class="mb-4 p-3 border rounded">
+      <h6>Avisos de nuevos alquileres</h6>
+      <div class="form-text mb-2">
+        Cuando se paga un alquiler en línea y se genera su contrato, avisamos para que alguien haga el seguimiento
+        y coordine la logística. En la campana de notificaciones de la app siempre aparece.
+      </div>
+      <CFormCheck id="notifyWhatsapp" v-model="form.notify_booking_whatsapp" label="Por WhatsApp" />
+      <CFormInput
+        v-if="form.notify_booking_whatsapp"
+        v-model="form.notify_booking_whatsapp_phone"
+        class="mt-1 mb-2 ms-4"
+        style="max-width: 260px;"
+        placeholder="Ej: 573001234567"
+      />
+      <div v-if="form.notify_booking_whatsapp" class="form-text ms-4 mb-2">
+        Vacío = el WhatsApp de la cabaña. Se envía desde el número del sistema de CabanIA.
+      </div>
+      <CFormCheck id="notifyEmail" v-model="form.notify_booking_email" label="Por correo" />
+      <CFormInput
+        v-if="form.notify_booking_email"
+        v-model="form.notify_booking_emails"
+        class="mt-1 mb-2 ms-4"
+        placeholder="correo@ejemplo.com, otro@ejemplo.com"
+      />
+      <CFormCheck id="notifyInstagram" :model-value="false" disabled label="Por Instagram (no disponible)" />
+      <div class="form-text ms-4">
+        Instagram solo permite responder a quien le escribió primero a la cuenta, así que no sirve para avisos.
+      </div>
+      <CAlert v-if="!form.notify_booking_whatsapp && !form.notify_booking_email" color="warning" class="small py-2 mt-2 mb-0">
+        No hay ningún canal seleccionado: los alquileres nuevos solo se verán en la campana de notificaciones de la app.
+      </CAlert>
+    </div>
     <div class="mb-4">
       <div
         class="d-flex align-items-center justify-content-between p-2 border rounded cursor-pointer"

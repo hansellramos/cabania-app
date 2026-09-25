@@ -8860,6 +8860,91 @@ REGLAS:
   }
 
   /**
+   * Let the venue's team know a booking was confirmed online (paid, with contract)
+   * so someone follows up in person: an in-app notification for every user of the
+   * organization, plus WhatsApp and email when the venue turned them on.
+   */
+  async function notifyBookingConfirmed(accommodationId, { paidAmount, balance, contractUrl, manual = false } = {}) {
+    const acc = await prisma.accommodations.findUnique({ where: { id: accommodationId } });
+    if (!acc?.venue) return;
+    const [venue, plan, customer, agent] = await Promise.all([
+      prisma.venues.findUnique({ where: { id: acc.venue } }),
+      acc.plan_id ? prisma.venue_plans.findUnique({ where: { id: acc.plan_id }, select: { name: true } }) : null,
+      acc.customer ? prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true, whatsapp: true } }) : null,
+      acc.commission_agent_id ? prisma.commission_agents.findUnique({ where: { id: acc.commission_agent_id }, select: { name: true } }) : null
+    ]);
+    if (!venue) return;
+
+    const adults = acc.adults || 0;
+    const children = acc.children || 0;
+    const total = adults + children;
+    const people = `${total} persona${total === 1 ? '' : 's'}`
+      + (children ? ` (${adults} adulto${adults === 1 ? '' : 's'} y ${children} niño${children === 1 ? '' : 's'})` : '');
+    const date = formatBookingDate(acc.date);
+    const summary = `Se registró un alquiler para el ${date} en ${venue.name}: ${people}.`;
+    const details = [
+      plan?.name ? `Plan: ${plan.name}` : null,
+      customer?.fullname ? `Cliente: ${customer.fullname}${customer.whatsapp ? ` (${customer.whatsapp})` : ''}` : null,
+      agent?.name ? `Vendido por: ${agent.name}` : null,
+      paidAmount ? `Pagado: ${money(paidAmount)}${balance > 0 ? ` · Saldo pendiente: ${money(balance)}` : ''}` : null,
+      contractUrl ? 'Contrato generado, pendiente de firma' : null,
+      manual ? 'Pago conciliado a mano' : null
+    ].filter(Boolean);
+    const link = `/business/accommodations/${acc.id}`;
+
+    // In-app: always, to everyone in the organization.
+    if (venue.organization) {
+      const members = await prisma.user_organizations.findMany({
+        where: { organization_id: venue.organization },
+        select: { user_id: true }
+      });
+      if (members.length) {
+        await prisma.notifications.createMany({
+          data: members.map(m => ({
+            user_id: m.user_id,
+            organization_id: venue.organization,
+            venue_id: venue.id,
+            type: 'booking_confirmed',
+            title: `Nuevo alquiler: ${date}`,
+            body: `${summary} ${details.join(' · ')}`.trim(),
+            link
+          }))
+        });
+      }
+    }
+
+    const appUrl = `${appBaseUrl()}/#${link}`;
+    const text = `🎉 *Nuevo alquiler confirmado - ${venue.name}*\n\n${summary}\n${details.map(d => `• ${d}`).join('\n')}\n\nVer el alquiler: ${appUrl}`;
+
+    if (venue.notify_booking_whatsapp) {
+      const phone = cleanPhone(venue.notify_booking_whatsapp_phone) || cleanPhone(venue.whatsapp ? String(venue.whatsapp) : null);
+      if (!phone) {
+        console.warn('[booking-notify] WhatsApp on but no phone', { venue: venue.id });
+      } else if (!whatsappClient.isAvailable()) {
+        console.warn('[booking-notify] System WhatsApp unavailable', { venue: venue.id });
+      } else {
+        await whatsappClient.sendSystemMessage(phone, text)
+          .catch(err => console.error('[booking-notify] WhatsApp failed', { venue: venue.id, error: err.message }));
+      }
+    }
+
+    if (venue.notify_booking_email) {
+      const to = String(venue.notify_booking_emails || '').split(/[,;\s]+/).map(e => e.trim()).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+      if (to.length) {
+        const escape = (v) => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const html = `<p><strong>${escape(summary)}</strong></p><ul>${details.map(d => `<li>${escape(d)}</li>`).join('')}</ul>`
+          + `<p><a href="${escape(appUrl)}">Ver el alquiler en CabanIA</a></p>`;
+        const result = await require('./services/email').getEmailProvider()
+          .send({ to: to.join(', '), subject: `Nuevo alquiler confirmado: ${venue.name}, ${date}`, html });
+        if (!result?.success) console.error('[booking-notify] Email failed', { venue: venue.id, error: result?.error });
+      } else {
+        console.warn('[booking-notify] Email on but no valid address', { venue: venue.id });
+      }
+    }
+    console.log('[booking-notify] Sent', { accommodation: acc.id, whatsapp: venue.notify_booking_whatsapp, email: venue.notify_booking_email });
+  }
+
+  /**
    * Record a paid Bold link: convert the estimate into a booking, register the
    * payment as verified with its income, and confirm to the guest. Idempotent: the
    * first caller claims the link, so webhook retries and the reconciler are no-ops.
@@ -9064,6 +9149,12 @@ REGLAS:
       }
     }
 
+    if (result.accommodationId) {
+      await notifyBookingConfirmed(result.accommodationId, {
+        paidAmount: Number(link.amount), balance: result.balance, contractUrl, manual: !!state.actor
+      }).catch(err => console.error('[booking-notify] Failed', { accommodation: result.accommodationId, error: err.message }));
+    }
+
     if (link.conversation_id) {
       const conversation = await prisma.chat_conversations.findUnique({ where: { id: link.conversation_id } });
       if (conversation) {
@@ -9260,6 +9351,71 @@ REGLAS:
     console.log('[bold] Unpaid link notified', { link: link.bold_link_id, reason });
     await logBoldEvent(link.id, 'unpaid_notified', { detail: { reason } });
   }
+
+  // ==================== In-app notifications ====================
+
+  const currentUserId = (req) => String(req.user?.claims?.sub || req.user?.id || '');
+
+  // GET /api/notifications — the signed-in user's latest notifications and unread count
+  app.get('/api/notifications', isAuthenticated, async (req, res) => {
+    try {
+      const userId = currentUserId(req);
+      const [items, unread] = await Promise.all([
+        prisma.notifications.findMany({
+          where: { user_id: userId },
+          orderBy: { created_at: 'desc' },
+          take: Math.min(Number(req.query.limit) || 20, 100)
+        }),
+        prisma.notifications.count({ where: { user_id: userId, read_at: null } })
+      ]);
+      res.json({ items, unread });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/notifications/read-all', isAuthenticated, async (req, res) => {
+    try {
+      await prisma.notifications.updateMany({ where: { user_id: currentUserId(req), read_at: null }, data: { read_at: new Date() } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/notifications/:id/read', isAuthenticated, async (req, res) => {
+    try {
+      if (!UUID_PATTERN.test(req.params.id)) return res.status(404).json({ error: 'Notificación no encontrada' });
+      await prisma.notifications.updateMany({
+        where: { id: req.params.id, user_id: currentUserId(req), read_at: null },
+        data: { read_at: new Date() }
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PUT /api/auth/preferences — the signed-in user's own preferences (e.g. the view after login)
+  const HOME_VIEWS = ['/next', '/availability', '/dashboard', '/analytics'];
+  app.put('/api/auth/preferences', isAuthenticated, async (req, res) => {
+    try {
+      const userId = currentUserId(req);
+      const user = await prisma.users.findUnique({ where: { id: userId }, select: { preferences: true } });
+      if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+      const updates = {};
+      if ('home_view' in (req.body || {})) {
+        const view = req.body.home_view;
+        if (view !== null && !HOME_VIEWS.includes(view)) return res.status(400).json({ error: 'Vista inicial no válida' });
+        updates.home_view = view;
+      }
+      const preferences = { ...(user.preferences || {}), ...updates };
+      await prisma.users.update({ where: { id: userId }, data: { preferences } });
+      res.json({ preferences });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   // ==================== Bold payments: monitor and manual reconciliation ====================
 
