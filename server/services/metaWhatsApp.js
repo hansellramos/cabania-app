@@ -22,6 +22,22 @@ async function graphRequest(url, token, options = {}) {
   return options.raw ? res : res.json();
 }
 
+// Business-scoped user ID: ISO country code, a period and up to 128 alphanumerics
+// (e.g. "CO.1103366088847445"). Webhooks carry it in from_user_id and omit the phone
+// number when the user enabled a WhatsApp username.
+const BSUID_PATTERN = /^[A-Z]{2}\.[A-Za-z0-9]{1,128}$/;
+
+/**
+ * Addressing fields for a message. A BSUID must go in `recipient`; sent in `to`,
+ * Meta takes it for a phone number and rejects it (#131030).
+ * @param {string} to - Phone number or BSUID
+ */
+function recipientFields(to) {
+  return BSUID_PATTERN.test(to)
+    ? { recipient_type: 'individual', recipient: to }
+    : { to };
+}
+
 /**
  * Send a text message.
  * @returns {{ messaging_product, contacts, messages }} — messages[0].id is the wamid
@@ -32,7 +48,7 @@ async function sendText(phoneNumberId, token, to, text) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       messaging_product: 'whatsapp',
-      to,
+      ...recipientFields(to),
       type: 'text',
       text: { body: text }
     })
@@ -45,7 +61,7 @@ async function sendText(phoneNumberId, token, to, text) {
 async function sendImage(phoneNumberId, token, to, imageUrl, caption) {
   const payload = {
     messaging_product: 'whatsapp',
-    to,
+    ...recipientFields(to),
     type: 'image',
     image: { link: imageUrl }
   };
@@ -67,7 +83,7 @@ async function sendTemplate(phoneNumberId, token, to, templateName, lang = 'en_U
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       messaging_product: 'whatsapp',
-      to,
+      ...recipientFields(to),
       type: 'template',
       template: {
         name: templateName,
