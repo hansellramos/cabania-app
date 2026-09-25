@@ -978,6 +978,8 @@ model instagram_connections {
   page_id      String?   @db.VarChar(50)
   access_token String?
   verify_token String?   @db.VarChar(100)
+  username         String?   @db.VarChar(100)
+  token_expires_at DateTime? @db.Timestamptz(6)
   status       String    @default("disconnected") @db.VarChar(20)
   created_at   DateTime  @default(now()) @db.Timestamptz(6)
   updated_at   DateTime? @db.Timestamptz(6)

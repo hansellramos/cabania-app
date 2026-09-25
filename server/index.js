@@ -7683,23 +7683,29 @@ REGLAS:
   // GET /api/venues/:id/instagram/config — Get Instagram config (super_admin only)
   app.get('/api/venues/:id/instagram/config', isAuthenticated, async (req, res) => {
     try {
-      const userId = String(req.user.claims.sub);
-      const currentUser = await prisma.users.findUnique({ where: { id: userId } });
-      if (!currentUser?.is_super_admin) {
-        return res.status(403).json({ error: 'Solo super admin' });
+      if (!(await canManageVenueInstagram(req, req.params.id))) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
       }
 
       const conn = await prisma.instagram_connections.findUnique({
         where: { venue_id: req.params.id }
       });
 
+      const isSuperAdmin = !!req.userPermissions?.isSuperAdmin;
       res.json({
-        ig_user_id: conn?.ig_user_id || '',
-        page_id: conn?.page_id || '',
-        access_token: conn?.access_token ? '••••••' : '',
-        verify_token: conn?.verify_token || '',
         status: conn?.status || 'disconnected',
-        has_token: !!conn?.access_token
+        username: conn?.username || null,
+        ig_user_id: conn?.ig_user_id || '',
+        token_expires_at: conn?.token_expires_at || null,
+        has_token: !!conn?.access_token,
+        oauth_available: !!(process.env.META_IG_APP_ID && process.env.META_IG_APP_SECRET),
+        // Manual configuration (pasting a token from the Meta console) stays super admin only.
+        can_edit_manual: isSuperAdmin,
+        ...(isSuperAdmin && {
+          page_id: conn?.page_id || '',
+          access_token: conn?.access_token ? '••••••' : '',
+          verify_token: conn?.verify_token || ''
+        })
       });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -7749,6 +7755,16 @@ REGLAS:
       // webhook is verified in Meta.
       let subscription = null;
       if (conn.ig_user_id && conn.access_token) {
+        // Best-effort: show @username in the UI instead of the numeric account ID.
+        try {
+          const account = await metaInstagram.getAccount(conn.access_token);
+          await prisma.instagram_connections.update({
+            where: { venue_id },
+            data: { username: account.username }
+          });
+        } catch (meErr) {
+          console.warn('[instagram/config] Could not read username:', meErr.message);
+        }
         try {
           await metaInstagram.subscribeApp(conn.ig_user_id, conn.access_token, 'messages');
           subscription = { subscribed: true };
@@ -7768,6 +7784,204 @@ REGLAS:
       res.status(500).json({ error: error.message });
     }
   });
+
+  // ==================== Instagram Business Login (OAuth) ====================
+
+  const IG_OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
+
+  function appBaseUrl() {
+    return (process.env.APP_URL || 'https://cabania.app').replace(/\/$/, '');
+  }
+
+  function igRedirectUri() {
+    return process.env.META_IG_REDIRECT_URI || `${appBaseUrl()}/api/instagram/oauth/callback`;
+  }
+
+  /**
+   * Whether the current user may connect or disconnect the venue's Instagram:
+   * super admins, or users that can edit venues and have access to this one.
+   */
+  async function canManageVenueInstagram(req, venueId) {
+    if (req.userPermissions?.isSuperAdmin) return true;
+    if (!hasPermission(req.userPermissions, 'venues:edit')) return false;
+    const venueIds = await getAccessibleVenueIds(req.userPermissions);
+    return venueIds === null || venueIds.includes(venueId);
+  }
+
+  // GET /api/venues/:id/instagram/oauth/start — URL where the business authorizes the app
+  app.get('/api/venues/:id/instagram/oauth/start', isAuthenticated, async (req, res) => {
+    try {
+      const venueId = req.params.id;
+      if (!(await canManageVenueInstagram(req, venueId))) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+      if (!process.env.META_IG_APP_ID || !process.env.META_IG_APP_SECRET) {
+        return res.status(503).json({ error: 'La conexión con Instagram no está configurada en el servidor' });
+      }
+
+      // The venue travels in the session, not in the URL, so the callback cannot be
+      // pointed at a venue the user does not manage.
+      const state = require('crypto').randomBytes(24).toString('hex');
+      req.session.igOAuth = {
+        state,
+        venueId,
+        userId: String(req.user.claims.sub),
+        createdAt: Date.now()
+      };
+
+      const url = metaInstagram.buildAuthorizeUrl({
+        clientId: process.env.META_IG_APP_ID,
+        redirectUri: igRedirectUri(),
+        state
+      });
+      req.session.save((err) => {
+        if (err) return res.status(500).json({ error: 'No se pudo iniciar la conexión' });
+        res.json({ url });
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/instagram/oauth/callback — Instagram sends the business back here
+  app.get('/api/instagram/oauth/callback', async (req, res) => {
+    const pending = req.session?.igOAuth;
+    const back = (venueId, params) =>
+      res.redirect(venueId
+        ? `${appBaseUrl()}/#/business/venues/${venueId}/instagram?${new URLSearchParams(params)}`
+        : `${appBaseUrl()}/#/login`);
+
+    // Browser redirect, not an API call: failures go back to the UI instead of JSON.
+    if (!req.user?.claims?.sub || !pending) {
+      return back(null);
+    }
+    delete req.session.igOAuth;
+    const { venueId } = pending;
+
+    try {
+      if (req.query.state !== pending.state
+          || pending.userId !== String(req.user.claims.sub)
+          || Date.now() - pending.createdAt > IG_OAUTH_STATE_TTL_MS) {
+        return back(venueId, { ig: 'error', reason: 'invalid_state' });
+      }
+      if (req.query.error || !req.query.code) {
+        return back(venueId, { ig: 'error', reason: req.query.error === 'access_denied' ? 'denied' : 'no_code' });
+      }
+      if (!(await canManageVenueInstagram(req, venueId))) {
+        return back(venueId, { ig: 'error', reason: 'forbidden' });
+      }
+
+      const clientSecret = process.env.META_IG_APP_SECRET;
+      const short = await metaInstagram.exchangeCodeForToken({
+        clientId: process.env.META_IG_APP_ID,
+        clientSecret,
+        redirectUri: igRedirectUri(),
+        code: String(req.query.code)
+      });
+      if (!short.permissions.includes('instagram_business_manage_messages')) {
+        return back(venueId, { ig: 'error', reason: 'missing_permissions' });
+      }
+
+      const long = await metaInstagram.exchangeForLongLivedToken(clientSecret, short.accessToken);
+      const account = await metaInstagram.getAccount(long.accessToken);
+
+      // Webhooks are routed to a venue by ig_user_id, so one account can only
+      // belong to one venue.
+      const taken = await prisma.instagram_connections.findFirst({
+        where: { ig_user_id: account.igUserId, venue_id: { not: venueId } },
+        select: { venue_id: true }
+      });
+      if (taken) {
+        return back(venueId, { ig: 'error', reason: 'already_connected' });
+      }
+
+      const data = {
+        ig_user_id: account.igUserId,
+        username: account.username,
+        access_token: long.accessToken,
+        token_expires_at: long.expiresIn ? new Date(Date.now() + long.expiresIn * 1000) : null,
+        status: 'connected',
+        updated_at: new Date()
+      };
+      await prisma.instagram_connections.upsert({
+        where: { venue_id: venueId },
+        update: data,
+        create: { venue_id: venueId, ...data }
+      });
+
+      try {
+        await metaInstagram.subscribeApp(account.igUserId, long.accessToken, 'messages');
+      } catch (subErr) {
+        console.error('[instagram/oauth] subscribed_apps failed:', subErr.message);
+        await prisma.instagram_connections.update({ where: { venue_id: venueId }, data: { status: 'error' } });
+        return back(venueId, { ig: 'error', reason: 'subscribe_failed' });
+      }
+
+      console.log('[instagram/oauth] Connected', { venueId, username: account.username });
+      back(venueId, { ig: 'connected' });
+    } catch (error) {
+      console.error('[instagram/oauth] Callback failed:', error.message);
+      back(venueId, { ig: 'error', reason: 'exchange_failed' });
+    }
+  });
+
+  // POST /api/venues/:id/instagram/disconnect — Forget the account and its token
+  app.post('/api/venues/:id/instagram/disconnect', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await canManageVenueInstagram(req, req.params.id))) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+      // Clearing ig_user_id stops the webhook from routing messages to this venue.
+      await prisma.instagram_connections.updateMany({
+        where: { venue_id: req.params.id },
+        data: {
+          ig_user_id: null,
+          username: null,
+          access_token: null,
+          token_expires_at: null,
+          status: 'disconnected',
+          updated_at: new Date()
+        }
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * Long-lived Instagram tokens expire after 60 days. Refresh the ones expiring in
+   * the next 10 days (or with unknown expiry, e.g. pasted manually), as long as they
+   * are older than 24 hours, which is the minimum Meta accepts for a refresh.
+   */
+  async function refreshInstagramTokens() {
+    const soon = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const conns = await prisma.instagram_connections.findMany({
+      where: {
+        status: 'connected',
+        access_token: { not: null },
+        OR: [{ token_expires_at: null }, { token_expires_at: { lt: soon } }],
+        AND: [{ OR: [{ updated_at: null }, { updated_at: { lt: dayAgo } }] }]
+      }
+    });
+    for (const conn of conns) {
+      try {
+        const fresh = await metaInstagram.refreshLongLivedToken(conn.access_token);
+        await prisma.instagram_connections.update({
+          where: { id: conn.id },
+          data: {
+            access_token: fresh.accessToken,
+            token_expires_at: fresh.expiresIn ? new Date(Date.now() + fresh.expiresIn * 1000) : null,
+            updated_at: new Date()
+          }
+        });
+        console.log('[instagram/refresh] Token refreshed', { venueId: conn.venue_id });
+      } catch (err) {
+        console.error('[instagram/refresh] Failed', { venueId: conn.venue_id, error: err.message });
+      }
+    }
+  }
 
   // ==================== WhatsApp Cloud API Config ====================
 
@@ -11941,6 +12155,12 @@ Responde con JSON EXACTAMENTE en este formato:
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
+
+    // Refresh Instagram tokens shortly after boot and then once a day.
+    const runIgRefresh = () => refreshInstagramTokens().catch(err =>
+      console.error('[instagram/refresh] Unhandled error:', err.message));
+    setTimeout(runIgRefresh, 60 * 1000);
+    setInterval(runIgRefresh, 24 * 60 * 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });
