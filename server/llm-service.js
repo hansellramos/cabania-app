@@ -1,19 +1,46 @@
+// Models offered in Settings > IA. The model saved in ai_settings wins over the
+// default here, so an outdated id can be fixed without a deploy. Only models whose
+// env_key is set are offered.
 const AI_MODELS = {
   anthropic_claude: {
     code: 'anthropic_claude',
-    name: 'Anthropic Claude',
-    model: 'claude-sonnet-4-20250514',
+    name: 'Claude Haiku 4.5',
+    model: 'claude-haiku-4-5-20251001',
+    provider: 'anthropic',
+    base_url: 'https://api.anthropic.com',
+    env_key: 'ANTHROPIC_API_KEY'
+  },
+  anthropic_claude_sonnet: {
+    code: 'anthropic_claude_sonnet',
+    name: 'Claude Sonnet 5',
+    model: 'claude-sonnet-5',
     provider: 'anthropic',
     base_url: 'https://api.anthropic.com',
     env_key: 'ANTHROPIC_API_KEY'
   },
   xai_grok: {
     code: 'xai_grok',
-    name: 'xAI Grok',
-    model: 'grok-4',
+    name: 'xAI Grok 4.3 (razonamiento)',
+    model: 'grok-4.3',
     provider: 'openai_compatible',
     base_url: 'https://api.x.ai/v1',
     env_key: 'GROK_API_KEY'
+  },
+  xai_grok_fast: {
+    code: 'xai_grok_fast',
+    name: 'xAI Grok 4.20 (sin razonamiento)',
+    model: 'grok-4.20-non-reasoning',
+    provider: 'openai_compatible',
+    base_url: 'https://api.x.ai/v1',
+    env_key: 'GROK_API_KEY'
+  },
+  google_gemini_flash_lite: {
+    code: 'google_gemini_flash_lite',
+    name: 'Google Gemini 3.1 Flash-Lite',
+    model: 'gemini-3.1-flash-lite',
+    provider: 'openai_compatible',
+    base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    env_key: 'GEMINI_API_KEY'
   },
   openai_gpt4o: {
     code: 'openai_gpt4o',
@@ -653,9 +680,58 @@ const CHAT_TOOLS = [
   }
 ];
 
+/**
+ * Extra tool for a commission agent (an "aliado") writing to the venue: they book
+ * for their own clients, so the charge link goes to them to forward.
+ */
+const AGENT_TOOLS = [
+  {
+    type: 'function',
+    function: {
+      name: 'create_agent_charge',
+      description: 'Solo en MODO COMISIONISTA. Crea la reserva tentativa de un cliente del comisionista y le envía al comisionista el link de pago de Bold para que se lo reenvíe al cliente. Verifica la disponibilidad por sí misma. Úsala cuando el comisionista confirmó el resumen.',
+      parameters: {
+        type: 'object',
+        properties: {
+          client_name: { type: 'string', description: 'Nombre completo del cliente del comisionista (si lo dio).' },
+          client_phone: { type: 'string', description: 'WhatsApp del cliente (si lo dio). Sirve para el contrato.' },
+          plan_name: { type: 'string', description: 'Nombre del plan elegido.' },
+          check_in: { type: 'string', description: 'Fecha de llegada, formato YYYY-MM-DD.' },
+          check_out: { type: 'string', description: 'Fecha de salida, formato YYYY-MM-DD. En pasadía, igual a check_in.' },
+          adults: { type: 'integer', description: 'Número de adultos.' },
+          children: { type: 'integer', description: 'Número de niños.' },
+          agreed_price: { type: 'number', description: 'Precio total acordado con el cliente, en pesos. Omitir para usar el precio del plan.' },
+          charge_amount: { type: 'number', description: 'Monto a cobrar ahora con el link, en pesos. Omitir para usar el anticipo de la cabaña.' },
+          notes: { type: 'string', description: 'Notas de la reserva.' }
+        },
+        required: ['plan_name', 'check_in', 'adults']
+      }
+    }
+  }
+];
+
+/** System prompt section when the person writing is one of the venue's commission agents. */
+function buildAgentPrompt(agent, venue) {
+  const advance = venue?.advance_percentage && venue.advance_percentage < 100
+    ? `el anticipo de la cabaña (${venue.advance_percentage}% del total)`
+    : 'el total de la reserva';
+  return `
+
+## MODO COMISIONISTA (esta conversación)
+Quien escribe es ${agent.name}, comisionista (aliado) de ${venue?.name || 'la cabaña'}. NO es un huésped: vende reservas a sus clientes y gana una comisión. Estas reglas reemplazan el flujo de pago de huéspedes.
+- Trátalo como colega: breve, directo y sin formalidades de venta.
+- Para reservar pide lo que falte: nombre del cliente, WhatsApp del cliente (recomendado: con él sale el contrato a nombre del cliente), plan, fecha, adultos y niños.
+- Precio: el del plan, salvo que te dé un precio total acordado distinto. Monto a cobrar ahora: ${advance}, salvo que te indique otro monto.
+- Verifica la fecha con check_availability. Luego resume en una sola respuesta (cliente, plan, fecha, personas, total, monto a cobrar ahora) y pide confirmación una vez, terminando con [[botones: Sí, generar cobro | Cambiar algo]].
+- Cuando confirme, usa create_agent_charge. Con el comisionista NUNCA uses create_estimate, send_payment_info ni save_contact_info, y no le pidas sus propios datos: ya está identificado.
+- El link le llega a él para que se lo reenvíe a su cliente. Cuando el cliente pague, el sistema le confirma aquí la reserva, su comisión y el link del contrato.`;
+}
+
 module.exports = {
   AI_MODELS,
   CHAT_TOOLS,
+  AGENT_TOOLS,
+  buildAgentPrompt,
   getModelConfig,
   getApiKeyForProvider,
   callLLMByCode,

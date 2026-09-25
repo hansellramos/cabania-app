@@ -5228,6 +5228,98 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
     return whatsapp || instagram || email ? { whatsapp, instagram, email } : null;
   }
 
+  /**
+   * The commission agent writing in this chat, if any: matched through the contact
+   * of the agent's user (WhatsApp number or Instagram @username), or the signed-in
+   * user in the web chat. Only agents of this venue (or its organization) count.
+   */
+  async function findCommissionAgentForChat({ conversation, venue, userId }) {
+    const userIds = userId ? [String(userId)] : [];
+    const contactConditions = [];
+    const phone = PUSH_SOURCES.includes(conversation?.source) ? cleanPhone(conversation?.phone) : null;
+    if (phone) {
+      // Contacts may be saved with or without the country code.
+      const variants = [...new Set([phone, phone.slice(-10)])].map(Number);
+      contactConditions.push({ whatsapp: { in: variants } });
+    }
+    const instagram = conversation?.source === 'instagram'
+      ? cleanInstagram(conversation?.metadata?.instagram_username)
+      : null;
+    if (instagram) {
+      const bare = instagram.slice(1);
+      contactConditions.push({ instagram: { in: [instagram, bare], mode: 'insensitive' } });
+    }
+    if (contactConditions.length) {
+      const contacts = await prisma.contacts.findMany({
+        where: { user: { not: null }, OR: contactConditions },
+        select: { user: true }
+      });
+      userIds.push(...contacts.map(c => String(c.user)));
+    }
+    if (!userIds.length) return null;
+
+    return prisma.commission_agents.findFirst({
+      where: {
+        is_active: true,
+        user_id: { in: [...new Set(userIds)] },
+        OR: [
+          { venue_id: venue.id },
+          { venue_id: null, organization_id: venue.organization || undefined }
+        ]
+      }
+    });
+  }
+
+  /** A booking of the venue that overlaps the given days, or null. Same rule as check_availability. */
+  async function findBookingConflict(venueId, checkIn, checkOut) {
+    const day = (d) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+    const from = day(checkIn);
+    const to = day(checkOut || checkIn);
+    const bookings = await prisma.accommodations.findMany({ where: { venue: venueId } });
+    const conflict = bookings.find(acc => {
+      if (!acc.date) return false;
+      const start = new Date(acc.date);
+      const end = new Date(start.getTime() + (parseInt(acc.duration) || 43200) * 1000);
+      return day(start) <= to && day(end) >= from;
+    });
+    return { conflict: conflict || null, bookings };
+  }
+
+  /**
+   * Commission of an agent for a booking, from the agent's tiered rules for the
+   * plan type (rate per adult tier over the agreed price per adult).
+   */
+  async function computeCommission({ agentId, planType, adults, agreedPrice }, db = prisma) {
+    const rules = await db.commission_rules.findMany({
+      where: { agent_id: agentId, plan_type: planType },
+      orderBy: { sort_order: 'asc' }
+    });
+    if (!rules.length) return { total: 0, breakdown: [], no_rules: true };
+    if (!adults || !agreedPrice) return { total: 0, breakdown: [] };
+
+    const perAdultPrice = agreedPrice / adults;
+    let remaining = adults;
+    let total = 0;
+    const breakdown = [];
+    for (const rule of rules) {
+      if (remaining <= 0) break;
+      const capacity = rule.max_adults ? (rule.max_adults - rule.min_adults + 1) : remaining;
+      const inTier = Math.min(remaining, capacity);
+      const tierAmount = inTier * perAdultPrice * (parseFloat(rule.rate_percent) / 100);
+      breakdown.push({
+        range_min: rule.min_adults,
+        range_max: rule.max_adults,
+        adults_in_tier: inTier,
+        commission_percent: parseFloat(rule.rate_percent),
+        per_adult_price: Math.round(perAdultPrice),
+        subtotal: Math.round(tierAmount)
+      });
+      total += tierAmount;
+      remaining -= inTier;
+    }
+    return { total: Math.round(total), breakdown };
+  }
+
   async function convertEstimateToAccommodation(estimate, db = prisma) {
     const contact = guestContact(estimate) || {};
     const whatsapp = contact.whatsapp ? Number(contact.whatsapp) : null;
@@ -5262,6 +5354,15 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       }
     }
 
+    // An agent's booking without client details stays under the agent's own contact.
+    if (!customerId && estimate.commission_agent_id) {
+      const agent = await db.commission_agents.findUnique({ where: { id: estimate.commission_agent_id } });
+      const agentContact = agent?.user_id && UUID_PATTERN.test(agent.user_id)
+        ? await db.contacts.findFirst({ where: { user: agent.user_id } })
+        : null;
+      customerId = agentContact?.id || null;
+    }
+
     const checkIn = estimate.check_in ? new Date(estimate.check_in) : new Date();
     const checkOut = estimate.check_out ? new Date(estimate.check_out) : checkIn;
     const durationMs = checkOut.getTime() - checkIn.getTime();
@@ -5277,7 +5378,8 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         adults: estimate.adults || 0,
         children: estimate.children || 0,
         calculated_price: estimate.calculated_price,
-        agreed_price: estimate.agreed_price ?? estimate.calculated_price
+        agreed_price: estimate.agreed_price ?? estimate.calculated_price,
+        commission_agent_id: estimate.commission_agent_id || null
       }
     });
 
@@ -6584,41 +6686,9 @@ REGLAS:
 
   // ==================== AI Settings API ====================
   
-  // Available AI models configuration (reads API keys from environment)
-  const AI_MODELS = [
-    {
-      code: 'anthropic_claude',
-      name: 'Anthropic Claude',
-      model: 'claude-sonnet-4-20250514',
-      provider: 'anthropic',
-      base_url: 'https://api.anthropic.com',
-      env_key: 'ANTHROPIC_API_KEY'
-    },
-    {
-      code: 'xai_grok',
-      name: 'xAI Grok',
-      model: 'grok-4',
-      provider: 'openai_compatible',
-      base_url: 'https://api.x.ai/v1',
-      env_key: 'GROK_API_KEY'
-    },
-    {
-      code: 'openai_gpt4o',
-      name: 'OpenAI GPT-4o',
-      model: 'gpt-4o',
-      provider: 'openai_compatible',
-      base_url: 'https://api.openai.com/v1',
-      env_key: 'OPENAI_API_KEY'
-    },
-    {
-      code: 'openai_gpt4o_mini',
-      name: 'OpenAI GPT-4o Mini',
-      model: 'gpt-4o-mini',
-      provider: 'openai_compatible',
-      base_url: 'https://api.openai.com/v1',
-      env_key: 'OPENAI_API_KEY'
-    }
-  ];
+  // Available AI models: a single list, shared with the chat (llm-service).
+  const AI_MODELS = Object.values(llmService.AI_MODELS);
+
   
   // GET /api/ai/available-models - List available models with API keys configured
   app.get('/api/ai/available-models', isAuthenticated, async (req, res) => {
@@ -7479,7 +7549,8 @@ REGLAS:
                 conversation,
                 source: 'cloud_api',
                 media_url,
-                media_type
+                media_type,
+                verifiedSender: true
               });
 
               // Send AI response
@@ -7745,7 +7816,8 @@ REGLAS:
           media_url,
           media_type,
           contact_type: 'instagram',
-          contact_value: igUsername ? `@${igUsername}` : senderId
+          contact_value: igUsername ? `@${igUsername}` : senderId,
+          verifiedSender: true
         });
 
         // Send AI response via Instagram
@@ -8450,6 +8522,100 @@ REGLAS:
    * Used by send_payment_info when the chosen method is Bold.
    * @returns {Promise<object>} tool result for the LLM
    */
+  /**
+   * A commission agent's booking from the chat: validate plan, date and amounts,
+   * keep it as a pending estimate tied to the agent, and send the agent the Bold
+   * link to forward. The booking itself is created when the client pays.
+   */
+  async function createAgentCharge({ venue, plans, conversation, agent, args }) {
+    const fail = (message, extra = {}) => ({ success: false, message, ...extra });
+    const planName = String(args.plan_name || '').toLowerCase();
+    const plan = plans.find(p => p.name.toLowerCase().includes(planName) || planName.includes(p.name.toLowerCase()));
+    if (!plan) {
+      return fail('No encontré ese plan. Planes disponibles: ' + plans.map(p => p.name).join(', ') + '.');
+    }
+    const checkIn = args.check_in ? new Date(args.check_in) : null;
+    if (!checkIn || isNaN(checkIn)) return fail('Falta la fecha de llegada (YYYY-MM-DD).');
+    const checkOut = args.check_out ? new Date(args.check_out) : checkIn;
+    const today = new Date(new Date().toISOString().slice(0, 10));
+    if (checkIn < today) return fail('La fecha ya pasó. Pídele una fecha futura.');
+    const adults = parseInt(args.adults) || 0;
+    const children = parseInt(args.children) || 0;
+    if (adults < 1) return fail('Falta el número de adultos.');
+    const guests = adults + children;
+    if (plan.min_guests && guests < plan.min_guests) return fail(`El plan ${plan.name} es desde ${plan.min_guests} personas.`);
+    if (plan.max_capacity && guests > plan.max_capacity) return fail(`El plan ${plan.name} admite hasta ${plan.max_capacity} personas.`);
+
+    const { conflict, bookings } = await findBookingConflict(venue.id, checkIn, checkOut);
+    if (conflict) {
+      const next = llmService.getNextAvailableDates(bookings, checkIn, { stayLength: 1, numDays: 30 });
+      return fail('Esa fecha ya está reservada.', { is_available: false, next_available_dates: next });
+    }
+
+    const calculatedPrice = parseFloat(plan.adult_price) * adults + parseFloat(plan.child_price) * children;
+    const agreedPrice = Math.round(Number(args.agreed_price) || calculatedPrice);
+    if (!(agreedPrice > 0)) return fail('No pude calcular el precio: indica el precio total acordado.');
+    const charge = Math.round(Number(args.charge_amount) || advanceFor(venue, agreedPrice).advance);
+    if (charge < 1000) return fail('El monto a cobrar debe ser de al menos $1.000.');
+    if (charge > agreedPrice) return fail(`El monto a cobrar (${money(charge)}) no puede ser mayor que el total (${money(agreedPrice)}).`);
+
+    const paymentMethod = await prisma.venue_payment_methods.findFirst({
+      where: { venue_id: venue.id, method_type: 'bold', is_active: true }
+    });
+    if (!paymentMethod || !bold.isConfigured()) {
+      return fail('La cabaña no tiene cobro en línea (Bold) activo. Dile que el dueño debe activarlo.');
+    }
+
+    const clientPhone = cleanPhone(args.client_phone);
+    const clientName = String(args.client_name || '').trim() || null;
+    const data = {
+      venue_id: venue.id,
+      plan_id: plan.id,
+      customer_name: clientName,
+      contact_type: 'whatsapp',
+      contact_value: clientPhone || '',
+      contact_phone: clientPhone,
+      check_in: checkIn,
+      check_out: checkOut,
+      adults,
+      children,
+      calculated_price: calculatedPrice,
+      agreed_price: agreedPrice,
+      charge_amount: charge,
+      commission_agent_id: agent.id,
+      notes: args.notes || null,
+      conversation_id: conversation.id,
+      status: 'pending',
+      created_by: 'chat_agent'
+    };
+    // The model may call the tool again for the same booking: reuse it.
+    const estimate = await prisma.estimates.findFirst({
+      where: {
+        conversation_id: conversation.id, status: 'pending', commission_agent_id: agent.id,
+        plan_id: plan.id, check_in: checkIn, adults, children, agreed_price: agreedPrice, charge_amount: charge
+      }
+    }) || await prisma.estimates.create({ data });
+
+    const sent = await sendBoldPaymentLink({ venueId: venue.id, conversation, paymentMethod, estimateId: estimate.id });
+    if (!sent.success) return sent;
+
+    const commission = await computeCommission({ agentId: agent.id, planType: plan.plan_type, adults, agreedPrice });
+    return {
+      ...sent,
+      estimate_id: estimate.id,
+      client_name: clientName,
+      plan: plan.name,
+      check_in: args.check_in,
+      adults,
+      children,
+      total: agreedPrice,
+      commission_estimate: commission.no_rules ? null : commission.total,
+      contract_note: clientName || clientPhone
+        ? 'El contrato saldrá a nombre del cliente.'
+        : 'Sin datos del cliente, la reserva y el contrato quedan a nombre del comisionista.'
+    };
+  }
+
   async function sendBoldPaymentLink({ venueId, conversation, paymentMethod, estimateId, format }) {
     const reject = (reason, message) => {
       console.warn('[bold] Payment link not sent', { reason, venueId, estimateId });
@@ -8478,7 +8644,9 @@ REGLAS:
     }
 
     // A paid booking must be reachable outside this chat (confirmation, contract).
-    if (!guestContact(estimate)) {
+    // An agent's booking is: the agent gets both and forwards them.
+    const forAgent = !!estimate.commission_agent_id;
+    if (!forAgent && !guestContact(estimate)) {
       return reject('missing_contact',
         'Antes de generar el pago falta un contacto del cliente para enviarle la confirmación y el contrato. '
         + 'Pídele su número de WhatsApp o su correo, guárdalo con save_contact_info y luego vuelve a llamar send_payment_info.');
@@ -8491,7 +8659,13 @@ REGLAS:
     // The amount always comes from the estimate and the venue's advance rule, never
     // from the model.
     const total = Math.round(Number(estimate.agreed_price || estimate.calculated_price || 0));
-    const { percentage, advance, balance } = advanceFor(venue, total);
+    // A commission agent chooses how much to charge now.
+    const { percentage, advance, balance } = estimate.charge_amount
+      ? (() => {
+        const charge = Math.round(Number(estimate.charge_amount));
+        return { percentage: total ? Math.round(charge / total * 100) : 100, advance: charge, balance: Math.max(0, total - charge) };
+      })()
+      : advanceFor(venue, total);
     if (!(advance >= 1000)) {
       return reject('amount_too_low', 'El monto a pagar debe ser de al menos $1.000.');
     }
@@ -8538,7 +8712,7 @@ REGLAS:
       : PUSH_SOURCES.includes(conversation?.source) ? 'whatsapp'
         : 'web';
     const device = channel === 'web' ? (conversation?.metadata?.device || 'mobile') : 'mobile';
-    const wantsQr = format === 'qr' || (channel === 'web' && device === 'desktop');
+    const wantsQr = !forAgent && (format === 'qr' || (channel === 'web' && device === 'desktop'));
 
     let qrReady = false;
     if (wantsQr && bold.isQrConfigured() && (channel === 'web' || conversation?.phone)) {
@@ -8575,6 +8749,24 @@ REGLAS:
     // life is a technical limit, not something to rush the guest with.
     const closing = 'Apenas se confirme el pago te avisamos por aquí y tu fecha queda asegurada. ✅';
     const buttonText = `Pagar ${money(advance)}`;
+
+    if (forAgent) {
+      // Plain text: the agent copies or forwards it to the client, which a
+      // WhatsApp/Instagram button does not allow.
+      const client = estimate.customer_name ? ` para ${estimate.customer_name}` : '';
+      await notifyConversation(conversation,
+        `💳 Link de pago${client}: ${money(advance)}${balanceLine}\n\n`
+        + `Reenvíaselo a tu cliente. Puede pagar con Nequi, PSE, Bre-B o tarjeta.${merchant}\n\n${link.bold_url}\n\n`
+        + 'Apenas pague te confirmo aquí la reserva, tu comisión y el contrato. ✅');
+      return {
+        success: true,
+        total,
+        amount_to_pay: advance,
+        balance,
+        message: 'Ya se le envió al comisionista el link en un mensaje aparte: no lo repitas ni incluyas el link. '
+          + 'Dile en una frase que se lo reenvíe a su cliente y que cuando pague le llega aquí la confirmación.'
+      };
+    }
 
     if (channel !== 'web') {
       if (qrReady) {
@@ -8728,6 +8920,40 @@ REGLAS:
             data: { payment_status: 'verified', payment_id: payment.id, updated_at: now }
           });
         }
+        // A booking sold by a commission agent: record what is owed to them.
+        let commission = null;
+        if (estimate?.commission_agent_id && accommodation) {
+          const plan = accommodation.plan_id
+            ? await tx.venue_plans.findUnique({ where: { id: accommodation.plan_id } })
+            : null;
+          const adults = accommodation.adults || 0;
+          const agreedPrice = Number(accommodation.agreed_price ?? accommodation.calculated_price ?? 0);
+          const calc = plan
+            ? await computeCommission({ agentId: estimate.commission_agent_id, planType: plan.plan_type, adults, agreedPrice }, tx)
+            : { total: 0, breakdown: [], no_rules: true };
+          const existing = await tx.commission_payments.findFirst({
+            where: { agent_id: estimate.commission_agent_id, accommodation_id: accommodationId }
+          });
+          if (!existing && !calc.no_rules) {
+            await tx.commission_payments.create({
+              data: {
+                agent_id: estimate.commission_agent_id,
+                accommodation_id: accommodationId,
+                organization_id: venue?.organization || null,
+                venue_id: venueId,
+                adults,
+                agreed_price: agreedPrice,
+                calculated_amount: calc.total,
+                breakdown: calc.breakdown,
+                status: 'pending',
+                notes: 'Registrada automáticamente al confirmarse el pago de Bold (reserva hecha por chat).',
+                created_by: 'system:bold'
+              }
+            });
+          }
+          commission = { total: calc.total, no_rules: !!calc.no_rules };
+        }
+
         // What is still owed after this payment (advance bookings).
         let balance = 0;
         if (accommodation) {
@@ -8738,7 +8964,16 @@ REGLAS:
           const agreed = Number(accommodation.agreed_price ?? accommodation.calculated_price ?? 0);
           balance = Math.max(0, agreed - Number(paid._sum.amount || 0));
         }
-        return { venueName: venue?.name || null, accommodationId, paymentId: payment.id, balance };
+        return {
+          venueName: venue?.name || null,
+          accommodationId,
+          paymentId: payment.id,
+          balance,
+          commission,
+          forAgent: !!estimate?.commission_agent_id,
+          clientName: estimate?.customer_name || null,
+          date: accommodation?.date || null
+        };
       });
     } catch (err) {
       // The link stays PAID without payment_id, which flags it for manual review.
@@ -8776,6 +9011,19 @@ REGLAS:
       const conversation = await prisma.chat_conversations.findUnique({ where: { id: link.conversation_id } });
       if (conversation) {
         const venueName = result.venueName || 'la cabaña';
+        if (result.forAgent) {
+          const date = result.date ? new Date(result.date).toLocaleDateString('es-CO', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' }) : '';
+          const client = result.clientName ? `${result.clientName} pagó` : 'Tu cliente pagó';
+          const commissionLine = result.commission && !result.commission.no_rules
+            ? `\n💼 Tu comisión: ${money(result.commission.total)} (pendiente de pago).`
+            : '';
+          await notifyConversation(conversation,
+            `✅ ¡${client} ${money(link.amount)}! La reserva en ${venueName}${date ? ` para el ${date}` : ''} quedó confirmada.`
+            + (result.balance > 0 ? ` Saldo pendiente: ${money(result.balance)}.` : '')
+            + commissionLine
+            + (contractUrl ? `\n\n📝 Reenvíale este contrato a tu cliente para que lo lea y lo firme: ${contractUrl}` : ''));
+          return;
+        }
         const confirmation = result.balance > 0
           ? `✅ ¡Pago recibido! Recibimos tu anticipo de ${money(link.amount)} y tu reserva en ${venueName} `
             + `quedó confirmada. Saldo pendiente: ${money(result.balance)}.`
@@ -8933,7 +9181,7 @@ REGLAS:
   // ==================== Chat API ====================
 
   // Reusable chat processing function — called by POST /api/chat/:venue_id and reprocess endpoint
-  async function processChat({ venue_id, userMessage, conversation, source, media_url, media_type, contact_type, contact_value, userId }) {
+  async function processChat({ venue_id, userMessage, conversation, source, media_url, media_type, contact_type, contact_value, userId, verifiedSender = false }) {
     // Get venue with all relevant info
     const venue = await prisma.venues.findUnique({
       where: { id: venue_id }
@@ -8966,6 +9214,16 @@ REGLAS:
 
     const chatProviderCode = chatSetting?.provider_code || 'anthropic_claude';
     const chatModelConfig = llmService.getModelConfig(chatProviderCode);
+    // The model chosen in Settings > IA; the provider's default only when unset.
+    const chatModel = chatSetting?.model || undefined;
+    let chatTools = llmService.CHAT_TOOLS;
+    // Without `tools`, llm-service restates the guest toolset after tool turns; a
+    // commission agent must keep theirs, so it always goes explicitly.
+    const callChatLLM = (messages, options = {}) => llmService.callLLMByCode(chatProviderCode, messages, {
+      ...options,
+      model: chatModel,
+      ...((options.tools || chatTools !== llmService.CHAT_TOOLS) && { tools: chatTools })
+    });
 
     if (!chatModelConfig) {
       throw Object.assign(new Error('Modelo de chat no configurado'), { statusCode: 400 });
@@ -9041,7 +9299,20 @@ REGLAS:
     // Build context and messages
     const context = llmService.buildVenueContext(venue, templates, plans);
     const contactInfo = (contact_type && contact_value) ? { type: contact_type, value: contact_value } : null;
-    const systemPrompt = llmService.buildSystemPrompt(venue, context, contactInfo);
+    // A commission agent writing to the venue gets their own mode and charge tool.
+    // Only a sender the channel vouches for (a signed Meta webhook, the Baileys
+    // service with its internal key, or a signed-in user): the public chat endpoint
+    // takes any phone, and an agent can set prices and confirm bookings.
+    const commissionAgent = await findCommissionAgentForChat({
+      conversation: verifiedSender ? conversation : null, venue, userId
+    })
+      .catch(err => { console.error('[agent] Lookup failed', err.message); return null; });
+    if (commissionAgent) {
+      chatTools = [...llmService.CHAT_TOOLS, ...llmService.AGENT_TOOLS];
+      console.log('[agent] Commission agent chat', { agent: commissionAgent.name, conversation: conversation.id, source });
+    }
+    const systemPrompt = llmService.buildSystemPrompt(venue, context, contactInfo)
+      + (commissionAgent ? llmService.buildAgentPrompt(commissionAgent, venue) : '');
 
     const llmMessages = [
       { role: 'system', content: systemPrompt }
@@ -9060,10 +9331,10 @@ REGLAS:
     const chatLlmStart = Date.now();
     let chatTotalInputTokens = 0;
     let chatTotalOutputTokens = 0;
-    let llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+    let llmResponse = await callChatLLM(llmMessages, {
       maxTokens: 1024,
       temperature: 0.7,
-      tools: llmService.CHAT_TOOLS
+      tools: chatTools
     });
 
     // Handle tool calls (function calling). Tools chain (e.g. get_payment_methods ->
@@ -9109,7 +9380,7 @@ REGLAS:
               llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
             }
 
-            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            llmResponse = await callChatLLM(llmMessages, {
               maxTokens: 1024,
               temperature: 0.7
             });
@@ -9155,7 +9426,7 @@ REGLAS:
               llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
             }
 
-            llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            llmResponse = await callChatLLM(llmMessages, {
               maxTokens: 1024,
               temperature: 0.7
             });
@@ -9275,7 +9546,7 @@ REGLAS:
           }
 
           // Get final response with tool results
-          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+          llmResponse = await callChatLLM(llmMessages, {
             maxTokens: 1024,
             temperature: 0.7
           });
@@ -9330,7 +9601,7 @@ REGLAS:
             llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
           }
 
-          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+          llmResponse = await callChatLLM(llmMessages, {
             maxTokens: 1024,
             temperature: 0.7
           });
@@ -9390,7 +9661,7 @@ REGLAS:
             llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
           }
 
-          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+          llmResponse = await callChatLLM(llmMessages, {
             maxTokens: 1024,
             temperature: 0.7
           });
@@ -9497,10 +9768,10 @@ REGLAS:
           }
 
           // With tools the model can go on to get_payment_methods in the same turn.
-          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+          llmResponse = await callChatLLM(llmMessages, {
             maxTokens: 1024,
             temperature: 0.7,
-            tools: llmService.CHAT_TOOLS
+            tools: chatTools
           });
 
           llmResponse.tools_used = llmResponse.tools_used || [];
@@ -9553,14 +9824,44 @@ REGLAS:
             llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
           }
 
-          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+          llmResponse = await callChatLLM(llmMessages, {
             maxTokens: 1024,
             temperature: 0.7,
-            tools: llmService.CHAT_TOOLS
+            tools: chatTools
           });
 
           llmResponse.tools_used = llmResponse.tools_used || [];
           llmResponse.tools_used.push('get_payment_methods');
+        } else if (toolCall.function.name === 'create_agent_charge') {
+          const args = JSON.parse(toolCall.function.arguments);
+          let chargeResult;
+          try {
+            chargeResult = commissionAgent
+              ? await createAgentCharge({ venue, plans, conversation, agent: commissionAgent, args })
+              : { success: false, message: 'Esta herramienta es solo para comisionistas.' };
+          } catch (err) {
+            console.error('[agent] Charge failed', { conversation: conversation.id, error: err.message });
+            chargeResult = { success: false, message: 'No se pudo generar el cobro en este momento. Pídele que lo intente en unos minutos.' };
+          }
+
+          const toolResultContent = JSON.stringify(chargeResult);
+          if (chatModelConfig.provider === 'anthropic') {
+            llmMessages.push({
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
+            });
+            llmMessages.push({
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+            });
+          } else {
+            llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+            llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+          }
+
+          llmResponse = await callChatLLM(llmMessages, { maxTokens: 1024, temperature: 0.7 });
+          llmResponse.tools_used = llmResponse.tools_used || [];
+          llmResponse.tools_used.push('create_agent_charge');
         } else if (toolCall.function.name === 'send_payment_info') {
           const args = JSON.parse(toolCall.function.arguments);
 
@@ -9650,7 +9951,7 @@ REGLAS:
             llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
           }
 
-          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+          llmResponse = await callChatLLM(llmMessages, {
             maxTokens: 1024,
             temperature: 0.7
           });
@@ -9704,10 +10005,10 @@ REGLAS:
             llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
           }
 
-          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+          llmResponse = await callChatLLM(llmMessages, {
             maxTokens: 1024,
             temperature: 0.7,
-            tools: llmService.CHAT_TOOLS
+            tools: chatTools
           });
           llmResponse.tools_used = llmResponse.tools_used || [];
           llmResponse.tools_used.push('save_contact_info');
@@ -9800,7 +10101,7 @@ REGLAS:
             llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
           }
 
-          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+          llmResponse = await callChatLLM(llmMessages, {
             maxTokens: 1024,
             temperature: 0.7
           });
@@ -9819,7 +10120,7 @@ REGLAS:
       console.warn('[chat] Empty model reply, retrying', { conversation: conversation.id, tools: llmResponse.tools_used || [] });
       const toolsUsedSoFar = llmResponse.tools_used || [];
       try {
-        const retry = await llmService.callLLMByCode(chatProviderCode, [
+        const retry = await callChatLLM([
           ...llmMessages,
           { role: 'user', content: '[Sistema] Tu respuesta anterior llegó vacía. Responde ahora al cliente con el mensaje que corresponde según el último resultado de la herramienta.' }
         ], { maxTokens: 1024, temperature: 0.7 });
@@ -10091,7 +10392,9 @@ REGLAS:
         media_type,
         contact_type,
         contact_value,
-        userId: req.user?.id
+        userId: req.user ? String(req.user.claims?.sub || req.user.id || '') || undefined : undefined,
+        // The internal key was checked above; without one Baileys is not verified.
+        verifiedSender: source === 'baileys' && !!process.env.WHATSAPP_INTERNAL_KEY
       });
 
       // Count user messages for limit tracking
@@ -10169,8 +10472,8 @@ REGLAS:
         conversation,
         source,
         media_url: targetMessage.media_url,
-        media_type: targetMessage.media_type,
-        userId: req.user?.id
+        media_type: targetMessage.media_type
+        // No userId: the signed-in user here is staff reprocessing, not the sender.
       });
 
       // If source is WhatsApp (baileys or cloud_api), send the response
@@ -11449,44 +11752,23 @@ REGLAS:
 
       const agent = await prisma.commission_agents.findUnique({
         where: { id: accommodation.commission_agent_id },
-        include: { provider: true, rules: { where: { plan_type: plan.plan_type }, orderBy: { sort_order: 'asc' } } }
+        include: { provider: true }
       });
 
       const agentInfo = (a) => ({ id: a.id, name: a.name, provider_name: a.provider?.name || null });
 
       if (!agent) return res.json({ no_agent: true, message: 'Comisionista asignado no encontrado' });
-      if (!agent.rules.length) return res.json({ agent: agentInfo(agent), no_rules: true, message: `No hay reglas configuradas para tipo "${plan.plan_type}"` });
 
       const adults = accommodation.adults || 0;
       const agreedPrice = parseFloat(accommodation.agreed_price || accommodation.calculated_price || 0);
+      const commission = await computeCommission({ agentId: agent.id, planType: plan.plan_type, adults, agreedPrice });
+      if (commission.no_rules) return res.json({ agent: agentInfo(agent), no_rules: true, message: `No hay reglas configuradas para tipo "${plan.plan_type}"` });
 
       if (adults === 0 || agreedPrice === 0) {
         return res.json({ agent: agentInfo(agent), total_commission: 0, breakdown: [], message: 'Sin adultos o precio para calcular' });
       }
-
-      const perAdultPrice = agreedPrice / adults;
-      let remaining = adults;
-      let totalCommission = 0;
-      const breakdown = [];
-
-      for (const rule of agent.rules) {
-        if (remaining <= 0) break;
-        const capacity = rule.max_adults ? (rule.max_adults - rule.min_adults + 1) : remaining;
-        const inTier = Math.min(remaining, capacity);
-        const tierAmount = inTier * perAdultPrice * (parseFloat(rule.rate_percent) / 100);
-
-        breakdown.push({
-          range_min: rule.min_adults,
-          range_max: rule.max_adults,
-          adults_in_tier: inTier,
-          commission_percent: parseFloat(rule.rate_percent),
-          per_adult_price: Math.round(perAdultPrice),
-          subtotal: Math.round(tierAmount)
-        });
-
-        totalCommission += tierAmount;
-        remaining -= inTier;
-      }
+      const { breakdown } = commission;
+      const totalCommission = commission.total;
 
       // Check for existing payment for this accommodation
       const existingPayment = await prisma.commission_payments.findFirst({
