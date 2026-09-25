@@ -857,7 +857,10 @@ model commission_payments {
 
 model bold_payment_links {
   id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  accommodation_id    String    @db.Uuid
+  accommodation_id    String?   @db.Uuid
+  estimate_id         String?   @db.Uuid
+  venue_id            String?   @db.Uuid
+  conversation_id     String?   @db.Uuid
   payment_id          String?   @unique @db.Uuid
   bold_link_id        String    @unique @db.VarChar(100)
   bold_url            String    @db.Text

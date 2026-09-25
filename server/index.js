@@ -14,6 +14,7 @@ const llmService = require('./llm-service');
 const whatsappClient = require('./services/whatsappClient');
 const metaWhatsApp = require('./services/metaWhatsApp');
 const metaInstagram = require('./services/metaInstagram');
+const bold = require('./services/bold');
 
 /**
  * Calculate the next resume time at given hour in America/Bogota timezone.
@@ -178,7 +179,7 @@ app.use(express.json({
   // HMAC over the exact bytes Meta sent, so re-serializing the parsed object
   // would not reproduce it.
   verify: (req, _res, buf) => {
-    if (req.originalUrl && req.originalUrl.startsWith('/api/webhook/')) {
+    if (req.originalUrl && (req.originalUrl.startsWith('/api/webhook/') || req.originalUrl.startsWith('/api/bold/webhook'))) {
       req.rawBody = buf;
     }
   }
@@ -1130,6 +1131,7 @@ async function startServer() {
     { type: 'bancolombia', label: 'Bancolombia', icon: 'cil-institution' },
     { type: 'davivienda', label: 'Davivienda', icon: 'cil-institution' },
     { type: 'breb', label: 'Bre-B', icon: 'cil-mobile' },
+    { type: 'bold', label: 'Pago en línea Bold (QR, Nequi, PSE, tarjeta)', icon: 'cil-credit-card' },
     { type: 'pse', label: 'PSE', icon: 'cil-laptop' },
     { type: 'credit_card_national', label: 'Tarjeta de Crédito Nacional', icon: 'cil-credit-card' },
     { type: 'credit_card_international', label: 'Tarjeta de Crédito Internacional', icon: 'cil-credit-card' },
@@ -1138,7 +1140,8 @@ async function startServer() {
   ];
 
   app.get('/api/venues/:id/payment-methods/catalog', isAuthenticated, async (req, res) => {
-    res.json(PAYMENT_METHOD_CATALOG);
+    // Bold only when the account keys are configured on the server.
+    res.json(PAYMENT_METHOD_CATALOG.filter(c => c.type !== 'bold' || bold.isConfigured()));
   });
 
   app.get('/api/venues/:id/payment-methods', isAuthenticated, async (req, res) => {
@@ -5162,6 +5165,71 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
     }
   });
 
+  /**
+   * Turn an estimate into an accommodation (booking): find or create the contact,
+   * create the accommodation and mark the estimate as converted. Shared by the
+   * manual conversion and by payments confirmed automatically.
+   * @param {object} estimate - estimates row
+   * @param {object} [db=prisma] - Prisma client or interactive transaction
+   * @returns {Promise<object>} the accommodation
+   */
+  async function convertEstimateToAccommodation(estimate, db = prisma) {
+    // A WhatsApp contact can arrive as a BSUID ("CO.123...") instead of a number.
+    const whatsappNumber = estimate.contact_type === 'whatsapp' ? parseFloat(estimate.contact_value) : NaN;
+    const whatsapp = Number.isFinite(whatsappNumber) ? whatsappNumber : null;
+    const instagram = estimate.contact_type === 'instagram' ? estimate.contact_value : null;
+
+    // Only real conditions: an empty object in an OR matches every contact.
+    const conditions = [];
+    if (whatsapp !== null) conditions.push({ whatsapp });
+    if (instagram) conditions.push({ instagram });
+    if (estimate.customer_name) conditions.push({ fullname: estimate.customer_name });
+
+    let customerId = null;
+    if (conditions.length > 0) {
+      const existingContact = await db.contacts.findFirst({ where: { OR: conditions } });
+      if (existingContact) {
+        customerId = existingContact.id;
+      } else {
+        const newContact = await db.contacts.create({
+          data: { fullname: estimate.customer_name, whatsapp, instagram }
+        });
+        customerId = newContact.id;
+      }
+    }
+
+    const checkIn = estimate.check_in ? new Date(estimate.check_in) : new Date();
+    const checkOut = estimate.check_out ? new Date(estimate.check_out) : checkIn;
+    const durationMs = checkOut.getTime() - checkIn.getTime();
+    const durationSeconds = Math.max(43200, Math.floor(durationMs / 1000));
+
+    const accommodation = await db.accommodations.create({
+      data: {
+        venue: estimate.venue_id,
+        plan_id: estimate.plan_id,
+        customer: customerId,
+        date: checkIn,
+        duration: durationSeconds.toString(),
+        adults: estimate.adults || 0,
+        children: estimate.children || 0,
+        calculated_price: estimate.calculated_price,
+        agreed_price: estimate.agreed_price ?? estimate.calculated_price
+      }
+    });
+
+    await db.estimates.update({
+      where: { id: estimate.id },
+      data: {
+        status: 'converted',
+        converted_at: new Date(),
+        accommodation_id: accommodation.id,
+        updated_at: new Date()
+      }
+    });
+
+    return accommodation;
+  }
+
   app.post('/api/estimates/:id/convert', isAuthenticated, async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
@@ -5175,60 +5243,8 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
         return res.status(400).json({ error: 'Esta cotización ya fue convertida' });
       }
       
-      let customerId = null;
-      if (estimate.customer_name || estimate.contact_value) {
-        const existingContact = await prisma.contacts.findFirst({
-          where: { 
-            OR: [
-              { whatsapp: estimate.contact_type === 'whatsapp' ? parseFloat(estimate.contact_value) : undefined },
-              { fullname: estimate.customer_name }
-            ].filter(c => Object.keys(c).length > 0)
-          }
-        });
-        
-        if (existingContact) {
-          customerId = existingContact.id;
-        } else {
-          const newContact = await prisma.contacts.create({
-            data: {
-              fullname: estimate.customer_name,
-              whatsapp: estimate.contact_type === 'whatsapp' ? parseFloat(estimate.contact_value) : null,
-              instagram: estimate.contact_type === 'instagram' ? estimate.contact_value : null
-            }
-          });
-          customerId = newContact.id;
-        }
-      }
-      
-      const checkIn = estimate.check_in ? new Date(estimate.check_in) : new Date();
-      const checkOut = estimate.check_out ? new Date(estimate.check_out) : checkIn;
-      const durationMs = checkOut.getTime() - checkIn.getTime();
-      const durationSeconds = Math.max(43200, Math.floor(durationMs / 1000));
-      
-      const accommodation = await prisma.accommodations.create({
-        data: {
-          venue: estimate.venue_id,
-          plan_id: estimate.plan_id,
-          customer: customerId,
-          date: checkIn,
-          duration: durationSeconds.toString(),
-          adults: estimate.adults || 0,
-          children: estimate.children || 0,
-          calculated_price: estimate.calculated_price,
-          agreed_price: estimate.calculated_price
-        }
-      });
-      
-      await prisma.estimates.update({
-        where: { id: req.params.id },
-        data: {
-          status: 'converted',
-          converted_at: new Date(),
-          accommodation_id: accommodation.id,
-          updated_at: new Date()
-        }
-      });
-      
+      const accommodation = await convertEstimateToAccommodation(estimate);
+
       res.json({ estimate_id: req.params.id, accommodation_id: accommodation.id, accommodation });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -8173,6 +8189,305 @@ REGLAS:
     return null;
   }
 
+  // ==================== Bold payment links ====================
+
+  const BOLD_OPEN_STATUSES = ['ACTIVE', 'PROCESSING'];
+  const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const PUSH_SOURCES = ['instagram', 'cloud_api', 'baileys', 'whatsapp'];
+
+  /**
+   * Send a message to the guest on the channel of their conversation and keep it in
+   * the inbox. Web chat has no push channel, so there the message is only stored.
+   */
+  async function notifyConversation(conversation, text) {
+    const message = await prisma.chat_messages.create({
+      data: { conversation_id: conversation.id, role: 'assistant', content: text, status: 'pending' }
+    });
+    await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { updated_at: new Date() } });
+    try {
+      if (conversation.source === 'instagram' && conversation.phone) {
+        await sendInstagramReply(conversation.venue_id, conversation.phone, text, message.id);
+      } else if (PUSH_SOURCES.includes(conversation.source) && conversation.phone) {
+        await sendWhatsAppReply(conversation.venue_id, conversation.phone, text, message.id);
+      } else {
+        await prisma.chat_messages.update({ where: { id: message.id }, data: { status: 'delivered' } });
+      }
+    } catch (err) {
+      console.error('[bold] Could not notify conversation', { conversationId: conversation.id, error: err.message });
+      await prisma.chat_messages.update({
+        where: { id: message.id },
+        data: { status: 'failed', error_details: err.message }
+      });
+    }
+  }
+
+  /**
+   * Create (or reuse) a Bold payment link for an estimate and send it to the guest.
+   * Used by send_payment_info when the chosen method is Bold.
+   * @returns {Promise<object>} tool result for the LLM
+   */
+  async function sendBoldPaymentLink({ venueId, conversation, paymentMethod, estimateId, amount }) {
+    const reject = (reason, message) => {
+      console.warn('[bold] Payment link not sent', { reason, venueId, estimateId, amount });
+      return { success: false, message };
+    };
+    if (!bold.isConfigured()) {
+      return reject('not_configured', 'El pago en línea no está disponible. Ofrece otro método de pago.');
+    }
+    if (paymentMethod.venue_id !== venueId) {
+      return reject('method_other_venue', 'Método de pago no encontrado.');
+    }
+    // Tool results are not kept in the chat history, so on a later turn the model
+    // often sends a made-up or truncated estimate_id. Fall back to the latest pending
+    // estimate of this same conversation.
+    let estimate = estimateId && UUID_PATTERN.test(estimateId)
+      ? await prisma.estimates.findUnique({ where: { id: estimateId } })
+      : null;
+    if ((!estimate || estimate.conversation_id !== conversation?.id) && conversation?.id) {
+      estimate = await prisma.estimates.findFirst({
+        where: { conversation_id: conversation.id, venue_id: venueId, status: 'pending' },
+        orderBy: { created_at: 'desc' }
+      });
+    }
+    if (!estimate || estimate.venue_id !== venueId) {
+      return reject('estimate_not_found', 'Cotización no encontrada. Usa el estimate_id que devolvió create_estimate.');
+    }
+    const total = Math.round(Number(amount || estimate.agreed_price || estimate.calculated_price || 0));
+    if (!(total >= 1000)) {
+      return reject('amount_too_low', 'El monto a pagar debe ser de al menos $1.000.');
+    }
+
+    // Reuse an open link for the same estimate and amount instead of creating duplicates.
+    let link = await prisma.bold_payment_links.findFirst({
+      where: {
+        estimate_id: estimate.id,
+        amount: total,
+        status: { in: BOLD_OPEN_STATUSES },
+        expiration_date: { gt: new Date() }
+      },
+      orderBy: { created_at: 'desc' }
+    });
+    if (!link) {
+      const hours = Number(process.env.BOLD_LINK_EXPIRATION_HOURS) || 48;
+      const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
+      const venue = await prisma.venues.findUnique({ where: { id: venueId }, select: { name: true } });
+      const description = `Reserva ${venue?.name || ''}`.trim();
+      const created = await bold.createPaymentLink({ amount: total, description, expiresAt });
+      link = await prisma.bold_payment_links.create({
+        data: {
+          bold_link_id: created.linkId,
+          bold_url: created.url,
+          amount: total,
+          description,
+          status: 'ACTIVE',
+          expiration_date: expiresAt,
+          estimate_id: estimate.id,
+          venue_id: venueId,
+          conversation_id: conversation?.id || null,
+          created_by: 'system:chat'
+        }
+      });
+    }
+
+    await prisma.estimates.update({
+      where: { id: estimate.id },
+      data: { payment_status: 'link_sent', payment_method_id: paymentMethod.id, updated_at: new Date() }
+    });
+
+    const text = `💳 Pago de tu reserva\n\n💰 Monto: $${total.toLocaleString('es-CO')}\n\n`
+      + `Paga aquí con QR, Nequi, PSE, Botón Bancolombia o tarjeta:\n${link.bold_url}\n\n`
+      + 'Apenas se confirme el pago te avisamos por este chat y tu reserva queda confirmada. ✅';
+    const pushed = !!(conversation && PUSH_SOURCES.includes(conversation.source) && conversation.phone);
+    if (pushed) await notifyConversation(conversation, text);
+
+    return {
+      success: true,
+      method_name: paymentMethod.label,
+      amount: total,
+      payment_url: link.bold_url,
+      message: pushed
+        ? 'El link de pago ya se le envió al cliente en un mensaje aparte: no lo repitas. Dile que al pagar recibirá la confirmación automática por este chat y que no necesita enviar comprobante.'
+        : `Incluye este link exacto en tu respuesta para que el cliente pague: ${link.bold_url} . Al pagar, la reserva se confirma automáticamente; no necesita enviar comprobante.`
+    };
+  }
+
+  /**
+   * Record a paid Bold link: convert the estimate into a booking, register the
+   * payment as verified with its income, and confirm to the guest. Idempotent: the
+   * first caller claims the link, so webhook retries and the reconciler are no-ops.
+   */
+  async function finalizeBoldPayment(link, state) {
+    const claimed = await prisma.bold_payment_links.updateMany({
+      where: { id: link.id, status: { not: 'PAID' } },
+      data: {
+        status: 'PAID',
+        bold_transaction_id: state.transactionId,
+        bold_payment_method: state.paymentMethod,
+        updated_at: new Date()
+      }
+    });
+    if (claimed.count === 0) return;
+
+    let result;
+    try {
+      result = await prisma.$transaction(async (tx) => {
+        const estimate = link.estimate_id
+          ? await tx.estimates.findUnique({ where: { id: link.estimate_id } })
+          : null;
+        let accommodationId = link.accommodation_id || estimate?.accommodation_id || null;
+        if (!accommodationId && estimate) {
+          accommodationId = (await convertEstimateToAccommodation(estimate, tx)).id;
+        }
+        const accommodation = accommodationId
+          ? await tx.accommodations.findUnique({ where: { id: accommodationId } })
+          : null;
+        const venueId = link.venue_id || accommodation?.venue || estimate?.venue_id || null;
+        const venue = venueId
+          ? await tx.venues.findUnique({ where: { id: venueId }, select: { name: true, organization: true } })
+          : null;
+
+        const now = new Date();
+        const payment = await tx.payments.create({
+          data: {
+            accommodation: accommodationId,
+            amount: link.amount,
+            payment_method: state.paymentMethod ? `Bold - ${state.paymentMethod}` : 'Bold',
+            payment_date: now,
+            reference: state.transactionId || link.bold_link_id,
+            notes: `Pago confirmado automáticamente por Bold. Link: ${link.bold_link_id}`,
+            verified: true,
+            verified_at: now,
+            verified_by: 'system:bold',
+            created_by: 'system:bold',
+            type: 'accommodation'
+          }
+        });
+
+        if (accommodationId) {
+          const incomeData = {
+            organization_id: venue?.organization || null,
+            venue_id: venueId,
+            amount: link.amount,
+            type: 'accommodation',
+            date: now,
+            accrual_date: accommodation?.date || null
+          };
+          await tx.incomes.upsert({
+            where: { payment_id: payment.id },
+            update: incomeData,
+            create: { payment_id: payment.id, ...incomeData }
+          });
+        }
+
+        await tx.bold_payment_links.update({
+          where: { id: link.id },
+          data: { payment_id: payment.id, accommodation_id: accommodationId }
+        });
+        if (estimate) {
+          await tx.estimates.update({
+            where: { id: estimate.id },
+            data: { payment_status: 'verified', payment_id: payment.id, updated_at: now }
+          });
+        }
+        return { venueName: venue?.name || null, accommodationId, paymentId: payment.id };
+      });
+    } catch (err) {
+      // The link stays PAID without payment_id, which flags it for manual review.
+      console.error('[bold] Paid link could not be recorded', { link: link.bold_link_id, error: err.message });
+      return;
+    }
+
+    console.log('[bold] Payment recorded', { link: link.bold_link_id, ...result });
+
+    if (link.conversation_id) {
+      const conversation = await prisma.chat_conversations.findUnique({ where: { id: link.conversation_id } });
+      if (conversation) {
+        const amount = Number(link.amount).toLocaleString('es-CO');
+        await notifyConversation(conversation,
+          `✅ ¡Pago recibido! Confirmamos tu pago de $${amount}. `
+          + `Tu reserva en ${result.venueName || 'la cabaña'} quedó confirmada. ¡Te esperamos! 🎉`);
+      }
+    }
+  }
+
+  /**
+   * Ask Bold for the link's real state and act on it. A webhook body is never
+   * trusted on its own: it only triggers this check.
+   */
+  async function syncBoldLink(link) {
+    const state = await bold.getPaymentLink(link.bold_link_id);
+    if (state.status === 'PAID') {
+      await finalizeBoldPayment(link, state);
+    } else if (state.status && state.status !== link.status) {
+      await prisma.bold_payment_links.update({
+        where: { id: link.id },
+        data: { status: state.status, updated_at: new Date() }
+      });
+    }
+    return state.status;
+  }
+
+  /**
+   * Check every open link from the last week. Safety net for delayed or missed
+   * webhooks (Bold can take up to 10 minutes to notify some payments).
+   */
+  async function reconcileBoldLinks() {
+    if (!bold.isConfigured()) return;
+    const links = await prisma.bold_payment_links.findMany({
+      where: {
+        status: { in: BOLD_OPEN_STATUSES },
+        created_at: { gt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+      },
+      orderBy: { created_at: 'desc' },
+      take: 50
+    });
+    for (const link of links) {
+      try {
+        await syncBoldLink(link);
+      } catch (err) {
+        console.error('[bold] Reconcile failed', { link: link.bold_link_id, error: err.message });
+      }
+    }
+  }
+
+  // POST /api/bold/webhook — Bold payment events (SALE_APPROVED, SALE_REJECTED, ...)
+  app.post('/api/bold/webhook', (req, res) => {
+    if (!bold.validateWebhookSignature(req.rawBody, req.get('x-bold-signature'))) {
+      console.warn('[bold-webhook] Invalid or missing signature');
+      return res.sendStatus(401);
+    }
+    // Bold expects a 200 within 2 seconds; the work happens afterwards.
+    res.sendStatus(200);
+
+    (async () => {
+      const payload = req.body || {};
+      const data = payload.data || {};
+      console.log('[bold-webhook]', payload.type, {
+        payment_id: data.payment_id || null,
+        reference: data.metadata?.reference || null,
+        method: data.payment_method || null,
+        integration: data.integration || null,
+        data_keys: Object.keys(data)
+      });
+
+      // Which field carries the link id is not documented for payment links, so
+      // every candidate is tried. The state is then confirmed with Bold.
+      const candidates = [data.metadata?.reference, data.payment_link, data.reference, data.link_id, payload.subject]
+        .filter(v => typeof v === 'string' && v);
+      const link = candidates.length
+        ? await prisma.bold_payment_links.findFirst({ where: { bold_link_id: { in: candidates } } })
+        : null;
+
+      if (link) {
+        await prisma.bold_payment_links.update({ where: { id: link.id }, data: { webhook_payload: payload } });
+        await syncBoldLink(link);
+      } else {
+        // Unknown shape or a sale that is not ours: check every open link.
+        await reconcileBoldLinks();
+      }
+    })().catch(err => console.error('[bold-webhook] Processing failed:', err.message));
+  });
+
   /**
    * Check if any WhatsApp channel is available for a venue.
    */
@@ -8318,8 +8633,12 @@ REGLAS:
       tools: llmService.CHAT_TOOLS
     });
 
-    // Handle tool calls (function calling)
-    if (llmResponse.tool_calls && llmResponse.tool_calls.length > 0) {
+    // Handle tool calls (function calling). Tools chain (e.g. get_payment_methods ->
+    // send_payment_info): each handler asks the model again, and the tool calls in
+    // that answer run in the next round. A single round dropped them and left replies
+    // like "sending it now, one moment..." with nothing sent.
+    let toolRounds = 0;
+    while (llmResponse.tool_calls && llmResponse.tool_calls.length > 0 && toolRounds++ < 4) {
       for (const toolCall of llmResponse.tool_calls) {
         if (toolCall.function.name === 'check_availability') {
           const args = JSON.parse(toolCall.function.arguments);
@@ -8667,7 +8986,23 @@ REGLAS:
           // mislabeled as WhatsApp.
           const estimateContactType = contact_type
             || (source === 'instagram' ? 'instagram' : 'whatsapp');
-          const estimate = await prisma.estimates.create({
+          const checkIn = args.check_in ? new Date(args.check_in) : null;
+
+          // The model tends to call create_estimate again on later turns ("your quote
+          // is ready..."). Reuse the conversation's pending estimate for the same plan,
+          // date and party instead of piling up duplicates.
+          const existingEstimate = await prisma.estimates.findFirst({
+            where: {
+              conversation_id: conversation.id,
+              status: 'pending',
+              plan_id: matchingPlan?.id || null,
+              check_in: checkIn,
+              adults: args.adults || 0,
+              children: args.children || 0
+            },
+            orderBy: { created_at: 'desc' }
+          });
+          const estimate = existingEstimate || await prisma.estimates.create({
             data: {
               venue_id,
               plan_id: matchingPlan?.id || null,
@@ -8696,7 +9031,9 @@ REGLAS:
             adults: args.adults,
             children: args.children || 0,
             calculated_price: calculatedPrice,
-            message: `Cotización creada exitosamente. El cliente ${args.customer_name} recibirá confirmación pronto.`
+            message: existingEstimate
+              ? 'Ya existía una cotización pendiente con estos datos en esta conversación; se reutilizó (no se creó otra).'
+              : `Cotización creada exitosamente. El cliente ${args.customer_name} recibirá confirmación pronto.`
           };
 
           const toolResultContent = JSON.stringify(estimateResult);
@@ -8715,20 +9052,22 @@ REGLAS:
             llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
           }
 
+          // With tools the model can go on to get_payment_methods in the same turn.
           llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
             maxTokens: 1024,
-            temperature: 0.7
+            temperature: 0.7,
+            tools: llmService.CHAT_TOOLS
           });
 
           llmResponse.tools_used = llmResponse.tools_used || [];
           llmResponse.tools_used.push('create_estimate');
         } else if (toolCall.function.name === 'get_payment_methods') {
           // Get active payment methods for this venue
-          const paymentMethods = await prisma.venue_payment_methods.findMany({
+          const paymentMethods = (await prisma.venue_payment_methods.findMany({
             where: { venue_id, is_active: true },
             orderBy: { sort_order: 'asc' },
             select: { id: true, method_type: true, label: true, account_info: true, holder_name: true, instructions: true, qr_image_url: true }
-          });
+          })).filter(m => m.method_type !== 'bold' || bold.isConfigured());
 
           const paymentResult = {
             methods: paymentMethods.map(m => ({
@@ -8738,10 +9077,14 @@ REGLAS:
               account_info: m.account_info,
               holder_name: m.holder_name,
               has_qr: !!m.qr_image_url,
-              instructions: m.instructions
+              instructions: m.method_type === 'bold'
+                ? (m.instructions || 'Pago en línea con confirmación automática: QR, Nequi, PSE, Botón Bancolombia o tarjeta.')
+                : m.instructions,
+              online: m.method_type === 'bold'
             })),
             message: paymentMethods.length > 0
-              ? `Hay ${paymentMethods.length} método(s) de pago disponible(s).`
+              ? `Hay ${paymentMethods.length} método(s) de pago disponible(s). Si el cliente ya eligió uno, `
+                + 'llama ahora send_payment_info con el id de ese método, sin volver a pedirle confirmación.'
               : 'No hay métodos de pago configurados. El cliente deberá coordinar el pago directamente con el venue.'
           };
 
@@ -8772,14 +9115,31 @@ REGLAS:
         } else if (toolCall.function.name === 'send_payment_info') {
           const args = JSON.parse(toolCall.function.arguments);
 
-          // Fetch the payment method
-          const paymentMethod = args.payment_method_id
-            ? await prisma.venue_payment_methods.findUnique({ where: { id: args.payment_method_id } })
+          // Fetch the payment method. An invalid id (the model does not keep ids across
+          // turns) would make Prisma throw, so it is validated first.
+          const paymentMethod = args.payment_method_id && UUID_PATTERN.test(args.payment_method_id)
+            ? await prisma.venue_payment_methods.findFirst({ where: { id: args.payment_method_id, venue_id } })
             : null;
 
           let sendResult;
           if (!paymentMethod) {
             sendResult = { success: false, message: 'Método de pago no encontrado.' };
+          } else if (paymentMethod.method_type === 'bold') {
+            try {
+              sendResult = await sendBoldPaymentLink({
+                venueId: venue_id,
+                conversation,
+                paymentMethod,
+                estimateId: args.estimate_id,
+                amount: args.payment_amount
+              });
+            } catch (boldErr) {
+              console.error('[bold] Could not create payment link:', boldErr);
+              sendResult = {
+                success: false,
+                message: 'No se pudo generar el link de pago en este momento. Ofrece otro método de pago o escala a un humano.'
+              };
+            }
           } else {
             // Update estimate
             if (args.estimate_id) {
@@ -12170,6 +12530,10 @@ Responde con JSON EXACTAMENTE en este formato:
       console.error('[instagram/refresh] Unhandled error:', err.message));
     setTimeout(runIgRefresh, 60 * 1000);
     setInterval(runIgRefresh, 24 * 60 * 60 * 1000);
+
+    // Safety net for Bold payments whose webhook is delayed or never arrives.
+    setInterval(() => reconcileBoldLinks().catch(err =>
+      console.error('[bold] Reconcile error:', err.message)), 5 * 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });
