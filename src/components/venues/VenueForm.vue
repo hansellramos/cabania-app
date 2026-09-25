@@ -316,7 +316,7 @@
     <div class="mb-3" v-if="form.is_public">
       <CFormLabel for="venueSlug">URL Pública (slug)</CFormLabel>
       <CInputGroup>
-        <CInputGroupText class="text-muted" style="font-size: 0.85rem;">cabaneroco.vercel.app/#/p/</CInputGroupText>
+        <CInputGroupText class="text-muted" style="font-size: 0.85rem;">{{ publicHost }}/#/p/</CInputGroupText>
         <CFormInput
           id="venueSlug"
           v-model="form.slug"
@@ -373,8 +373,14 @@ const markerInstance = ref(null)
 const originalLocation = ref({ latitude: null, longitude: null })
 const skipReverseGeocode = ref(false)
 
+// Public pages are shared with guests, so they use the official domain
+// (VITE_APP_URL, read at build time) rather than whatever host the owner has
+// open; without it, the current domain.
+const publicBaseUrl = (import.meta.env.VITE_APP_URL || window.location.origin).replace(/\/$/, '')
+const publicHost = publicBaseUrl.replace(/^https?:\/\//, '')
+
 const publicVenueUrl = computed(() => {
-  return `${window.location.origin}/#/p/${form.value.slug || ''}`
+  return `${publicBaseUrl}/#/p/${form.value.slug || ''}`
 })
 
 const locationChanged = computed(() => {
