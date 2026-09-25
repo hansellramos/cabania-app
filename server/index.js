@@ -8578,7 +8578,9 @@ REGLAS:
         name = words.slice(-3).join(' ');
       }
     }
-    return { name: name || null, phone: phone || null };
+    const instagram = cleanInstagram(args.customer_instagram || args.client_instagram || args.instagram)
+      || cleanInstagram((notes.match(/@[A-Za-z0-9._]{2,30}/) || [])[0]);
+    return { name: name || null, phone: phone || null, instagram: instagram || null };
   }
 
   /** "sábado, 3 de octubre" for a booking date stored as a UTC day. */
@@ -8627,20 +8629,22 @@ REGLAS:
       return fail('La cabaña no tiene cobro en línea (Bold) activo. Dile que el dueño debe activarlo.');
     }
 
-    const { name: clientName, phone: clientPhone } = agentClientFromArgs(args);
+    const { name: clientName, phone: clientPhone, instagram: clientInstagram } = agentClientFromArgs(args);
     // The model tends to drop details given a few messages earlier; without them
     // the booking and contract end up under the agent, so that must be explicit.
-    if (!clientName && !clientPhone && args.without_client_data !== true) {
-      return fail('Faltan los datos del cliente. Si el comisionista ya dio el nombre o el WhatsApp del cliente en la conversación, '
-        + 'vuelve a llamar prepare_agent_charge incluyendo customer_name y customer_phone (no en notes). Si no los tiene, pregúntale; '
+    if (!clientName && !clientPhone && !clientInstagram && args.without_client_data !== true) {
+      return fail('Faltan los datos del cliente. Si el comisionista ya dio el nombre, el WhatsApp o el Instagram del cliente en la conversación, '
+        + 'vuelve a llamar prepare_agent_charge incluyendo customer_name, customer_phone y customer_instagram (no en notes). Si no los tiene, pregúntale; '
         + 'solo si dice que no los dará, llama con without_client_data: true.');
     }
     const data = {
       venue_id: venue.id,
       plan_id: plan.id,
       customer_name: clientName,
-      contact_type: 'whatsapp',
-      contact_value: clientPhone || '',
+      // An Instagram @ is a valid contact on its own (as for guests); with both,
+      // the phone travels in contact_phone and guestContact() keeps both.
+      contact_type: clientInstagram ? 'instagram' : 'whatsapp',
+      contact_value: clientInstagram || clientPhone || '',
       contact_phone: clientPhone,
       check_in: checkIn,
       check_out: checkOut,
@@ -8660,7 +8664,7 @@ REGLAS:
       where: {
         conversation_id: conversation.id, status: 'pending', commission_agent_id: agent.id,
         plan_id: plan.id, check_in: checkIn, adults, children, agreed_price: agreedPrice, charge_amount: charge,
-        customer_name: clientName, contact_phone: clientPhone
+        customer_name: clientName, contact_phone: clientPhone, contact_value: clientInstagram || clientPhone || ''
       }
     });
     // The agent just said yes to this very summary and the model prepared it
@@ -8673,7 +8677,7 @@ REGLAS:
     const commission = await computeCommission({ agentId: agent.id, planType: plan.plan_type, adults, agreedPrice });
     const people = `${adults} adulto${adults === 1 ? '' : 's'}${children ? ` y ${children} niño${children === 1 ? '' : 's'}` : ''}`;
     const summary = [
-      `👤 Cliente: ${clientName || 'sin nombre'}${clientPhone ? ` (${clientPhone})` : ''}`,
+      `👤 Cliente: ${clientName || 'sin nombre'}${[clientPhone, clientInstagram].filter(Boolean).length ? ` (${[clientPhone, clientInstagram].filter(Boolean).join(' · ')})` : ''}`,
       `🏡 ${plan.name} · ${people}`,
       `📅 ${formatBookingDate(checkIn)}`,
       `💰 Total: ${money(agreedPrice)}`,
