@@ -696,7 +696,8 @@ const AGENT_TOOLS = [
         type: 'object',
         properties: {
           customer_name: { type: 'string', description: 'Nombre del cliente del comisionista, tal como lo dio en la conversación (no en notes). Cadena vacía solo si no lo dio.' },
-          customer_phone: { type: 'string', description: 'WhatsApp del cliente, solo dígitos, tal como lo dio en la conversación (no en notes). Cadena vacía solo si no lo dio.' },
+          customer_phone: { type: 'string', description: 'WhatsApp del cliente, solo dígitos, tal como lo dio en la conversación (no en notes). Cadena vacía si no lo dio.' },
+          customer_instagram: { type: 'string', description: 'Instagram del cliente (@usuario), tal como lo dio en la conversación. Cadena vacía si no lo dio. Basta con el WhatsApp o el Instagram.' },
           without_client_data: { type: 'boolean', description: 'true solo si el comisionista dijo explícitamente que no tiene o no quiere dar los datos del cliente (la reserva queda a su nombre).' },
           plan_name: { type: 'string', description: 'Nombre del plan elegido.' },
           check_in: { type: 'string', description: 'Fecha de llegada, formato YYYY-MM-DD.' },
@@ -707,7 +708,7 @@ const AGENT_TOOLS = [
           charge_amount: { type: 'number', description: 'Monto a cobrar ahora con el link, en pesos. Omitir para usar el anticipo de la cabaña.' },
           notes: { type: 'string', description: 'Solo solicitudes especiales de la reserva. Los datos del cliente NO van aquí.' }
         },
-        required: ['customer_name', 'customer_phone', 'plan_name', 'check_in', 'adults']
+        required: ['customer_name', 'customer_phone', 'customer_instagram', 'plan_name', 'check_in', 'adults']
       }
     }
   },
@@ -737,9 +738,9 @@ function buildAgentPrompt(agent, venue) {
 Quien escribe es ${agent.name}, comisionista (aliado) de ${venue?.name || 'la cabaña'}. NO es un huésped: vende reservas a sus clientes y gana una comisión. Estas reglas reemplazan el flujo de pago de huéspedes.
 - Trátalo como colega: breve, directo y sin formalidades de venta.
 - Apenas tengas fecha y número de personas, verifica la fecha con check_availability ANTES de pedir más datos: si está ocupada, díselo de una vez con las fechas alternativas.
-- Luego pide lo que falte: nombre y WhatsApp del cliente (con ellos la reserva y el contrato salen a nombre del cliente), plan y niños (0 si no dice).
+- Luego pide en un solo mensaje lo que falte: nombre del cliente y un contacto suyo, WhatsApp o Instagram (cualquiera de los dos sirve; con ellos la reserva y el contrato salen a nombre del cliente), plan y niños (0 si no dice). Si ya dio el Instagram, no le pidas el WhatsApp.
 - Precio: el del plan, salvo que te dé un precio total acordado distinto. Monto a cobrar ahora: ${advance}, salvo que te indique otro monto.
-- Con todo listo, llama prepare_agent_charge con TODOS los datos (customer_name y customer_phone en sus campos). Muestra el resumen que devuelve, tal cual, y pide confirmación una vez, terminando con [[botones: Sí, generar cobro | Cambiar algo]]. Nunca armes el resumen por tu cuenta.
+- Con todo listo, llama prepare_agent_charge con TODOS los datos (customer_name, customer_phone y customer_instagram en sus campos). Muestra el resumen que devuelve, tal cual, y pide confirmación una vez, terminando con [[botones: Sí, generar cobro | Cambiar algo]]. Nunca armes el resumen por tu cuenta.
 - Cuando confirme, llama confirm_agent_charge con el draft_id. Si quiere cambiar algo, vuelve a llamar prepare_agent_charge con los datos corregidos.
 - Nunca digas que el link fue enviado si confirm_agent_charge no respondió con éxito.
 - Con el comisionista NUNCA uses create_estimate, send_payment_info ni save_contact_info, y no le pidas sus propios datos: ya está identificado.
