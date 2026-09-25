@@ -6885,6 +6885,23 @@ REGLAS:
   });
 
   // POST /api/chat/:venue_id/conversations/:id/resume - Resume a conversation manually
+  /**
+   * Reject the request when :venue_id is not one of the venues the current user can
+   * access. Chat routes only checked for a session, so any logged-in user could read,
+   * answer or delete another venue's conversations by passing its id.
+   */
+  async function requireVenueAccess(req, res, next) {
+    try {
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      if (venueIds !== null && !venueIds.includes(req.params.venue_id)) {
+        return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
+      }
+      next();
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+
   app.post('/api/chat/:venue_id/conversations/:id/resume', isAuthenticated, async (req, res) => {
     try {
       const { venue_id, id } = req.params;
@@ -8963,7 +8980,7 @@ REGLAS:
   });
 
   // POST /api/chat/:venue_id/messages/:message_id/reprocess - Reprocess a user message through AI
-  app.post('/api/chat/:venue_id/messages/:message_id/reprocess', isAuthenticated, async (req, res) => {
+  app.post('/api/chat/:venue_id/messages/:message_id/reprocess', isAuthenticated, requireVenueAccess, async (req, res) => {
     try {
       const { venue_id, message_id } = req.params;
 
@@ -9052,7 +9069,7 @@ REGLAS:
   });
 
   // POST /api/chat/:venue_id/messages/:message_id/send-whatsapp - Send assistant message via WhatsApp
-  app.post('/api/chat/:venue_id/messages/:message_id/send-whatsapp', isAuthenticated, async (req, res) => {
+  app.post('/api/chat/:venue_id/messages/:message_id/send-whatsapp', isAuthenticated, requireVenueAccess, async (req, res) => {
     try {
       const { venue_id, message_id } = req.params;
 
@@ -9099,7 +9116,7 @@ REGLAS:
   });
 
   // GET /api/chat/:venue_id/conversations - List conversations for a venue (inbox)
-  app.get('/api/chat/:venue_id/conversations', isAuthenticated, async (req, res) => {
+  app.get('/api/chat/:venue_id/conversations', isAuthenticated, requireVenueAccess, async (req, res) => {
     try {
       const { venue_id } = req.params;
       const { search, source } = req.query;
@@ -9170,6 +9187,13 @@ REGLAS:
         include: { messages: { orderBy: { created_at: 'asc' } } }
       });
 
+      if (conversation) {
+        const venueIds = await getAccessibleVenueIds(req.userPermissions);
+        if (venueIds !== null && !venueIds.includes(conversation.venue_id)) {
+          return res.status(403).json({ error: 'No tienes acceso a esta conversación' });
+        }
+      }
+
       // Mark as read
       if (conversation) {
         await prisma.chat_conversations.update({
@@ -9185,7 +9209,7 @@ REGLAS:
   });
 
   // POST /api/chat/:venue_id/conversations/:id/admin-reply - Send manual admin reply
-  app.post('/api/chat/:venue_id/conversations/:id/admin-reply', isAuthenticated, async (req, res) => {
+  app.post('/api/chat/:venue_id/conversations/:id/admin-reply', isAuthenticated, requireVenueAccess, async (req, res) => {
     try {
       const { venue_id, id } = req.params;
       const { text } = req.body;
@@ -9257,7 +9281,7 @@ REGLAS:
   });
 
   // DELETE /api/chat/:venue_id/conversations/:id - Delete a conversation and its messages
-  app.delete('/api/chat/:venue_id/conversations/:id', isAuthenticated, async (req, res) => {
+  app.delete('/api/chat/:venue_id/conversations/:id', isAuthenticated, requireVenueAccess, async (req, res) => {
     try {
       const { venue_id, id } = req.params;
       const conversation = await prisma.chat_conversations.findUnique({ where: { id } });
@@ -9274,19 +9298,6 @@ REGLAS:
   });
 
   // Webhook verification for Meta/WhatsApp
-  app.get('/api/webhook/:venue_id', (req, res) => {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
-    
-    // For now, accept any verification with the venue_id as token
-    if (mode === 'subscribe' && token) {
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
-  });
-
   // ==================== Inventory API ====================
 
   // --- Inventory Categories ---
