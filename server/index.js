@@ -173,7 +173,16 @@ app.use(cors({
   origin: true,
   credentials: true
 }));
-app.use(express.json());
+app.use(express.json({
+  // Keep the raw body for the Meta webhooks: their X-Hub-Signature-256 is an
+  // HMAC over the exact bytes Meta sent, so re-serializing the parsed object
+  // would not reproduce it.
+  verify: (req, _res, buf) => {
+    if (req.originalUrl && req.originalUrl.startsWith('/api/webhook/')) {
+      req.rawBody = buf;
+    }
+  }
+}));
 
 // Seed default message templates
 async function seedDefaultMessageTemplates() {
@@ -7140,6 +7149,59 @@ REGLAS:
 
   // ==================== Meta WhatsApp Cloud API Webhook ====================
 
+  // ==================== Meta Webhook Signature ====================
+
+  /**
+   * Verify the X-Hub-Signature-256 header Meta sends on every webhook POST.
+   *
+   * Meta signs the raw request body with HMAC-SHA256 using the app secret. Without
+   * this check anyone who knows the callback URL can post fake messages: they would
+   * create conversations, trigger AI replies and burn LLM credits.
+   *
+   * If the secret is not configured the request is allowed through and a warning is
+   * logged, so that deploying this does not silently break a working webhook. Set
+   * the env var to actually enforce it.
+   *
+   * @param {string} secretEnvVar - Name of the env var holding the app secret
+   * @param {string} logPrefix - Prefix used in log lines
+   */
+  function verifyMetaSignature(secretEnvVar, logPrefix) {
+    return (req, res, next) => {
+      const secret = process.env[secretEnvVar];
+      if (!secret) {
+        console.warn(`${logPrefix} ${secretEnvVar} is not set — skipping signature check`);
+        return next();
+      }
+
+      const header = req.get('x-hub-signature-256');
+      if (!header || !header.startsWith('sha256=')) {
+        console.warn(`${logPrefix} Missing or malformed X-Hub-Signature-256`);
+        return res.sendStatus(403);
+      }
+
+      if (!req.rawBody) {
+        console.warn(`${logPrefix} No raw body captured, cannot verify signature`);
+        return res.sendStatus(403);
+      }
+
+      const crypto = require('crypto');
+      const expected = 'sha256=' + crypto
+        .createHmac('sha256', secret)
+        .update(req.rawBody)
+        .digest('hex');
+
+      // Constant-time comparison; timingSafeEqual throws on length mismatch.
+      const a = Buffer.from(header);
+      const b = Buffer.from(expected);
+      if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+        console.warn(`${logPrefix} Invalid signature`);
+        return res.sendStatus(403);
+      }
+
+      next();
+    };
+  }
+
   // GET /api/webhook/whatsapp — Meta verification challenge
   //
   // Same precedence as the Instagram webhook: the token saved per venue from the UI
@@ -7176,7 +7238,7 @@ REGLAS:
   });
 
   // POST /api/webhook/whatsapp — Incoming messages & status updates from Meta
-  app.post('/api/webhook/whatsapp', (req, res) => {
+  app.post('/api/webhook/whatsapp', verifyMetaSignature('META_APP_SECRET', '[meta-webhook]'), (req, res) => {
     // Respond 200 immediately — Meta retries if >20s
     res.sendStatus(200);
 
@@ -7428,7 +7490,7 @@ REGLAS:
   });
 
   // POST /api/webhook/instagram — Incoming Instagram DMs
-  app.post('/api/webhook/instagram', (req, res) => {
+  app.post('/api/webhook/instagram', verifyMetaSignature('META_IG_APP_SECRET', '[ig-webhook]'), (req, res) => {
     // Respond 200 immediately — Meta retries if >20s
     res.sendStatus(200);
 
