@@ -800,6 +800,9 @@ export async function revalidateAuth() {
   return await checkAuth()
 }
 
+// Views a user can choose to land on after login (Settings > Vista inicial).
+export const HOME_VIEWS = ['/next', '/availability', '/dashboard', '/analytics']
+
 // Navigation guard to protect routes
 router.beforeEach(async (to, from) => {
   // Allow public routes
@@ -812,6 +815,14 @@ router.beforeEach(async (to, from) => {
   
   if (!authStatus.authenticated) {
     return { path: '/pages/login' }
+  }
+
+  // "/" (where login lands) opens the start view the user chose in Settings.
+  if (to.redirectedFrom?.path === '/') {
+    const home = authStatus.user?.preferences?.home_view
+    if (HOME_VIEWS.includes(home) && home !== to.path) {
+      return { path: home }
+    }
   }
   
   // Super admins bypass all checks

@@ -8541,6 +8541,34 @@ REGLAS:
    * keep it as a pending estimate tied to the agent, and send the agent the Bold
    * link to forward. The booking itself is created when the client pays.
    */
+  /**
+   * The agent's client from the tool arguments. Models often put the client in the
+   * notes ("Cliente: Laura Gómez, WhatsApp 3009998877") instead of the fields, so
+   * the notes are the fallback.
+   */
+  function agentClientFromArgs(args) {
+    const notes = String(args.notes || '');
+    let phone = cleanPhone(args.customer_phone || args.client_phone || args.phone);
+    let phoneMatch = null;
+    if (!phone) {
+      phoneMatch = notes.match(/(?:\+?57[\s-]?)?3\d{2}[\s-]?\d{3}[\s-]?\d{4}/);
+      phone = phoneMatch ? cleanPhone(phoneMatch[0]) : null;
+    }
+    let name = String(args.customer_name || args.client_name || args.name || '').trim();
+    if (!name && notes) {
+      // "Cliente: Laura Gómez", or the capitalized words right before the phone.
+      const labeled = notes.match(/[Cc]liente\s*:?\s*([A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚÑáéíóúñ]+){0,3})/);
+      if (labeled) {
+        name = labeled[1];
+      } else if (phoneMatch) {
+        const before = notes.slice(0, phoneMatch.index).split(/[,;:\n]/).pop();
+        const words = before.trim().split(/\s+/).filter(w => /^[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+$/.test(w));
+        name = words.slice(-3).join(' ');
+      }
+    }
+    return { name: name || null, phone: phone || null };
+  }
+
   /** "sábado, 3 de octubre" for a booking date stored as a UTC day. */
   function formatBookingDate(value) {
     if (!value) return '';
@@ -8586,13 +8614,12 @@ REGLAS:
       return fail('La cabaña no tiene cobro en línea (Bold) activo. Dile que el dueño debe activarlo.');
     }
 
-    const clientPhone = cleanPhone(args.client_phone);
-    const clientName = String(args.client_name || '').trim() || null;
+    const { name: clientName, phone: clientPhone } = agentClientFromArgs(args);
     // The model tends to drop details given a few messages earlier; without them
     // the booking and contract end up under the agent, so that must be explicit.
     if (!clientName && !clientPhone && args.without_client_data !== true) {
       return fail('Faltan los datos del cliente. Si el comisionista ya dio el nombre o el WhatsApp del cliente en la conversación, '
-        + 'vuelve a llamar create_agent_charge incluyendo client_name y client_phone. Si no los tiene, pregúntale; '
+        + 'vuelve a llamar create_agent_charge incluyendo customer_name y customer_phone (no en notes). Si no los tiene, pregúntale; '
         + 'solo si dice que no los dará, llama con without_client_data: true.');
     }
     const data = {
@@ -8860,6 +8887,120 @@ REGLAS:
   }
 
   /**
+   * Let the venue's team know a booking was confirmed online (paid, with contract)
+   * so someone follows up in person: an in-app notification for every user of the
+   * organization, plus WhatsApp and email when the venue turned them on.
+   */
+  async function notifyBookingConfirmed(accommodationId, { paidAmount, balance, contractUrl, manual = false } = {}) {
+    const acc = await prisma.accommodations.findUnique({ where: { id: accommodationId } });
+    if (!acc?.venue) return;
+    const [venue, plan, customer, agent] = await Promise.all([
+      prisma.venues.findUnique({ where: { id: acc.venue } }),
+      acc.plan_id ? prisma.venue_plans.findUnique({ where: { id: acc.plan_id }, select: { name: true } }) : null,
+      acc.customer ? prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true, whatsapp: true } }) : null,
+      acc.commission_agent_id ? prisma.commission_agents.findUnique({ where: { id: acc.commission_agent_id }, select: { name: true } }) : null
+    ]);
+    if (!venue) return;
+
+    const adults = acc.adults || 0;
+    const children = acc.children || 0;
+    const total = adults + children;
+    const people = `${total} persona${total === 1 ? '' : 's'}`
+      + (children ? ` (${adults} adulto${adults === 1 ? '' : 's'} y ${children} niño${children === 1 ? '' : 's'})` : '');
+    const date = formatBookingDate(acc.date);
+    const summary = `Se registró un alquiler para el ${date} en ${venue.name}: ${people}.`;
+    const details = [
+      plan?.name ? `Plan: ${plan.name}` : null,
+      customer?.fullname ? `Cliente: ${customer.fullname}${customer.whatsapp ? ` (${customer.whatsapp})` : ''}` : null,
+      agent?.name ? `Vendido por: ${agent.name}` : null,
+      paidAmount ? `Pagado: ${money(paidAmount)}${balance > 0 ? ` · Saldo pendiente: ${money(balance)}` : ''}` : null,
+      contractUrl ? 'Contrato generado, pendiente de firma' : null,
+      manual ? 'Pago conciliado a mano' : null
+    ].filter(Boolean);
+    const link = `/business/accommodations/${acc.id}`;
+
+    // The commission agent who sold it gets their own version (below), even when
+    // they are also a member of the organization.
+    const seller = acc.commission_agent_id
+      ? await prisma.commission_agents.findUnique({ where: { id: acc.commission_agent_id }, select: { user_id: true } })
+      : null;
+
+    // In-app: always, to everyone in the organization.
+    if (venue.organization) {
+      const members = (await prisma.user_organizations.findMany({
+        where: { organization_id: venue.organization },
+        select: { user_id: true }
+      })).filter(m => m.user_id !== seller?.user_id);
+      if (members.length) {
+        await prisma.notifications.createMany({
+          data: members.map(m => ({
+            user_id: m.user_id,
+            organization_id: venue.organization,
+            venue_id: venue.id,
+            type: 'booking_confirmed',
+            title: `Nuevo alquiler: ${date}`,
+            body: `${summary} ${details.join(' · ')}`.trim(),
+            link
+          }))
+        });
+      }
+    }
+
+    // The commission agent who sold it hears too, with their commission. Unlike
+    // the chat confirmation, this one has no 24-hour window.
+    if (seller?.user_id) {
+      const commission = await prisma.commission_payments.findFirst({
+        where: { agent_id: acc.commission_agent_id, accommodation_id: acc.id }
+      });
+      const client = customer?.fullname ? `Tu cliente ${customer.fullname}` : 'Tu cliente';
+      await prisma.notifications.create({
+        data: {
+          user_id: seller.user_id,
+          organization_id: venue.organization || null,
+          venue_id: venue.id,
+          type: 'agent_booking_confirmed',
+          title: `Alquiler confirmado: ${date}`,
+          body: `${client} confirmó su alquiler para el ${date} en ${venue.name}: ${people}.`
+            + (commission
+              ? ` Tu comisión: ${money(commission.calculated_amount)} (${commission.status === 'paid' ? 'pagada' : 'pendiente de pago'}).`
+              : ''),
+          link
+        }
+      });
+    }
+
+    const appUrl = `${appBaseUrl()}/#${link}`;
+    const text = `🎉 *Nuevo alquiler confirmado - ${venue.name}*\n\n${summary}\n${details.map(d => `• ${d}`).join('\n')}\n\nVer el alquiler: ${appUrl}`;
+
+    if (venue.notify_booking_whatsapp) {
+      const phone = cleanPhone(venue.notify_booking_whatsapp_phone) || cleanPhone(venue.whatsapp ? String(venue.whatsapp) : null);
+      if (!phone) {
+        console.warn('[booking-notify] WhatsApp on but no phone', { venue: venue.id });
+      } else if (!whatsappClient.isAvailable()) {
+        console.warn('[booking-notify] System WhatsApp unavailable', { venue: venue.id });
+      } else {
+        await whatsappClient.sendSystemMessage(phone, text)
+          .catch(err => console.error('[booking-notify] WhatsApp failed', { venue: venue.id, error: err.message }));
+      }
+    }
+
+    if (venue.notify_booking_email) {
+      const to = String(venue.notify_booking_emails || '').split(/[,;\s]+/).map(e => e.trim()).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+      if (to.length) {
+        const escape = (v) => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const html = `<p><strong>${escape(summary)}</strong></p><ul>${details.map(d => `<li>${escape(d)}</li>`).join('')}</ul>`
+          + `<p><a href="${escape(appUrl)}">Ver el alquiler en CabanIA</a></p>`;
+        const result = await require('./services/email').getEmailProvider()
+          .send({ to: to.join(', '), subject: `Nuevo alquiler confirmado: ${venue.name}, ${date}`, html });
+        if (!result?.success) console.error('[booking-notify] Email failed', { venue: venue.id, error: result?.error });
+      } else {
+        console.warn('[booking-notify] Email on but no valid address', { venue: venue.id });
+      }
+    }
+    console.log('[booking-notify] Sent', { accommodation: acc.id, whatsapp: venue.notify_booking_whatsapp, email: venue.notify_booking_email });
+  }
+
+  /**
    * Record a paid Bold link: convert the estimate into a booking, register the
    * payment as verified with its income, and confirm to the guest. Idempotent: the
    * first caller claims the link, so webhook retries and the reconciler are no-ops.
@@ -9064,6 +9205,12 @@ REGLAS:
       }
     }
 
+    if (result.accommodationId) {
+      await notifyBookingConfirmed(result.accommodationId, {
+        paidAmount: Number(link.amount), balance: result.balance, contractUrl, manual: !!state.actor
+      }).catch(err => console.error('[booking-notify] Failed', { accommodation: result.accommodationId, error: err.message }));
+    }
+
     if (link.conversation_id) {
       const conversation = await prisma.chat_conversations.findUnique({ where: { id: link.conversation_id } });
       if (conversation) {
@@ -9260,6 +9407,71 @@ REGLAS:
     console.log('[bold] Unpaid link notified', { link: link.bold_link_id, reason });
     await logBoldEvent(link.id, 'unpaid_notified', { detail: { reason } });
   }
+
+  // ==================== In-app notifications ====================
+
+  const currentUserId = (req) => String(req.user?.claims?.sub || req.user?.id || '');
+
+  // GET /api/notifications — the signed-in user's latest notifications and unread count
+  app.get('/api/notifications', isAuthenticated, async (req, res) => {
+    try {
+      const userId = currentUserId(req);
+      const [items, unread] = await Promise.all([
+        prisma.notifications.findMany({
+          where: { user_id: userId },
+          orderBy: { created_at: 'desc' },
+          take: Math.min(Number(req.query.limit) || 20, 100)
+        }),
+        prisma.notifications.count({ where: { user_id: userId, read_at: null } })
+      ]);
+      res.json({ items, unread });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/notifications/read-all', isAuthenticated, async (req, res) => {
+    try {
+      await prisma.notifications.updateMany({ where: { user_id: currentUserId(req), read_at: null }, data: { read_at: new Date() } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/notifications/:id/read', isAuthenticated, async (req, res) => {
+    try {
+      if (!UUID_PATTERN.test(req.params.id)) return res.status(404).json({ error: 'Notificación no encontrada' });
+      await prisma.notifications.updateMany({
+        where: { id: req.params.id, user_id: currentUserId(req), read_at: null },
+        data: { read_at: new Date() }
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PUT /api/auth/preferences — the signed-in user's own preferences (e.g. the view after login)
+  const HOME_VIEWS = ['/next', '/availability', '/dashboard', '/analytics'];
+  app.put('/api/auth/preferences', isAuthenticated, async (req, res) => {
+    try {
+      const userId = currentUserId(req);
+      const user = await prisma.users.findUnique({ where: { id: userId }, select: { preferences: true } });
+      if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+      const updates = {};
+      if ('home_view' in (req.body || {})) {
+        const view = req.body.home_view;
+        if (view !== null && !HOME_VIEWS.includes(view)) return res.status(400).json({ error: 'Vista inicial no válida' });
+        updates.home_view = view;
+      }
+      const preferences = { ...(user.preferences || {}), ...updates };
+      await prisma.users.update({ where: { id: userId }, data: { preferences } });
+      res.json({ preferences });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   // ==================== Bold payments: monitor and manual reconciliation ====================
 
@@ -10426,7 +10638,8 @@ REGLAS:
     // Sent as is, the guest gets nothing and the flow stalls: ask once more, then
     // fall back to a message built from what the tools returned.
     const visibleText = (text) => (text || '').replace(/<!--[\s\S]*?-->/g, '').trim();
-    if (!visibleText(llmResponse.content) && !(llmResponse.tool_calls?.length)) {
+    // Also when the tool rounds ran out with a call still pending: nothing to send.
+    if (!visibleText(llmResponse.content)) {
       console.warn('[chat] Empty model reply, retrying', { conversation: conversation.id, tools: llmResponse.tools_used || [] });
       const toolsUsedSoFar = llmResponse.tools_used || [];
       try {
