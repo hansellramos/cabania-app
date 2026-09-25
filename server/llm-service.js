@@ -106,7 +106,7 @@ async function callLLM(provider, messages, options = {}) {
 
 async function callOpenAICompatibleAPI(apiKey, baseUrl, model, messages, options = {}) {
   const startTime = Date.now();
-  const { maxTokens = 1024, temperature = 0.7, tools } = options;
+  const { maxTokens = 1024, temperature = 0.7, tools, forceTool } = options;
   
   console.log(`[llm-service] OpenAI-compatible API call starting: model=${model}, messages=${messages.length}, maxTokens=${maxTokens}`);
   
@@ -119,7 +119,8 @@ async function callOpenAICompatibleAPI(apiKey, baseUrl, model, messages, options
   
   if (tools && tools.length > 0) {
     body.tools = tools;
-    body.tool_choice = 'auto';
+    // forceTool: the model must call that tool now (e.g. it claimed an action it never took).
+    body.tool_choice = forceTool ? { type: 'function', function: { name: forceTool } } : 'auto';
   } else if (messages.some(m => m.role === 'tool' || (Array.isArray(m.tool_calls) && m.tool_calls.length))) {
     // Post-tool turn: the history contains tool_calls / 'tool' messages but the
     // caller no longer passes `tools`. Strict providers (e.g. Groq) then fail
@@ -163,7 +164,7 @@ async function callOpenAICompatibleAPI(apiKey, baseUrl, model, messages, options
 
 async function callAnthropicAPI(apiKey, model, messages, options = {}) {
   const startTime = Date.now();
-  const { maxTokens = 1024, temperature = 0.7, tools } = options;
+  const { maxTokens = 1024, temperature = 0.7, tools, forceTool } = options;
   
   console.log(`[llm-service] Anthropic API call starting: model=${model}, messages=${messages.length}, maxTokens=${maxTokens}`);
   
@@ -209,6 +210,7 @@ async function callAnthropicAPI(apiKey, model, messages, options = {}) {
       description: t.function.description,
       input_schema: t.function.parameters
     }));
+    if (forceTool) body.tool_choice = { type: 'tool', name: forceTool };
   }
   
   const response = await fetch('https://api.anthropic.com/v1/messages', {
