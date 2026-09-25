@@ -61,6 +61,12 @@
 
             <!-- Desconectado o con error -->
             <div v-else>
+              <CAlert v-if="config.status === 'error'" color="warning" class="small py-2 mb-3">
+                El acceso a
+                <strong>{{ config.username ? '@' + config.username : 'la cuenta de Instagram' }}</strong>
+                venció o fue revocado, y CabanIA ya no puede responder sus mensajes.
+                Vuelve a conectar la cuenta.
+              </CAlert>
               <p class="text-body-secondary small mb-3">
                 Conecta la cuenta de Instagram de esta cabaña para que CabanIA responda automáticamente
                 los mensajes directos de tus clientes. Necesitas una cuenta profesional de Instagram

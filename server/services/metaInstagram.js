@@ -182,7 +182,10 @@ async function refreshLongLivedToken(token) {
   const res = await fetch(`https://graph.instagram.com/refresh_access_token?${params.toString()}`);
   const body = await res.json();
   if (!res.ok || !body.access_token) {
-    throw new Error(`IG token refresh ${res.status}: ${JSON.stringify(body)}`);
+    const err = new Error(`IG token refresh ${res.status}: ${JSON.stringify(body)}`);
+    // 190 = invalid or expired token: it will never refresh, the account must reconnect.
+    err.code = body.error?.code;
+    throw err;
   }
   return { accessToken: body.access_token, expiresIn: Number(body.expires_in) || 0 };
 }
