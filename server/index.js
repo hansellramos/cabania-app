@@ -9277,8 +9277,10 @@ REGLAS:
       }
     }
 
+    // The team hears in the background (not awaited): a slow or blocked mail
+    // server must not hold the guest's or agent's chat confirmation.
     if (result.accommodationId) {
-      await notifyBookingConfirmed(result.accommodationId, {
+      notifyBookingConfirmed(result.accommodationId, {
         paidAmount: Number(link.amount), balance: result.balance, contractUrl, manual: !!state.actor
       }).catch(err => console.error('[booking-notify] Failed', { accommodation: result.accommodationId, error: err.message }));
     }
