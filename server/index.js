@@ -7979,6 +7979,15 @@ REGLAS:
         console.log('[instagram/refresh] Token refreshed', { venueId: conn.venue_id });
       } catch (err) {
         console.error('[instagram/refresh] Failed', { venueId: conn.venue_id, error: err.message });
+        // An invalidated token (password change, access revoked, expired) never
+        // recovers. Flag it so the UI asks to reconnect instead of showing
+        // "connected" while every reply fails.
+        if (err.code === 190) {
+          await prisma.instagram_connections.update({
+            where: { id: conn.id },
+            data: { status: 'error' }
+          }).catch(() => {});
+        }
       }
     }
   }
