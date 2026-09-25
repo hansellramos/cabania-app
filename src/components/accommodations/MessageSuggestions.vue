@@ -5,8 +5,8 @@
       <CIcon icon="cil-speech" />
     </CCardHeader>
     <CCardBody>
-      <div v-if="!customerWhatsapp" class="text-muted text-center py-3">
-        El cliente no tiene número de WhatsApp registrado
+      <div v-if="!customerChannel" class="text-muted text-center py-3">
+        El cliente no tiene WhatsApp ni Instagram registrado
       </div>
       <div v-else-if="loadingTemplates" class="text-center py-3">
         <CSpinner size="sm" color="primary" class="me-2" />
@@ -79,13 +79,13 @@
 
             <div class="d-flex flex-column flex-sm-row gap-2 align-items-start">
               <CButton
-                color="success"
+                :color="customerChannel.channel === 'instagram' ? 'danger' : 'success'"
                 size="sm"
                 class="flex-shrink-0"
                 @click="openWhatsApp(getState(template.id).message)"
               >
-                <CIcon icon="cib-whatsapp" class="me-1" />
-                Enviar por WhatsApp
+                <CIcon :icon="customerChannel.channel === 'instagram' ? 'cib-instagram' : 'cib-whatsapp'" class="me-1" />
+                Enviar por {{ customerChannel.label }}
               </CButton>
 
               <div class="d-flex flex-grow-1 gap-2 align-items-center w-100">
@@ -120,6 +120,7 @@
 import { ref, reactive, computed, watch } from 'vue'
 import { CIcon } from '@coreui/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
+import { contactChannel, copyText } from '@/utils/contactLinks'
 
 const settingsStore = useSettingsStore()
 const isDev = computed(() => settingsStore.developmentMode)
@@ -153,9 +154,8 @@ const categoryColors = {
 const categoryLabel = (category) => categoryLabels[category] || category
 const categoryColor = (category) => categoryColors[category] || 'secondary'
 
-const customerWhatsapp = computed(() => {
-  return props.accommodation?.customer_data?.whatsapp
-})
+// WhatsApp when the guest has a number; otherwise their Instagram DM.
+const customerChannel = computed(() => contactChannel(props.accommodation?.customer_data))
 
 function getState(templateId) {
   if (!templateStates[templateId]) {
@@ -248,15 +248,12 @@ function regenerateMessage(template) {
   generateMessage(template, state.additionalInstructions)
 }
 
-function openWhatsApp(text) {
-  const phone = `57${customerWhatsapp.value}`
-  const encodedText = encodeURIComponent(text)
-    .replace(/!/g, '%21')
-    .replace(/'/g, '%27')
-    .replace(/\(/g, '%28')
-    .replace(/\)/g, '%29')
-    .replace(/\*/g, '%2A')
-  window.open(`https://wa.me/${phone}?text=${encodedText}`, '_blank')
+async function openWhatsApp(text) {
+  const target = contactChannel(props.accommodation?.customer_data, text)
+  if (!target) return
+  // Instagram cannot prefill the message: copy it to paste in the DM.
+  if (target.channel === 'instagram') await copyText(text)
+  window.open(target.url, '_blank')
 }
 
 watch(

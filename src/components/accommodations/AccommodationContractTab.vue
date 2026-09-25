@@ -61,9 +61,9 @@
                 <div class="fs-4 fw-bold font-monospace">{{ contract.access_code }}</div>
               </div>
               <div class="d-flex gap-2 mt-3">
-                <CButton color="success" @click="shareWhatsApp">
-                  <CIcon name="cibWhatsapp" class="me-1" />
-                  Compartir por WhatsApp
+                <CButton :color="shareChannel === 'instagram' ? 'danger' : 'success'" @click="shareWhatsApp">
+                  <CIcon :name="shareChannel === 'instagram' ? 'cibInstagram' : 'cibWhatsapp'" class="me-1" />
+                  Compartir por {{ shareChannel === 'instagram' ? 'Instagram' : 'WhatsApp' }}
                 </CButton>
               </div>
               <div v-if="copyMsg" class="small text-success mt-2">{{ copyMsg }}</div>
@@ -237,6 +237,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import QRCode from 'qrcode'
 import { renderMarkdown } from '@/utils/contractMarkdown'
+import { contactChannel, copyText } from '@/utils/contactLinks'
 
 const props = defineProps({
   accommodationId: { type: String, required: true },
@@ -439,20 +440,24 @@ async function copyLink() {
   }
 }
 
-function shareWhatsApp() {
+// WhatsApp when the guest has a number; otherwise their Instagram DM.
+const shareChannel = computed(() => contactChannel(props.accommodation?.customer_data)?.channel || 'whatsapp')
+
+async function shareWhatsApp() {
   const customerName = props.accommodation?.customer_data?.fullname || 'cliente'
   const venueName = props.accommodation?.venue_data?.name || 'la cabaña'
   const message =
     `Hola ${customerName}, te comparto el contrato de tu reserva en ${venueName}.\n\n` +
     `Link: ${publicUrl.value}\n` +
     `Codigo de acceso: ${contract.value.access_code}`
-  const whatsapp = props.accommodation?.customer_data?.whatsapp || props.accommodation?.customer_data?.phone || ''
-  const digits = String(whatsapp).replace(/[^0-9]/g, '')
-  const cleanPhone = digits ? (digits.startsWith('57') ? digits : `57${digits}`) : ''
-  const url = cleanPhone
-    ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`
-    : `https://wa.me/?text=${encodeURIComponent(message)}`
-  window.open(url, '_blank')
+  const target = contactChannel(props.accommodation?.customer_data, message)
+  if (target?.channel === 'instagram') {
+    // Instagram cannot prefill the message: copy it to paste in the DM.
+    copyMsg.value = (await copyText(message))
+      ? 'Mensaje copiado: pégalo en el chat de Instagram.'
+      : 'Copia el link y el código de arriba para enviarlos por Instagram.'
+  }
+  window.open(target?.url || `https://wa.me/?text=${encodeURIComponent(message)}`, '_blank')
 }
 
 function formatDateTime(value) {

@@ -170,8 +170,13 @@
                 <CCol :xs="12">
                   <h6 class="text-muted">Contacto del Cliente</h6>
                   <p v-if="accommodation.customer_data.whatsapp">
-                    <a :href="'https://wa.me/57' + accommodation.customer_data.whatsapp" target="_blank" class="text-success text-decoration-none">
+                    <a :href="whatsappUrl(accommodation.customer_data.whatsapp)" target="_blank" class="text-success text-decoration-none">
                       <CIcon icon="cib-whatsapp" /> {{ accommodation.customer_data.whatsapp }}
+                    </a>
+                  </p>
+                  <p v-if="instagramDmUrl(accommodation.customer_data.instagram)">
+                    <a :href="instagramDmUrl(accommodation.customer_data.instagram)" target="_blank" class="text-decoration-none" style="color: #d6249f">
+                      <CIcon icon="cib-instagram" /> {{ accommodation.customer_data.instagram }}
                     </a>
                   </p>
                   <p v-if="accommodation.customer_data.user_data?.email">
@@ -744,6 +749,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import { CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
 import MessageSuggestions from '@/components/accommodations/MessageSuggestions.vue'
+import { whatsappUrl, instagramDmUrl } from '@/utils/contactLinks'
 import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
 import AccommodationContractTab from '@/components/accommodations/AccommodationContractTab.vue'
 import { deleteAccommodation } from '@/services/accommodationService'

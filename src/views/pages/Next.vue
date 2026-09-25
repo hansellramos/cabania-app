@@ -101,11 +101,19 @@
                       </router-link>
                       <a 
                         v-if="item.customer_data?.whatsapp" 
-                        :href="'https://wa.me/57' + item.customer_data.whatsapp" 
+                        :href="whatsappUrl(item.customer_data.whatsapp)" 
                         target="_blank" 
                         :class="['btn', 'btn-sm', colorMode === 'dark' ? 'btn-outline-success' : 'btn-success', colorMode !== 'dark' ? 'text-white' : '']"
                       >
                         <CIcon icon="cibWhatsapp" size="sm" class="me-1" />WhatsApp
+                      </a>
+                      <a 
+                        v-else-if="instagramDmUrl(item.customer_data?.instagram)" 
+                        :href="instagramDmUrl(item.customer_data.instagram)" 
+                        target="_blank" 
+                        :class="['btn', 'btn-sm', colorMode === 'dark' ? 'btn-outline-danger' : 'btn-danger', colorMode !== 'dark' ? 'text-white' : '']"
+                      >
+                        <CIcon icon="cibInstagram" size="sm" class="me-1" />Instagram
                       </a>
                     </div>
                   </div>
@@ -125,6 +133,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { CCard, CCardBody, CInputGroup, CFormInput, CButton, useColorModes } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
+import { whatsappUrl, instagramDmUrl } from '@/utils/contactLinks'
 import { useAuth } from '@/composables/useAuth'
 
 const { colorMode } = useColorModes('coreui-free-vue-admin-template-theme')
