@@ -15,7 +15,7 @@
     <CDropdownMenu class="pt-0" style="width: 360px; max-width: 90vw">
       <CDropdownHeader class="bg-body-secondary fw-semibold d-flex justify-content-between align-items-center">
         <span>Notificaciones</span>
-        <CButton v-if="unread > 0" color="link" size="sm" class="p-0" @click.stop="markAllRead">
+        <CButton v-if="unread > 0" color="link" size="sm" class="p-0 small text-decoration-none fw-normal" @click.stop="markAllRead">
           Marcar todo como leído
         </CButton>
       </CDropdownHeader>
@@ -23,16 +23,17 @@
         <CDropdownItem
           v-for="item in items"
           :key="item.id"
-          class="py-2 text-wrap"
-          :class="{ 'bg-primary-subtle': !item.read_at }"
-          style="cursor: pointer; white-space: normal"
+          class="notification-item py-2"
+          :class="{ unread: !item.read_at }"
           @click="openNotification(item)"
         >
-          <div class="d-flex justify-content-between gap-2">
-            <strong class="small">{{ item.title }}</strong>
-            <span class="small text-muted text-nowrap">{{ timeAgo(item.created_at) }}</span>
+          <div class="d-flex justify-content-between align-items-baseline gap-2">
+            <span class="small text-body-emphasis" :class="item.read_at ? 'fw-normal' : 'fw-semibold'">
+              <span v-if="!item.read_at" class="unread-dot" aria-label="Sin leer"></span>{{ item.title }}
+            </span>
+            <span class="small text-body-secondary text-nowrap">{{ timeAgo(item.created_at) }}</span>
           </div>
-          <div class="small text-body-secondary">{{ item.body }}</div>
+          <div class="small text-body-secondary notification-body">{{ item.body }}</div>
         </CDropdownItem>
         <div v-if="!items.length" class="text-center text-muted small py-4 px-3">
           No tienes notificaciones.
@@ -97,3 +98,38 @@ onMounted(() => {
 })
 onBeforeUnmount(() => clearInterval(timer))
 </script>
+
+<style scoped>
+.notification-item {
+  cursor: pointer;
+  white-space: normal;
+  border-bottom: 1px solid var(--cui-border-color-translucent);
+  border-left: 3px solid transparent;
+}
+.notification-item:last-child {
+  border-bottom: 0;
+}
+.notification-item.unread {
+  border-left-color: var(--cui-primary);
+  background-color: rgba(var(--cui-primary-rgb), 0.08);
+}
+.notification-item:hover,
+.notification-item:focus {
+  background-color: var(--cui-tertiary-bg);
+}
+.unread-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background-color: var(--cui-primary);
+  vertical-align: middle;
+}
+.notification-body {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+</style>
