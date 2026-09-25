@@ -316,7 +316,7 @@
     <div class="mb-3" v-if="form.is_public">
       <CFormLabel for="venueSlug">URL Pública (slug)</CFormLabel>
       <CInputGroup>
-        <CInputGroupText class="text-muted" style="font-size: 0.85rem;">cabaneroco.vercel.app/#/p/</CInputGroupText>
+        <CInputGroupText class="text-muted" style="font-size: 0.85rem;">{{ publicHost }}/#/p/</CInputGroupText>
         <CFormInput
           id="venueSlug"
           v-model="form.slug"
@@ -372,6 +372,9 @@ const mapInstance = ref(null)
 const markerInstance = ref(null)
 const originalLocation = ref({ latitude: null, longitude: null })
 const skipReverseGeocode = ref(false)
+
+// The domain the app is served from (cabania.app in production).
+const publicHost = window.location.host
 
 const publicVenueUrl = computed(() => {
   return `${window.location.origin}/#/p/${form.value.slug || ''}`
