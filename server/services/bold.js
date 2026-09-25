@@ -127,9 +127,14 @@ function validateWebhookSignature(rawBody, signature) {
 
 const PAYMENTS_API = 'https://api.online.payments.bold.co';
 
-/** The QR API uses its own keys, distinct from the payment button / links keys. */
+/**
+ * QR payments need their own keys (distinct from the payment button / links keys)
+ * and an explicit switch: Bold only lets a merchant create them in production once
+ * the product is certified. Until then BOLD_QR_ENABLED stays off and guests get the
+ * payment link, whose checkout offers QR Bre-B anyway.
+ */
 function isQrConfigured() {
-  return !!process.env.BOLD_API_IDENTITY_KEY;
+  return process.env.BOLD_QR_ENABLED === 'true' && !!process.env.BOLD_API_IDENTITY_KEY;
 }
 
 // Bold requires a device fingerprint. The QR is created server-side from a chat,
