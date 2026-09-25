@@ -395,6 +395,7 @@ FLUJO DE PAGO (después de crear cotización):
 7. NO confirmes el pago tú mismo — solo el venue o el sistema de pagos pueden confirmarlo
 8. Con un comprobante de un método que no es en línea, informa al cliente que fue recibido y será verificado pronto
 9. Nunca le muestres al cliente IDs internos (de cotización, método de pago, etc.)
+9b. Si send_payment_info dice que falta un contacto, pide al cliente su WhatsApp o su correo "para enviarte la confirmación y el contrato", guárdalo con save_contact_info y vuelve a llamar send_payment_info
 10. Si hay anticipo, explica que ese pago asegura la fecha y que el saldo se paga después según las condiciones de la cabaña
 11. No presiones con tiempos. Si el cliente pide pagar con QR o Bre-B, usa send_payment_info con format "qr"; si el QR se vence, ofrece enviar uno nuevo
 
@@ -610,6 +611,21 @@ const CHAT_TOOLS = [
           }
         },
         required: ['estimate_id', 'payment_method_id']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'save_contact_info',
+      description: 'Guarda el WhatsApp y/o el correo que el cliente compartió para enviarle la confirmación y el contrato. Úsala cuando send_payment_info indique que falta un contacto, apenas el cliente te dé el dato.',
+      parameters: {
+        type: 'object',
+        properties: {
+          whatsapp: { type: 'string', description: 'Número de WhatsApp con indicativo si lo dio (ej: 3001234567 o +57 300 123 4567)' },
+          email: { type: 'string', description: 'Correo electrónico' }
+        },
+        required: []
       }
     }
   },

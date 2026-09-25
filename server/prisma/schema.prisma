@@ -67,6 +67,7 @@ model contacts {
   fullname   String?  @db.VarChar
   whatsapp   Decimal? @db.Decimal
   instagram  String?  @db.VarChar
+  email      String?  @db.VarChar(255)
   city       String?  @db.VarChar
   state      String?  @db.VarChar
   country    String?  @db.VarChar
@@ -533,6 +534,10 @@ model estimates {
   customer_name    String?   @db.VarChar(255)
   contact_type     String    @db.VarChar(20)
   contact_value    String    @db.VarChar(100)
+  // Extra contact the guest shared in the chat (e.g. an Instagram guest, or a
+  // WhatsApp user whose number is hidden behind a username).
+  contact_phone    String?   @db.VarChar(50)
+  contact_email    String?   @db.VarChar(255)
   check_in         DateTime? @db.Date
   check_out        DateTime? @db.Date
   adults           Int?      @default(0)

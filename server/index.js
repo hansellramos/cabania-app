@@ -5196,16 +5196,49 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
    * @param {object} [db=prisma] - Prisma client or interactive transaction
    * @returns {Promise<object>} the accommodation
    */
+  /**
+   * Digits of a phone number, or null. A WhatsApp BSUID ("CO.123...") and Instagram
+   * ids are not phone numbers; copied numbers can carry invisible direction marks.
+   */
+  function cleanPhone(value) {
+    const text = String(value || '').replace(/[\u200e\u200f\u202a-\u202e]/g, '').trim();
+    if (!text || !/^\+?[\d\s().-]+$/.test(text)) return null;
+    const digits = text.replace(/\D/g, '');
+    return digits.length >= 8 && digits.length <= 15 ? digits : null;
+  }
+
+  /** An Instagram @username (not a numeric IGSID). */
+  function cleanInstagram(value) {
+    const text = String(value || '').trim();
+    return /^@?[A-Za-z0-9._]{1,30}$/.test(text) && !/^\d+$/.test(text.replace('@', ''))
+      ? (text.startsWith('@') ? text : `@${text}`)
+      : null;
+  }
+
+  /**
+   * Contact the booking can be reached at outside this chat, for the confirmation
+   * and the contract: a WhatsApp number, an Instagram @username or an email.
+   * Null when the guest only has an internal id.
+   */
+  function guestContact(estimate) {
+    const whatsapp = cleanPhone(estimate.contact_phone)
+      || (estimate.contact_type === 'whatsapp' ? cleanPhone(estimate.contact_value) : null);
+    const instagram = estimate.contact_type === 'instagram' ? cleanInstagram(estimate.contact_value) : null;
+    const email = estimate.contact_email || null;
+    return whatsapp || instagram || email ? { whatsapp, instagram, email } : null;
+  }
+
   async function convertEstimateToAccommodation(estimate, db = prisma) {
-    // A WhatsApp contact can arrive as a BSUID ("CO.123...") instead of a number.
-    const whatsappNumber = estimate.contact_type === 'whatsapp' ? parseFloat(estimate.contact_value) : NaN;
-    const whatsapp = Number.isFinite(whatsappNumber) ? whatsappNumber : null;
-    const instagram = estimate.contact_type === 'instagram' ? estimate.contact_value : null;
+    const contact = guestContact(estimate) || {};
+    const whatsapp = contact.whatsapp ? Number(contact.whatsapp) : null;
+    const instagram = contact.instagram || null;
+    const email = contact.email || null;
 
     // Only real conditions: an empty object in an OR matches every contact.
     const conditions = [];
     if (whatsapp !== null) conditions.push({ whatsapp });
     if (instagram) conditions.push({ instagram });
+    if (email) conditions.push({ email });
     if (estimate.customer_name) conditions.push({ fullname: estimate.customer_name });
 
     let customerId = null;
@@ -5213,9 +5246,17 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       const existingContact = await db.contacts.findFirst({ where: { OR: conditions } });
       if (existingContact) {
         customerId = existingContact.id;
+        // Fill in what the existing contact was missing.
+        const missing = {};
+        if (whatsapp !== null && !existingContact.whatsapp) missing.whatsapp = whatsapp;
+        if (instagram && !existingContact.instagram) missing.instagram = instagram;
+        if (email && !existingContact.email) missing.email = email;
+        if (Object.keys(missing).length) {
+          await db.contacts.update({ where: { id: existingContact.id }, data: missing });
+        }
       } else {
         const newContact = await db.contacts.create({
-          data: { fullname: estimate.customer_name, whatsapp, instagram }
+          data: { fullname: estimate.customer_name, whatsapp, instagram, email }
         });
         customerId = newContact.id;
       }
@@ -7677,6 +7718,24 @@ REGLAS:
           data: { updated_at: new Date() }
         });
 
+        // The IGSID is a number nobody can use to find the guest: look up the
+        // @username once per conversation.
+        if (!conversation.metadata?.instagram_username) {
+          try {
+            const profile = await metaInstagram.getUserProfile(senderId, conn.access_token);
+            if (profile.username) {
+              const metadata = { ...(conversation.metadata || {}), instagram_username: profile.username };
+              const name = conversation.name || profile.name || `@${profile.username}`;
+              await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { metadata, name } });
+              conversation.metadata = metadata;
+              conversation.name = name;
+            }
+          } catch (profileErr) {
+            console.warn('[ig-webhook] Could not read the Instagram username:', profileErr.message);
+          }
+        }
+        const igUsername = conversation.metadata?.instagram_username;
+
         // Process with AI
         const result = await processChat({
           venue_id,
@@ -7686,7 +7745,7 @@ REGLAS:
           media_url,
           media_type,
           contact_type: 'instagram',
-          contact_value: senderId
+          contact_value: igUsername ? `@${igUsername}` : senderId
         });
 
         // Send AI response via Instagram
@@ -8291,10 +8350,11 @@ REGLAS:
     const guestPhone = /^57\d{10}$/.test(digits) ? digits.slice(2) : null;
     const venueDigits = venue?.whatsapp ? String(venue.whatsapp).replace(/\D/g, '') : '';
     const venuePhone = /^(57)?\d{10}$/.test(venueDigits) ? venueDigits.slice(-10) : null;
+    const sharedPhone = cleanPhone(estimate.contact_phone);
     return {
       name: estimate.customer_name || 'Cliente',
-      email: process.env.BOLD_PAYER_EMAIL || 'hola@cabania.co',
-      phone: guestPhone || venuePhone || process.env.BOLD_PAYER_PHONE || '3000000000'
+      email: estimate.contact_email || process.env.BOLD_PAYER_EMAIL || 'hola@cabania.co',
+      phone: (sharedPhone && sharedPhone.slice(-10)) || guestPhone || venuePhone || process.env.BOLD_PAYER_PHONE || '3000000000'
     };
   }
 
@@ -8415,6 +8475,13 @@ REGLAS:
     }
     if (!estimate || estimate.venue_id !== venueId) {
       return reject('estimate_not_found', 'Cotización no encontrada. Usa el estimate_id que devolvió create_estimate.');
+    }
+
+    // A paid booking must be reachable outside this chat (confirmation, contract).
+    if (!guestContact(estimate)) {
+      return reject('missing_contact',
+        'Antes de generar el pago falta un contacto del cliente para enviarle la confirmación y el contrato. '
+        + 'Pídele su número de WhatsApp o su correo, guárdalo con save_contact_info y luego vuelve a llamar send_payment_info.');
     }
 
     const venue = await prisma.venues.findUnique({
@@ -9534,6 +9601,60 @@ REGLAS:
 
           llmResponse.tools_used = llmResponse.tools_used || [];
           llmResponse.tools_used.push('send_payment_info');
+        } else if (toolCall.function.name === 'save_contact_info') {
+          const args = JSON.parse(toolCall.function.arguments || '{}');
+          const phone = cleanPhone(args.whatsapp);
+          const email = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(args.email || '').trim())
+            ? String(args.email).trim().toLowerCase()
+            : null;
+          const pendingEstimate = await prisma.estimates.findFirst({
+            where: { conversation_id: conversation.id, venue_id, status: 'pending' },
+            orderBy: { created_at: 'desc' }
+          });
+
+          let contactResult;
+          if (!phone && !email) {
+            contactResult = { success: false, message: 'El número o el correo no son válidos. Pídeselo de nuevo al cliente.' };
+          } else if (!pendingEstimate) {
+            contactResult = { success: false, message: 'No hay una cotización pendiente en esta conversación. Crea la cotización primero.' };
+          } else {
+            await prisma.estimates.update({
+              where: { id: pendingEstimate.id },
+              data: {
+                ...(phone && { contact_phone: phone }),
+                ...(email && { contact_email: email }),
+                updated_at: new Date()
+              }
+            });
+            contactResult = {
+              success: true,
+              saved: { whatsapp: phone, email },
+              message: 'Contacto guardado. Si el cliente ya confirmó la reserva, llama ahora send_payment_info.'
+            };
+          }
+
+          const toolResultContent = JSON.stringify(contactResult);
+          if (chatModelConfig.provider === 'anthropic') {
+            llmMessages.push({
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: toolCall.id, name: toolCall.function.name, input: args }]
+            });
+            llmMessages.push({
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: toolCall.id, content: toolResultContent }]
+            });
+          } else {
+            llmMessages.push({ role: 'assistant', content: null, tool_calls: llmResponse.tool_calls });
+            llmMessages.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResultContent });
+          }
+
+          llmResponse = await llmService.callLLMByCode(chatProviderCode, llmMessages, {
+            maxTokens: 1024,
+            temperature: 0.7,
+            tools: llmService.CHAT_TOOLS
+          });
+          llmResponse.tools_used = llmResponse.tools_used || [];
+          llmResponse.tools_used.push('save_contact_info');
         } else if (toolCall.function.name === 'escalate_to_human') {
           const args = JSON.parse(toolCall.function.arguments);
 

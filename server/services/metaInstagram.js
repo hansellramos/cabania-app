@@ -63,6 +63,17 @@ async function sendImage(igUserId, token, recipientId, imageUrl) {
 }
 
 /**
+ * Public profile of someone who messaged the account: the IGSID alone is a number
+ * nobody can use to find the person.
+ * @param {string} igsid - Instagram-scoped id of the user
+ * @returns {Promise<{username: string|null, name: string|null}>}
+ */
+async function getUserProfile(igsid, token) {
+  const body = await graphRequest(`${GRAPH_API}/${igsid}?fields=username,name`, token);
+  return { username: body.username || null, name: body.name || null };
+}
+
+/**
  * Send a card with a button that opens a URL (generic template). Titles are capped
  * by Instagram: 80 characters for the title and subtitle, 20 for the button.
  */
@@ -232,6 +243,7 @@ module.exports = {
   sendText,
   sendImage,
   sendButton,
+  getUserProfile,
   subscribeApp,
   getSubscribedApps,
   OAUTH_SCOPES,
