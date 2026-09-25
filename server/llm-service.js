@@ -693,8 +693,9 @@ const AGENT_TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          client_name: { type: 'string', description: 'Nombre completo del cliente del comisionista (si lo dio).' },
-          client_phone: { type: 'string', description: 'WhatsApp del cliente (si lo dio). Sirve para el contrato.' },
+          client_name: { type: 'string', description: 'Nombre del cliente del comisionista. Pásalo siempre que el comisionista lo haya dado en cualquier mensaje de la conversación.' },
+          client_phone: { type: 'string', description: 'WhatsApp del cliente. Pásalo siempre que el comisionista lo haya dado en cualquier mensaje de la conversación.' },
+          without_client_data: { type: 'boolean', description: 'true solo si el comisionista dijo explícitamente que no tiene o no quiere dar los datos del cliente (la reserva queda a su nombre).' },
           plan_name: { type: 'string', description: 'Nombre del plan elegido.' },
           check_in: { type: 'string', description: 'Fecha de llegada, formato YYYY-MM-DD.' },
           check_out: { type: 'string', description: 'Fecha de salida, formato YYYY-MM-DD. En pasadía, igual a check_in.' },
@@ -720,10 +721,11 @@ function buildAgentPrompt(agent, venue) {
 ## MODO COMISIONISTA (esta conversación)
 Quien escribe es ${agent.name}, comisionista (aliado) de ${venue?.name || 'la cabaña'}. NO es un huésped: vende reservas a sus clientes y gana una comisión. Estas reglas reemplazan el flujo de pago de huéspedes.
 - Trátalo como colega: breve, directo y sin formalidades de venta.
-- Para reservar pide lo que falte: nombre del cliente, WhatsApp del cliente (recomendado: con él sale el contrato a nombre del cliente), plan, fecha, adultos y niños.
+- Apenas tengas fecha y número de personas, verifica la fecha con check_availability ANTES de pedir más datos: si está ocupada, díselo de una vez con las fechas alternativas.
+- Luego pide lo que falte: nombre y WhatsApp del cliente (con ellos la reserva y el contrato salen a nombre del cliente), plan y niños (0 si no dice).
 - Precio: el del plan, salvo que te dé un precio total acordado distinto. Monto a cobrar ahora: ${advance}, salvo que te indique otro monto.
-- Verifica la fecha con check_availability. Luego resume en una sola respuesta (cliente, plan, fecha, personas, total, monto a cobrar ahora) y pide confirmación una vez, terminando con [[botones: Sí, generar cobro | Cambiar algo]].
-- Cuando confirme, usa create_agent_charge. Con el comisionista NUNCA uses create_estimate, send_payment_info ni save_contact_info, y no le pidas sus propios datos: ya está identificado.
+- Con todo listo, resume en una sola respuesta (cliente, plan, fecha, personas, total, monto a cobrar ahora) y pide confirmación una vez, terminando con [[botones: Sí, generar cobro | Cambiar algo]].
+- Cuando confirme, usa create_agent_charge con TODOS los datos, incluidos client_name y client_phone si los dio en cualquier mensaje. Con el comisionista NUNCA uses create_estimate, send_payment_info ni save_contact_info, y no le pidas sus propios datos: ya está identificado.
 - El link le llega a él para que se lo reenvíe a su cliente. Cuando el cliente pague, el sistema le confirma aquí la reserva, su comisión y el link del contrato.`;
 }
 

@@ -8346,6 +8346,20 @@ REGLAS:
   // ==================== Bold payment links ====================
 
   const BOLD_OPEN_STATUSES = ['ACTIVE', 'PROCESSING'];
+  // Links younger than this are checked every minute instead of every 5.
+  const BOLD_RECENT_LINK_MINUTES = 12;
+
+  /** Append to a link's audit trail. Never throws: auditing must not break a payment. */
+  async function logBoldEvent(linkId, type, { source = 'system', fromStatus = null, toStatus = null, detail = null, actor = null } = {}) {
+    if (!linkId) return;
+    try {
+      await prisma.bold_payment_events.create({
+        data: { link_id: linkId, type, source, from_status: fromStatus, to_status: toStatus, detail, created_by: actor }
+      });
+    } catch (err) {
+      console.error('[bold] Could not log event', { linkId, type, error: err.message });
+    }
+  }
   const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const PUSH_SOURCES = ['instagram', 'cloud_api', 'baileys', 'whatsapp'];
 
@@ -8527,6 +8541,12 @@ REGLAS:
    * keep it as a pending estimate tied to the agent, and send the agent the Bold
    * link to forward. The booking itself is created when the client pays.
    */
+  /** "sábado, 3 de octubre" for a booking date stored as a UTC day. */
+  function formatBookingDate(value) {
+    if (!value) return '';
+    return new Date(value).toLocaleDateString('es-CO', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' });
+  }
+
   async function createAgentCharge({ venue, plans, conversation, agent, args }) {
     const fail = (message, extra = {}) => ({ success: false, message, ...extra });
     const planName = String(args.plan_name || '').toLowerCase();
@@ -8568,6 +8588,13 @@ REGLAS:
 
     const clientPhone = cleanPhone(args.client_phone);
     const clientName = String(args.client_name || '').trim() || null;
+    // The model tends to drop details given a few messages earlier; without them
+    // the booking and contract end up under the agent, so that must be explicit.
+    if (!clientName && !clientPhone && args.without_client_data !== true) {
+      return fail('Faltan los datos del cliente. Si el comisionista ya dio el nombre o el WhatsApp del cliente en la conversación, '
+        + 'vuelve a llamar create_agent_charge incluyendo client_name y client_phone. Si no los tiene, pregúntale; '
+        + 'solo si dice que no los dará, llama con without_client_data: true.');
+    }
     const data = {
       venue_id: venue.id,
       plan_id: plan.id,
@@ -8701,6 +8728,10 @@ REGLAS:
           created_by: 'system:chat'
         }
       });
+      await logBoldEvent(link.id, 'created', {
+        source: 'chat', toStatus: 'ACTIVE',
+        detail: { amount: advance, estimate_id: estimate.id, for_agent: forAgent, expires_at: expiresAt }
+      });
     }
 
     await prisma.estimates.update({
@@ -8751,13 +8782,27 @@ REGLAS:
     const buttonText = `Pagar ${money(advance)}`;
 
     if (forAgent) {
-      // Plain text: the agent copies or forwards it to the client, which a
-      // WhatsApp/Instagram button does not allow.
-      const client = estimate.customer_name ? ` para ${estimate.customer_name}` : '';
+      // Two messages: a note for the agent, then one addressed to the client that
+      // the agent forwards as is (a WhatsApp/Instagram button cannot be forwarded).
+      const plan = estimate.plan_id
+        ? await prisma.venue_plans.findUnique({ where: { id: estimate.plan_id }, select: { name: true } })
+        : null;
+      const people = [
+        estimate.adults ? `${estimate.adults} adulto${estimate.adults === 1 ? '' : 's'}` : null,
+        estimate.children ? `${estimate.children} niño${estimate.children === 1 ? '' : 's'}` : null
+      ].filter(Boolean).join(' y ');
+      const greeting = estimate.customer_name ? `¡Hola, ${String(estimate.customer_name).split(' ')[0]}! 👋` : '¡Hola! 👋';
       await notifyConversation(conversation,
-        `💳 Link de pago${client}: ${money(advance)}${balanceLine}\n\n`
-        + `Reenvíaselo a tu cliente. Puede pagar con Nequi, PSE, Bre-B o tarjeta.${merchant}\n\n${link.bold_url}\n\n`
-        + 'Apenas pague te confirmo aquí la reserva, tu comisión y el contrato. ✅');
+        `✅ Cobro listo: ${money(advance)}. Reenvíale a tu cliente el siguiente mensaje 👇\n`
+        + 'Apenas pague te confirmo aquí la reserva, tu comisión y el contrato.');
+      await notifyConversation(conversation,
+        `${greeting} Este es el link para ${balance > 0 ? 'pagar el anticipo de' : 'pagar'} tu reserva en ${venue?.name || 'la cabaña'}:\n\n`
+        + `📅 ${formatBookingDate(estimate.check_in)}\n`
+        + (plan?.name ? `🏡 ${plan.name}${people ? ` · ${people}` : ''}\n` : (people ? `👥 ${people}\n` : ''))
+        + `💰 Total: ${money(total)}`
+        + (balance > 0 ? `\n💳 A pagar ahora: ${money(advance)} · Saldo: ${money(balance)}` : '')
+        + `\n\nPaga aquí con Nequi, PSE, Bre-B o tarjeta:${merchant}\n${link.bold_url}\n\n`
+        + 'Apenas se confirme el pago tu fecha queda asegurada. ✅');
       return {
         success: true,
         total,
@@ -8831,6 +8876,11 @@ REGLAS:
       }
     });
     if (claimed.count === 0) return;
+    const source = state.source || 'poll';
+    await logBoldEvent(link.id, 'paid', {
+      source, fromStatus: link.status, toStatus: 'PAID', actor: state.actor || null,
+      detail: { transaction_id: state.transactionId || null, payment_method: state.paymentMethod || null, note: state.note || null }
+    });
 
     let result;
     try {
@@ -8858,11 +8908,13 @@ REGLAS:
             payment_method: state.paymentMethod ? `Bold - ${state.paymentMethod}` : 'Bold',
             payment_date: now,
             reference: state.transactionId || link.bold_link_id,
-            notes: `Pago confirmado automáticamente por Bold. Link: ${link.bold_link_id}`,
+            notes: state.actor
+              ? `Conciliado manualmente contra Bold. Link: ${link.bold_link_id}. ${state.note || ''}`.trim()
+              : `Pago confirmado automáticamente por Bold. Link: ${link.bold_link_id}`,
             verified: true,
             verified_at: now,
-            verified_by: 'system:bold',
-            created_by: 'system:bold',
+            verified_by: state.actor || 'system:bold',
+            created_by: state.actor || 'system:bold',
             type: 'accommodation'
           }
         });
@@ -8978,10 +9030,15 @@ REGLAS:
     } catch (err) {
       // The link stays PAID without payment_id, which flags it for manual review.
       console.error('[bold] Paid link could not be recorded', { link: link.bold_link_id, error: err.message });
+      await logBoldEvent(link.id, 'record_failed', { source, detail: { error: err.message } });
       return;
     }
 
     console.log('[bold] Payment recorded', { link: link.bold_link_id, ...result });
+    await logBoldEvent(link.id, 'recorded', {
+      source,
+      detail: { accommodation_id: result.accommodationId, payment_id: result.paymentId, balance: result.balance, commission: result.commission }
+    });
 
     // The contract is generated outside the payment transaction: a missing or
     // broken template must not undo a payment the guest already made.
@@ -9012,7 +9069,7 @@ REGLAS:
       if (conversation) {
         const venueName = result.venueName || 'la cabaña';
         if (result.forAgent) {
-          const date = result.date ? new Date(result.date).toLocaleDateString('es-CO', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' }) : '';
+          const date = formatBookingDate(result.date);
           const client = result.clientName ? `${result.clientName} pagó` : 'Tu cliente pagó';
           const commissionLine = result.commission && !result.commission.no_rules
             ? `\n💼 Tu comisión: ${money(result.commission.total)} (pendiente de pago).`
@@ -9021,7 +9078,14 @@ REGLAS:
             `✅ ¡${client} ${money(link.amount)}! La reserva en ${venueName}${date ? ` para el ${date}` : ''} quedó confirmada.`
             + (result.balance > 0 ? ` Saldo pendiente: ${money(result.balance)}.` : '')
             + commissionLine
-            + (contractUrl ? `\n\n📝 Reenvíale este contrato a tu cliente para que lo lea y lo firme: ${contractUrl}` : ''));
+            + (contractUrl ? '\n\nReenvíale a tu cliente el siguiente mensaje con el contrato 👇' : ''));
+          if (contractUrl) {
+            const greeting = result.clientName ? `¡Hola, ${String(result.clientName).split(' ')[0]}! 🎉` : '¡Hola! 🎉';
+            await notifyConversation(conversation,
+              `${greeting} Recibimos tu pago de ${money(link.amount)} y tu reserva en ${venueName}${date ? ` para el ${date}` : ''} quedó confirmada.`
+              + (result.balance > 0 ? ` Saldo pendiente: ${money(result.balance)}.` : '')
+              + `\n\n📝 Por favor lee y firma tu contrato de alquiler aquí:\n${contractUrl}\n\n¡Te esperamos!`);
+          }
           return;
         }
         const confirmation = result.balance > 0
@@ -9040,7 +9104,7 @@ REGLAS:
    * Ask Bold for the link's real state and act on it. A webhook body is never
    * trusted on its own: it only triggers this check.
    */
-  async function syncBoldLink(link, { checkLink = true } = {}) {
+  async function syncBoldLink(link, { checkLink = true, source = 'poll', actor = null } = {}) {
     if (link.qr_reference && link.qr_status === 'running' && bold.isQrConfigured()) {
       const qr = await bold.getQrPayment(link.qr_reference);
       if (qr.status === 'approved') {
@@ -9050,7 +9114,7 @@ REGLAS:
           console.error('[bold] Sandbox QR approval ignored in production', { reference: link.qr_reference });
           await prisma.bold_payment_links.update({ where: { id: link.id }, data: { qr_status: 'sandbox_ignored' } });
         } else {
-          await finalizeBoldPayment(link, { transactionId: qr.transactionId, paymentMethod: qr.paymentMethod, viaQr: true });
+          await finalizeBoldPayment(link, { transactionId: qr.transactionId, paymentMethod: qr.paymentMethod, viaQr: true, source, actor });
           return 'PAID';
         }
       } else if (qr.status && qr.status !== 'running') {
@@ -9069,15 +9133,24 @@ REGLAS:
       // would confirm a booking nobody paid for.
       console.error('[bold] Sandbox link payment ignored in production', { link: link.bold_link_id });
       await prisma.bold_payment_links.update({ where: { id: link.id }, data: { status: 'SANDBOX_IGNORED' } });
+      await logBoldEvent(link.id, 'sandbox_ignored', { source, fromStatus: link.status, toStatus: 'SANDBOX_IGNORED' });
       return 'SANDBOX_IGNORED';
     }
     if (state.status === 'PAID') {
-      await finalizeBoldPayment(link, state);
+      await finalizeBoldPayment(link, { ...state, source, actor });
     } else if (state.status && state.status !== link.status) {
       await prisma.bold_payment_links.update({
         where: { id: link.id },
         data: { status: state.status, updated_at: new Date() }
       });
+      await logBoldEvent(link.id, 'status_changed', {
+        source, fromStatus: link.status, toStatus: state.status, actor,
+        detail: { transaction_id: state.transactionId, payment_method: state.paymentMethod }
+      });
+      if (['EXPIRED', 'REJECTED', 'CANCELLED'].includes(state.status)) {
+        await notifyUnpaidBoldLink(link, state.status).catch(err =>
+          console.error('[bold] Could not notify unpaid link', { link: link.bold_link_id, error: err.message }));
+      }
     }
     return state.status;
   }
@@ -9123,11 +9196,244 @@ REGLAS:
         console.error('[bold] QR reconcile failed', { reference: link.qr_reference, error: err.message });
       }
     }
-    await prisma.bold_payment_links.updateMany({
+    const expired = await prisma.bold_payment_links.findMany({
       where: { qr_status: 'running', qr_expires_at: { lt: graceLimit } },
-      data: { qr_status: 'expired' }
+      take: 50
+    });
+    for (const link of expired) {
+      await prisma.bold_payment_links.update({ where: { id: link.id }, data: { qr_status: 'expired' } });
+      if (link.status !== 'PAID') {
+        await notifyUnpaidBoldLink(link, 'QR_EXPIRED').catch(err =>
+          console.error('[bold] Could not notify expired QR', { reference: link.qr_reference, error: err.message }));
+      }
+    }
+  }
+
+  /**
+   * Links paid within minutes of being created are the common case: check them
+   * every minute for a while, so the confirmation does not wait for the 5-minute pass.
+   */
+  async function reconcileRecentBoldLinks() {
+    if (!bold.isConfigured()) return;
+    const links = await prisma.bold_payment_links.findMany({
+      where: {
+        status: { in: BOLD_OPEN_STATUSES },
+        created_at: { gt: new Date(Date.now() - BOLD_RECENT_LINK_MINUTES * 60 * 1000) }
+      },
+      take: 50
+    });
+    for (const link of links) {
+      try {
+        await syncBoldLink(link);
+      } catch (err) {
+        console.error('[bold] Recent reconcile failed', { link: link.bold_link_id, error: err.message });
+      }
+    }
+  }
+
+  /**
+   * Tell the chat that a payment ended without being paid and offer a new one. The
+   * reply goes back through the model, which calls the payment tool again.
+   */
+  async function notifyUnpaidBoldLink(link, reason) {
+    if (!link.conversation_id) return;
+    const conversation = await prisma.chat_conversations.findUnique({ where: { id: link.conversation_id } });
+    if (!conversation) return;
+    const estimate = link.estimate_id ? await prisma.estimates.findUnique({ where: { id: link.estimate_id } }) : null;
+    if (estimate && estimate.status !== 'pending') return;
+    const forAgent = !!estimate?.commission_agent_id;
+    const who = forAgent ? (estimate.customer_name ? `de ${estimate.customer_name} ` : 'de tu cliente ') : '';
+
+    let text;
+    if (reason === 'QR_EXPIRED') {
+      text = `⏰ El QR ${who}para pagar ${money(link.amount)} venció (dura 10 minutos).`
+        + (link.status === 'ACTIVE' ? ` El link sigue activo: ${link.bold_url}` : '')
+        + '\n¿Quieres que genere un QR nuevo?';
+    } else if (reason === 'REJECTED') {
+      text = `⚠️ El pago ${who}de ${money(link.amount)} fue rechazado por el banco o la tarjeta. `
+        + '¿Quieres que genere un link nuevo para intentarlo otra vez, con el mismo u otro medio de pago?';
+    } else {
+      text = `⏰ El link ${who}para pagar ${money(link.amount)} ${reason === 'CANCELLED' ? 'fue cancelado' : 'venció'} sin pago. `
+        + '¿Quieres que genere uno nuevo?';
+    }
+    await notifyConversation(conversation, text);
+    console.log('[bold] Unpaid link notified', { link: link.bold_link_id, reason });
+    await logBoldEvent(link.id, 'unpaid_notified', { detail: { reason } });
+  }
+
+  // ==================== Bold payments: monitor and manual reconciliation ====================
+
+  /** Venue ids the user may see payments for (null = all). Own-only users get none. */
+  async function boldAccessibleVenueIds(req) {
+    if (hasOwnOnly(req.userPermissions, 'payments:view')) return [];
+    return getAccessibleVenueIds(req.userPermissions);
+  }
+
+  async function findAccessibleBoldLink(req) {
+    if (!UUID_PATTERN.test(req.params.id)) return null;
+    const link = await prisma.bold_payment_links.findUnique({ where: { id: req.params.id } });
+    if (!link) return null;
+    const venueIds = await boldAccessibleVenueIds(req);
+    const venueId = link.venue_id || (link.accommodation_id
+      ? (await prisma.accommodations.findUnique({ where: { id: link.accommodation_id }, select: { venue: true } }))?.venue
+      : null);
+    if (venueIds !== null && !venueIds.includes(venueId)) return null;
+    return link;
+  }
+
+  /** Links with what they belong to (venue, client, agent, booking), for the monitor. */
+  async function enrichBoldLinks(links) {
+    const ids = (key) => [...new Set(links.map(l => l[key]).filter(Boolean))];
+    const [venues, estimates, conversations] = await Promise.all([
+      prisma.venues.findMany({ where: { id: { in: ids('venue_id') } }, select: { id: true, name: true } }),
+      prisma.estimates.findMany({ where: { id: { in: ids('estimate_id') } } }),
+      prisma.chat_conversations.findMany({ where: { id: { in: ids('conversation_id') } }, select: { id: true, source: true, name: true, phone: true } })
+    ]);
+    const agentIds = [...new Set(estimates.map(e => e.commission_agent_id).filter(Boolean))];
+    const planIds = [...new Set(estimates.map(e => e.plan_id).filter(Boolean))];
+    const [agents, plans, lastEvents] = await Promise.all([
+      prisma.commission_agents.findMany({ where: { id: { in: agentIds } }, select: { id: true, name: true } }),
+      prisma.venue_plans.findMany({ where: { id: { in: planIds } }, select: { id: true, name: true } }),
+      prisma.bold_payment_events.findMany({
+        where: { link_id: { in: links.map(l => l.id) } },
+        orderBy: { created_at: 'desc' },
+        distinct: ['link_id']
+      })
+    ]);
+    const byId = (list) => Object.fromEntries(list.map(x => [x.id, x]));
+    const venueMap = byId(venues); const estimateMap = byId(estimates); const convMap = byId(conversations);
+    const agentMap = byId(agents); const planMap = byId(plans);
+    const eventMap = Object.fromEntries(lastEvents.map(e => [e.link_id, e]));
+    const now = new Date();
+    return links.map(l => {
+      const e = l.estimate_id ? estimateMap[l.estimate_id] : null;
+      const open = BOLD_OPEN_STATUSES.includes(l.status);
+      return {
+        ...l,
+        venue_name: venueMap[l.venue_id]?.name || null,
+        client_name: e?.customer_name || convMap[l.conversation_id]?.name || null,
+        check_in: e?.check_in || null,
+        plan_name: e?.plan_id ? planMap[e.plan_id]?.name || null : null,
+        agent_name: e?.commission_agent_id ? agentMap[e.commission_agent_id]?.name || null : null,
+        channel: convMap[l.conversation_id]?.source || null,
+        last_event: eventMap[l.id] || null,
+        // Paid in Bold but not recorded here: the case that needs a person.
+        needs_review: (l.status === 'PAID' && !l.payment_id) || (open && l.expiration_date && l.expiration_date < now)
+      };
     });
   }
+
+  // GET /api/bold/links — payment links with their state, newest first
+  app.get('/api/bold/links', isAuthenticated, requirePermission('payments:view'), async (req, res) => {
+    try {
+      const venueIds = await boldAccessibleVenueIds(req);
+      const where = {};
+      if (venueIds !== null) where.venue_id = { in: venueIds };
+      if (req.query.venue_id) {
+        if (venueIds !== null && !venueIds.includes(req.query.venue_id)) return res.json([]);
+        where.venue_id = req.query.venue_id;
+      }
+      if (req.query.status) where.status = { in: String(req.query.status).split(',') };
+      if (req.query.from || req.query.to) {
+        where.created_at = {};
+        if (req.query.from) where.created_at.gte = new Date(req.query.from);
+        if (req.query.to) where.created_at.lte = new Date(`${req.query.to}T23:59:59`);
+      }
+      const links = await prisma.bold_payment_links.findMany({
+        where,
+        orderBy: { created_at: 'desc' },
+        take: Math.min(Number(req.query.limit) || 200, 500),
+        omit: { webhook_payload: true }
+      });
+      res.json(await enrichBoldLinks(links));
+    } catch (error) {
+      console.error('[bold] List failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/bold/links/:id — one link with its full audit trail
+  app.get('/api/bold/links/:id', isAuthenticated, requirePermission('payments:view'), async (req, res) => {
+    try {
+      const link = await findAccessibleBoldLink(req);
+      if (!link) return res.status(404).json({ error: 'Pago no encontrado' });
+      const [enriched] = await enrichBoldLinks([link]);
+      const events = await prisma.bold_payment_events.findMany({ where: { link_id: link.id }, orderBy: { created_at: 'asc' } });
+      const actorIds = [...new Set(events.map(e => e.created_by).filter(id => id && UUID_PATTERN.test(id)))];
+      const users = actorIds.length
+        ? await prisma.users.findMany({ where: { id: { in: actorIds } }, select: { id: true, display_name: true, email: true } })
+        : [];
+      const userMap = Object.fromEntries(users.map(u => [u.id, u.display_name || u.email]));
+      const payment = link.payment_id ? await prisma.payments.findUnique({ where: { id: link.payment_id } }) : null;
+      res.json({
+        ...enriched,
+        payment,
+        events: events.map(e => ({ ...e, actor_name: e.created_by ? (userMap[e.created_by] || e.created_by) : null }))
+      });
+    } catch (error) {
+      console.error('[bold] Detail failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/bold/links/:id/sync — ask Bold for the current state now
+  app.post('/api/bold/links/:id/sync', isAuthenticated, requirePermission('payments:view'), async (req, res) => {
+    try {
+      const link = await findAccessibleBoldLink(req);
+      if (!link) return res.status(404).json({ error: 'Pago no encontrado' });
+      const actor = String(req.user.claims?.sub || req.user.id || '');
+      const state = await bold.getPaymentLink(link.bold_link_id);
+      await logBoldEvent(link.id, 'checked', {
+        source: 'manual', actor,
+        detail: { bold_status: state.status, transaction_id: state.transactionId, payment_method: state.paymentMethod }
+      });
+      const status = link.status === 'PAID' && link.payment_id
+        ? link.status
+        : await syncBoldLink(link, { source: 'manual', actor });
+      res.json({ status, bold: { status: state.status, transaction_id: state.transactionId, payment_method: state.paymentMethod } });
+    } catch (error) {
+      console.error('[bold] Manual sync failed', error);
+      res.status(502).json({ error: `No se pudo consultar a Bold: ${error.message}` });
+    }
+  });
+
+  // POST /api/bold/links/:id/mark-paid — manual reconciliation when Bold's panel shows
+  // the sale but the link never reached PAID here. Records the payment exactly like
+  // an automatic confirmation, with who did it and why.
+  app.post('/api/bold/links/:id/mark-paid', isAuthenticated, requirePermission('payments:verify'), async (req, res) => {
+    try {
+      if (hasOwnOnly(req.userPermissions, 'payments:verify')) {
+        return res.status(403).json({ error: 'No tiene permiso para conciliar pagos' });
+      }
+      const link = await findAccessibleBoldLink(req);
+      if (!link) return res.status(404).json({ error: 'Pago no encontrado' });
+      if (link.payment_id) return res.status(400).json({ error: 'Este pago ya está registrado' });
+      const transactionId = String(req.body?.transaction_id || '').trim();
+      const note = String(req.body?.note || '').trim();
+      if (!transactionId) return res.status(400).json({ error: 'Indica el ID de la transacción en Bold' });
+      if (note.length < 5) return res.status(400).json({ error: 'Explica en la nota por qué se concilia a mano' });
+
+      const actor = String(req.user.claims?.sub || req.user.id || '');
+      if (link.status === 'PAID') {
+        // Bold said PAID but recording failed: reopen the claim so it runs again.
+        await prisma.bold_payment_links.update({ where: { id: link.id }, data: { status: 'PROCESSING' } });
+        link.status = 'PROCESSING';
+      }
+      await finalizeBoldPayment(link, {
+        transactionId,
+        paymentMethod: String(req.body?.payment_method || '').trim() || 'MANUAL',
+        source: 'manual',
+        actor,
+        note
+      });
+      const updated = await prisma.bold_payment_links.findUnique({ where: { id: link.id } });
+      if (!updated.payment_id) return res.status(500).json({ error: 'No se pudo registrar el pago. Revisa el historial del pago.' });
+      res.json({ success: true, payment_id: updated.payment_id, accommodation_id: updated.accommodation_id });
+    } catch (error) {
+      console.error('[bold] Manual reconciliation failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   // POST /api/bold/webhook — Bold payment events (SALE_APPROVED, SALE_REJECTED, ...)
   app.post('/api/bold/webhook', (req, res) => {
@@ -9161,7 +9467,11 @@ REGLAS:
 
       if (link) {
         await prisma.bold_payment_links.update({ where: { id: link.id }, data: { webhook_payload: payload } });
-        await syncBoldLink(link);
+        await logBoldEvent(link.id, 'webhook_received', {
+          source: 'webhook',
+          detail: { type: payload.type || null, payment_id: data.payment_id || null, method: data.payment_method || null }
+        });
+        await syncBoldLink(link, { source: 'webhook' });
       } else {
         // Unknown shape or a sale that is not ours: check every open link.
         await reconcileBoldLinks();
@@ -13379,6 +13689,8 @@ Responde con JSON EXACTAMENTE en este formato:
       console.error('[bold] Reconcile error:', err.message)), 5 * 60 * 1000);
     setInterval(() => reconcileBoldQrs().catch(err =>
       console.error('[bold] QR reconcile error:', err.message)), 60 * 1000);
+    setInterval(() => reconcileRecentBoldLinks().catch(err =>
+      console.error('[bold] Recent reconcile error:', err.message)), 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });

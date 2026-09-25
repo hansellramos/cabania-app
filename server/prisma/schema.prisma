@@ -867,6 +867,22 @@ model commission_payments {
 // BOLD PAYMENT GATEWAY MODULE
 // ========================================
 
+// Audit trail of a Bold payment link: every status change, webhook, check and
+// manual action, with who or what caused it.
+model bold_payment_events {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  link_id    String   @db.Uuid
+  type       String   @db.VarChar(40)
+  source     String   @db.VarChar(20)
+  from_status String? @db.VarChar(30)
+  to_status  String?  @db.VarChar(30)
+  detail     Json?    @db.Json
+  created_by String?  @db.VarChar(255)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([link_id, created_at])
+}
+
 model bold_payment_links {
   id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   accommodation_id    String?   @db.Uuid
