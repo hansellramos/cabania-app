@@ -7713,6 +7713,9 @@ REGLAS:
             if (!userMessage) userMessage = '[Video recibido]';
           } else if (att.type === 'audio') {
             if (!userMessage) userMessage = '[Audio recibido]';
+          } else if (['template', 'fallback'].includes(att.type)) {
+            // Link/number previews Instagram sends as a separate message right
+            // after the text: not something the guest wrote, so no reply.
           } else {
             if (!userMessage) userMessage = `[${att.type || 'archivo'} recibido]`;
           }
@@ -8348,6 +8351,8 @@ REGLAS:
   const BOLD_OPEN_STATUSES = ['ACTIVE', 'PROCESSING'];
   // Links younger than this are checked every minute instead of every 5.
   const BOLD_RECENT_LINK_MINUTES = 12;
+  // Chat history the model sees when a commission agent writes.
+  const AGENT_HISTORY_HOURS = 12;
 
   /** Append to a link's audit trail. Never throws: auditing must not break a payment. */
   async function logBoldEvent(linkId, type, { source = 'system', fromStatus = null, toStatus = null, detail = null, actor = null } = {}) {
@@ -9840,8 +9845,12 @@ REGLAS:
       { role: 'system', content: systemPrompt }
     ];
 
-    // Add conversation history
+    // Add conversation history. A commission agent reuses the same chat for many
+    // bookings (and may have written as a guest before): older turns make the
+    // model mix up dates and clients, so only the recent ones count.
+    const historyFrom = commissionAgent ? Date.now() - AGENT_HISTORY_HOURS * 60 * 60 * 1000 : 0;
     for (const msg of conversation.messages) {
+      if (historyFrom && msg.created_at && new Date(msg.created_at).getTime() < historyFrom) continue;
       llmMessages.push({ role: msg.role, content: msg.content });
     }
 
@@ -9858,6 +9867,24 @@ REGLAS:
       temperature: 0.7,
       tools: chatTools
     });
+
+    // A commission agent confirmed and the model answered "link sent" without
+    // calling the tool (seen with grok): nothing was charged, so make it call it.
+    // Past tense only: "¿quieres que te genere el link?" must not trigger a charge.
+    const claimsCharge = (text) => /\b(link|cobro)\b/i.test(text || '')
+      && /(enviad[oa]|envié|generad[oa]|generé|ya (te )?lleg[óo]|listo el (link|cobro))/i.test(text || '');
+    const confirms = /^\s*(s[ií]|dale|listo|ok|okay|confirmo|confirmado|de una|hágale|hagale|genera|generar)(?=[\s,.!¡]|$)/i.test(userMessage || '');
+    if (commissionAgent && confirms && !llmResponse.tool_calls?.length && claimsCharge(llmResponse.content)) {
+      console.warn('[agent] Charge claimed without the tool, forcing it', { conversation: conversation.id });
+      llmMessages.push({ role: 'assistant', content: llmResponse.content });
+      llmMessages.push({
+        role: 'user',
+        content: '[Sistema] Todavía no se generó ningún cobro: no llamaste create_agent_charge. Llámala ahora con los datos del último resumen que el comisionista confirmó.'
+      });
+      llmResponse = await callChatLLM(llmMessages, {
+        maxTokens: 1024, temperature: 0.3, tools: true, forceTool: 'create_agent_charge'
+      });
+    }
 
     // Handle tool calls (function calling). Tools chain (e.g. get_payment_methods ->
     // send_payment_info): each handler asks the model again, and the tool calls in
