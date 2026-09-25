@@ -1,0 +1,14 @@
+# railway up no respeta .dockerignore, solo este archivo.
+# El Dockerfile hace npm ci por su cuenta, asi que node_modules no debe subirse.
+node_modules
+server/node_modules
+dist
+.git
+screenshots
+.pw
+attached_assets
+backup_*.sql
+.neon
+.env
+.env.*
+chrome
