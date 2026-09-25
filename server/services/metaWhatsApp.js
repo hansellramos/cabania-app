@@ -56,6 +56,30 @@ async function sendText(phoneNumberId, token, to, text) {
 }
 
 /**
+ * Send a text with a call-to-action button that opens a URL (e.g. "Pagar $300.000").
+ * WhatsApp limits display_text to 20 characters.
+ */
+async function sendCtaUrl(phoneNumberId, token, to, text, buttonText, url) {
+  return graphRequest(`${GRAPH_API}/${phoneNumberId}/messages`, token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      ...recipientFields(to),
+      type: 'interactive',
+      interactive: {
+        type: 'cta_url',
+        body: { text },
+        action: {
+          name: 'cta_url',
+          parameters: { display_text: String(buttonText).slice(0, 20), url }
+        }
+      }
+    })
+  });
+}
+
+/**
  * Send an image message with optional caption.
  */
 async function sendImage(phoneNumberId, token, to, imageUrl, caption) {
@@ -162,6 +186,7 @@ async function getSubscribedApps(wabaId, token) {
 
 module.exports = {
   sendText,
+  sendCtaUrl,
   sendImage,
   sendTemplate,
   downloadMedia,

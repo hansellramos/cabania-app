@@ -248,6 +248,9 @@ model venues {
   deposit_per_extra_person      Decimal?  @db.Decimal
   deposit_refund_hours          Int?
   deposit_policy                String?
+  // Percentage of the total charged online to confirm a booking (e.g. 50).
+  // Null or 100 = the full amount.
+  advance_percentage            Int?
   location_source               String?   @db.VarChar(20)
   brand_color_primary           String?   @db.VarChar(7)
   brand_color_secondary         String?   @db.VarChar(7)

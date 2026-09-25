@@ -840,7 +840,7 @@ async function startServer() {
         include: {
           messages: {
             orderBy: { created_at: 'asc' },
-            select: { role: true, content: true, created_at: true }
+            select: { role: true, content: true, created_at: true, media_url: true }
           }
         }
       });
@@ -849,11 +849,27 @@ async function startServer() {
         return res.status(404).json({ error: 'Conversation not found' });
       }
 
-      const messages = conversation.messages.map(m => ({
-        role: m.role,
-        content: m.content.replace(/\n<!-- \{.*?\} -->/g, ''),
-        created_at: m.created_at
-      }));
+      const messages = conversation.messages.map(m => {
+        // Payment messages carry the button / QR data in a hidden marker.
+        let payment = null;
+        const marker = m.content.match(/<!-- (\{"payment".*\}) -->/);
+        if (marker) {
+          try { payment = JSON.parse(marker[1]).payment || null; } catch { payment = null; }
+        }
+        let quickReplies = null;
+        const repliesMarker = m.content.match(/<!-- (\{"quick_replies".*?\}) -->/);
+        if (repliesMarker) {
+          try { quickReplies = JSON.parse(repliesMarker[1]).quick_replies || null; } catch { quickReplies = null; }
+        }
+        return {
+          role: m.role,
+          content: m.content.replace(/\n<!-- \{.*?\} -->/g, ''),
+          created_at: m.created_at,
+          media_url: m.media_url || null,
+          payment,
+          quick_replies: quickReplies
+        };
+      });
 
       const messageCount = messages.filter(m => m.role === 'user').length;
       const limitSetting = await prisma.app_settings.findUnique({
@@ -1017,9 +1033,12 @@ async function startServer() {
 
   app.post('/api/venues', isAuthenticated, requirePermission('venues:create'), async (req, res) => {
     try {
-      const venue = await prisma.venues.create({
-        data: req.body
-      });
+      const data = { ...req.body };
+      if (data.advance_percentage !== undefined) {
+        const pct = parseInt(data.advance_percentage, 10);
+        data.advance_percentage = pct > 0 && pct <= 100 ? pct : null;
+      }
+      const venue = await prisma.venues.create({ data });
       res.json(venue);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -1034,6 +1053,10 @@ async function startServer() {
       }
       if (data.deposit_refund_hours !== undefined) {
         data.deposit_refund_hours = data.deposit_refund_hours ? parseInt(data.deposit_refund_hours, 10) : null;
+      }
+      if (data.advance_percentage !== undefined) {
+        const pct = parseInt(data.advance_percentage, 10);
+        data.advance_percentage = pct > 0 && pct <= 100 ? pct : null;
       }
       if (data.commission_percentage !== undefined) {
         data.commission_percentage = data.commission_percentage ? parseFloat(data.commission_percentage) : null;
@@ -8300,13 +8323,76 @@ REGLAS:
   }
 
   /**
-   * Create (or reuse) a Bold payment link for an estimate and send it to the guest.
+   * Share of the total charged online to confirm a booking, from the venue's
+   * advance_percentage. Null, 0 or 100 mean the full amount.
+   */
+  function advanceFor(venue, total) {
+    const pct = Number(venue?.advance_percentage);
+    const partial = pct > 0 && pct < 100;
+    const advance = partial ? Math.round((total * pct) / 100) : total;
+    return { percentage: partial ? pct : 100, advance, balance: total - advance };
+  }
+
+  const money = (value) => `$${Math.round(Number(value) || 0).toLocaleString('es-CO')}`;
+
+  /**
+   * Send a text with a "pay" button. WhatsApp Cloud API and Instagram render a real
+   * button; other channels, or a failed button, fall back to the text with the URL.
+   */
+  async function notifyConversationButton(conversation, { text, title, subtitle, buttonText, url }) {
+    const fallback = `${text}\n\n${url}`;
+    const message = await prisma.chat_messages.create({
+      data: { conversation_id: conversation.id, role: 'assistant', content: fallback, status: 'pending' }
+    });
+    await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { updated_at: new Date() } });
+    try {
+      if (conversation.source === 'instagram' && conversation.phone) {
+        const conn = await prisma.instagram_connections.findUnique({ where: { venue_id: conversation.venue_id } });
+        if (!conn?.ig_user_id || !conn?.access_token) throw new Error('Instagram is not connected');
+        await metaInstagram.sendText(conn.ig_user_id, conn.access_token, conversation.phone, text);
+        try {
+          await metaInstagram.sendButton(conn.ig_user_id, conn.access_token, conversation.phone, { title, subtitle, buttonTitle: buttonText, url });
+        } catch (buttonErr) {
+          console.warn('[bold] Instagram button failed, sending the link as text:', buttonErr.message);
+          await metaInstagram.sendText(conn.ig_user_id, conn.access_token, conversation.phone, url);
+        }
+      } else if (PUSH_SOURCES.includes(conversation.source) && conversation.phone) {
+        const conn = await prisma.whatsapp_connections.findUnique({ where: { venue_id: conversation.venue_id } });
+        let sent = false;
+        if (conn?.channel === 'cloud_api' && conn.meta_phone_number_id && conn.meta_access_token) {
+          try {
+            await metaWhatsApp.sendCtaUrl(conn.meta_phone_number_id, conn.meta_access_token, conversation.phone, text, buttonText, url);
+            sent = true;
+          } catch (buttonErr) {
+            console.warn('[bold] WhatsApp button failed, sending the link as text:', buttonErr.message);
+          }
+        }
+        if (!sent) await sendWhatsAppReply(conversation.venue_id, conversation.phone, fallback);
+      }
+      await prisma.chat_messages.update({ where: { id: message.id }, data: { status: 'sent' } });
+    } catch (err) {
+      console.error('[bold] Could not send payment button', { conversationId: conversation.id, error: err.message });
+      await prisma.chat_messages.update({
+        where: { id: message.id },
+        data: { status: 'failed', error_details: err.message }
+      });
+    }
+  }
+
+  /**
+   * Create (or reuse) a Bold payment link for an estimate's advance and send it to
+   * the guest, choosing the presentation by channel and device:
+   * - WhatsApp / Instagram (almost always a phone): a pay button. The QR only when
+   *   the guest asks for it (format: 'qr'), since on the same phone it has to be
+   *   saved and loaded from the bank app.
+   * - Web on a computer: QR (scanned with the phone) plus the button.
+   * - Web on a phone: the button; QR, downloadable, only when asked.
    * Used by send_payment_info when the chosen method is Bold.
    * @returns {Promise<object>} tool result for the LLM
    */
-  async function sendBoldPaymentLink({ venueId, conversation, paymentMethod, estimateId, amount }) {
+  async function sendBoldPaymentLink({ venueId, conversation, paymentMethod, estimateId, format }) {
     const reject = (reason, message) => {
-      console.warn('[bold] Payment link not sent', { reason, venueId, estimateId, amount });
+      console.warn('[bold] Payment link not sent', { reason, venueId, estimateId });
       return { success: false, message };
     };
     if (!bold.isConfigured()) {
@@ -8330,8 +8416,16 @@ REGLAS:
     if (!estimate || estimate.venue_id !== venueId) {
       return reject('estimate_not_found', 'Cotización no encontrada. Usa el estimate_id que devolvió create_estimate.');
     }
-    const total = Math.round(Number(amount || estimate.agreed_price || estimate.calculated_price || 0));
-    if (!(total >= 1000)) {
+
+    const venue = await prisma.venues.findUnique({
+      where: { id: venueId },
+      select: { name: true, whatsapp: true, advance_percentage: true }
+    });
+    // The amount always comes from the estimate and the venue's advance rule, never
+    // from the model.
+    const total = Math.round(Number(estimate.agreed_price || estimate.calculated_price || 0));
+    const { percentage, advance, balance } = advanceFor(venue, total);
+    if (!(advance >= 1000)) {
       return reject('amount_too_low', 'El monto a pagar debe ser de al menos $1.000.');
     }
 
@@ -8339,7 +8433,7 @@ REGLAS:
     let link = await prisma.bold_payment_links.findFirst({
       where: {
         estimate_id: estimate.id,
-        amount: total,
+        amount: advance,
         status: { in: BOLD_OPEN_STATUSES },
         expiration_date: { gt: new Date() }
       },
@@ -8348,14 +8442,15 @@ REGLAS:
     if (!link) {
       const hours = Number(process.env.BOLD_LINK_EXPIRATION_HOURS) || 48;
       const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
-      const venue = await prisma.venues.findUnique({ where: { id: venueId }, select: { name: true } });
-      const description = `Reserva ${venue?.name || ''}`.trim();
-      const created = await bold.createPaymentLink({ amount: total, description, expiresAt });
+      const description = (percentage < 100
+        ? `Anticipo ${percentage}% reserva ${venue?.name || ''}`
+        : `Reserva ${venue?.name || ''}`).trim();
+      const created = await bold.createPaymentLink({ amount: advance, description, expiresAt });
       link = await prisma.bold_payment_links.create({
         data: {
           bold_link_id: created.linkId,
           bold_url: created.url,
-          amount: total,
+          amount: advance,
           description,
           status: 'ACTIVE',
           expiration_date: expiresAt,
@@ -8372,13 +8467,14 @@ REGLAS:
       data: { payment_status: 'link_sent', payment_method_id: paymentMethod.id, updated_at: new Date() }
     });
 
-    const pushed = !!(conversation && PUSH_SOURCES.includes(conversation.source) && conversation.phone);
+    const channel = conversation?.source === 'instagram' ? 'instagram'
+      : PUSH_SOURCES.includes(conversation?.source) ? 'whatsapp'
+        : 'web';
+    const device = channel === 'web' ? (conversation?.metadata?.device || 'mobile') : 'mobile';
+    const wantsQr = format === 'qr' || (channel === 'web' && device === 'desktop');
 
-    // On WhatsApp and Instagram also send a QR Bre-B, payable at once from any bank
-    // app. It lives 10 minutes, so the link stays as the fallback. On web chat the
-    // guest is on the same device and cannot scan it: link only.
-    let withQr = false;
-    if (pushed && bold.isQrConfigured()) {
+    let qrReady = false;
+    if (wantsQr && bold.isQrConfigured() && (channel === 'web' || conversation?.phone)) {
       try {
         if (link.qr_reference && link.qr_status === 'running') {
           // The previous QR may have been paid right before this request.
@@ -8389,42 +8485,73 @@ REGLAS:
         const qrStillValid = link.qr_image_url && link.qr_status === 'running'
           && link.qr_expires_at && link.qr_expires_at > new Date(Date.now() + 60 * 1000);
         if (!qrStillValid) {
-          const venue = await prisma.venues.findUnique({ where: { id: venueId }, select: { name: true, whatsapp: true } });
           link = await refreshBoldQr(link, {
-            total,
+            total: advance,
             description: link.description || 'Reserva',
             payer: boldQrPayer(estimate, conversation, venue)
           });
         }
-        withQr = true;
+        qrReady = true;
       } catch (qrErr) {
-        console.error('[bold] QR not generated, sending only the link:', qrErr);
+        console.error('[bold] QR not generated, sending only the button:', qrErr);
       }
     }
 
-    const amountLabel = `$${total.toLocaleString('es-CO')}`;
-    if (withQr) {
-      const minutes = Math.max(1, Math.round((new Date(link.qr_expires_at) - Date.now()) / 60000));
-      await notifyConversationImage(conversation, link.qr_image_url,
-        `💳 Pago de tu reserva: ${amountLabel}\n\n`
-        + `Escanea este QR desde la app de tu banco (vence en ${minutes} minutos).\n\n`
-        + `¿Prefieres pagar después o con otro método (Nequi, PSE, tarjeta)? Usa este link, válido por ${Number(process.env.BOLD_LINK_EXPIRATION_HOURS) || 48} horas:\n${link.bold_url}\n\n`
-        + 'Apenas se confirme el pago te avisamos por este chat y tu reserva queda confirmada. ✅');
-    } else if (pushed) {
-      await notifyConversation(conversation,
-        `💳 Pago de tu reserva\n\n💰 Monto: ${amountLabel}\n\n`
-        + `Paga aquí con QR, Nequi, PSE, Botón Bancolombia o tarjeta:\n${link.bold_url}\n\n`
-        + 'Apenas se confirme el pago te avisamos por este chat y tu reserva queda confirmada. ✅');
+    const headline = percentage < 100
+      ? `💳 Anticipo de tu reserva (${percentage}%): ${money(advance)}`
+      : `💳 Pago de tu reserva: ${money(advance)}`;
+    const balanceLine = balance > 0 ? `\nSaldo pendiente: ${money(balance)}` : '';
+    const merchant = process.env.BOLD_MERCHANT_NAME
+      ? ` El cobro aparece a nombre de ${process.env.BOLD_MERCHANT_NAME}.`
+      : '';
+    // Real urgency only: the date is secured by the payment. The QR's 10-minute
+    // life is a technical limit, not something to rush the guest with.
+    const closing = 'Apenas se confirme el pago te avisamos por aquí y tu fecha queda asegurada. ✅';
+    const buttonText = `Pagar ${money(advance)}`;
+
+    if (channel !== 'web') {
+      if (qrReady) {
+        await notifyConversationImage(conversation, link.qr_image_url,
+          `${headline}${balanceLine}\n\n`
+          + 'Para pagar con Bre-B: mantén presionada la imagen, guárdala y cárgala desde la app de tu banco '
+          + 'en la opción de pagar con QR. Si el QR se vence, pídeme uno nuevo.\n\n'
+          + `¿Prefieres Nequi, PSE o tarjeta? Paga aquí: ${link.bold_url}\n\n${closing}`);
+      } else {
+        await notifyConversationButton(conversation, {
+          text: `${headline}${balanceLine}\n\nPaga de forma segura con Bold: Nequi, PSE, Bre-B o tarjeta.${merchant}\n\n${closing}`,
+          title: headline.replace('💳 ', ''),
+          subtitle: 'Nequi, PSE, Bre-B o tarjeta',
+          buttonText,
+          url: link.bold_url
+        });
+      }
+    } else {
+      // Web chat: the widget renders the button (and the QR) from this marker.
+      const payment = {
+        amount: advance,
+        percentage,
+        balance,
+        url: link.bold_url,
+        button_text: buttonText,
+        merchant: process.env.BOLD_MERCHANT_NAME || null,
+        qr_image_url: qrReady ? link.qr_image_url : null,
+        // Cloudinary serves the file as a download with fl_attachment.
+        qr_download_url: qrReady ? link.qr_image_url.replace('/upload/', '/upload/fl_attachment:qr-pago/') : null,
+        qr_expires_at: qrReady ? link.qr_expires_at : null
+      };
+      await notifyConversation(conversation, `${headline}${balanceLine}\n<!-- ${JSON.stringify({ payment })} -->`);
     }
 
     return {
       success: true,
       method_name: paymentMethod.label,
-      amount: total,
-      payment_url: link.bold_url,
-      message: pushed
-        ? `Ya se le envió al cliente ${withQr ? 'un QR para pagar desde su banco y un link de respaldo' : 'el link de pago'} en un mensaje aparte: no lo repitas. Dile que al pagar recibirá la confirmación automática por este chat y que no necesita enviar comprobante.`
-        : `Incluye este link exacto en tu respuesta para que el cliente pague: ${link.bold_url} . Al pagar, la reserva se confirma automáticamente; no necesita enviar comprobante.`
+      total,
+      advance_percentage: percentage,
+      amount_to_pay: advance,
+      balance,
+      message: channel !== 'web'
+        ? `Ya se le envió al cliente ${qrReady ? 'el QR para pagar con Bre-B y el link' : 'el botón de pago'} en un mensaje aparte: no lo repitas ni incluyas el link. Dile en una frase que al pagar recibirá la confirmación aquí y que no necesita enviar comprobante.`
+        : 'El chat ya le muestra al cliente el botón de pago' + (qrReady ? ' y el QR' : '') + ': NO incluyas el link en tu respuesta. Dile en una frase que puede pagar ahí y que recibirá la confirmación en este chat, sin enviar comprobante.'
     };
   }
 
@@ -8507,7 +8634,17 @@ REGLAS:
             data: { payment_status: 'verified', payment_id: payment.id, updated_at: now }
           });
         }
-        return { venueName: venue?.name || null, accommodationId, paymentId: payment.id };
+        // What is still owed after this payment (advance bookings).
+        let balance = 0;
+        if (accommodation) {
+          const paid = await tx.payments.aggregate({
+            where: { accommodation: accommodationId, verified: true },
+            _sum: { amount: true }
+          });
+          const agreed = Number(accommodation.agreed_price ?? accommodation.calculated_price ?? 0);
+          balance = Math.max(0, agreed - Number(paid._sum.amount || 0));
+        }
+        return { venueName: venue?.name || null, accommodationId, paymentId: payment.id, balance };
       });
     } catch (err) {
       // The link stays PAID without payment_id, which flags it for manual review.
@@ -8520,10 +8657,12 @@ REGLAS:
     if (link.conversation_id) {
       const conversation = await prisma.chat_conversations.findUnique({ where: { id: link.conversation_id } });
       if (conversation) {
-        const amount = Number(link.amount).toLocaleString('es-CO');
-        await notifyConversation(conversation,
-          `✅ ¡Pago recibido! Confirmamos tu pago de $${amount}. `
-          + `Tu reserva en ${result.venueName || 'la cabaña'} quedó confirmada. ¡Te esperamos! 🎉`);
+        const venueName = result.venueName || 'la cabaña';
+        await notifyConversation(conversation, result.balance > 0
+          ? `✅ ¡Pago recibido! Recibimos tu anticipo de ${money(link.amount)} y tu reserva en ${venueName} `
+            + `quedó confirmada. Saldo pendiente: ${money(result.balance)}. ¡Te esperamos! 🎉`
+          : `✅ ¡Pago recibido! Confirmamos tu pago de ${money(link.amount)}. `
+            + `Tu reserva en ${venueName} quedó confirmada. ¡Te esperamos! 🎉`);
       }
     }
   }
@@ -8555,6 +8694,14 @@ REGLAS:
     if (!checkLink) return link.status;
 
     const state = await bold.getPaymentLink(link.bold_link_id);
+    if (state.status === 'PAID' && state.raw?.is_sandbox === true
+        && process.env.NODE_ENV === 'production' && process.env.BOLD_TEST_MODE !== 'true') {
+      // Same guard as for QRs: a sandbox link paid with test keys in production
+      // would confirm a booking nobody paid for.
+      console.error('[bold] Sandbox link payment ignored in production', { link: link.bold_link_id });
+      await prisma.bold_payment_links.update({ where: { id: link.id }, data: { status: 'SANDBOX_IGNORED' } });
+      return 'SANDBOX_IGNORED';
+    }
     if (state.status === 'PAID') {
       await finalizeBoldPayment(link, state);
     } else if (state.status && state.status !== link.status) {
@@ -9196,6 +9343,15 @@ REGLAS:
             adults: args.adults,
             children: args.children || 0,
             calculated_price: calculatedPrice,
+            ...(estimate.calculated_price && (() => {
+              const a = advanceFor(venue, Number(estimate.calculated_price));
+              return { advance_percentage: a.percentage, advance_amount: a.advance, balance_amount: a.balance };
+            })()),
+            // Asking once is enough: a reused estimate was already shown to the guest,
+            // so a "yes" there means go ahead with the payment.
+            next_step: existingEstimate
+              ? 'Esta cotización ya se le presentó al cliente. Si ya confirmó que quiere reservar, continúa ahora con get_payment_methods y send_payment_info, sin volver a pedir confirmación.'
+              : 'Resume la cotización (plan, fecha, personas, total y el anticipo si aplica) y pregunta si quiere reservar, terminando el mensaje con [[botones: Sí, reservar | Sigamos conversando]]. No envíes el pago hasta que el cliente confirme.',
             message: existingEstimate
               ? 'Ya existía una cotización pendiente con estos datos en esta conversación; se reutilizó (no se creó otra).'
               : `Cotización creada exitosamente. El cliente ${args.customer_name} recibirá confirmación pronto.`
@@ -9247,9 +9403,14 @@ REGLAS:
                 : m.instructions,
               online: m.method_type === 'bold'
             })),
-            message: paymentMethods.length > 0
-              ? `Hay ${paymentMethods.length} método(s) de pago disponible(s). Si el cliente ya eligió uno, `
-                + 'llama ahora send_payment_info con el id de ese método, sin volver a pedirle confirmación.'
+            // Once the guest said yes to the booking, every extra question is friction:
+            // with a single method there is nothing to choose.
+            message: paymentMethods.length === 1
+              ? 'Hay un solo método de pago. Si el cliente ya confirmó que quiere reservar, llama ahora '
+                + 'send_payment_info con este método: no le preguntes cuál prefiere ni si quiere recibirlo.'
+              : paymentMethods.length > 1
+              ? `Hay ${paymentMethods.length} métodos de pago. Si el cliente ya eligió uno, llama ahora `
+                + 'send_payment_info con ese método; si no, pregúntale solo cuál prefiere.'
               : 'No hay métodos de pago configurados. El cliente deberá coordinar el pago directamente con el venue.'
           };
 
@@ -9296,7 +9457,7 @@ REGLAS:
                 conversation,
                 paymentMethod,
                 estimateId: args.estimate_id,
-                amount: args.payment_amount
+                format: args.format
               });
             } catch (boldErr) {
               console.error('[bold] Could not create payment link:', boldErr);
@@ -9524,10 +9685,24 @@ REGLAS:
     // Track if we used a tool in this request (for rate limiting)
     const toolsUsed = llmResponse.tools_used || [];
 
+    // The model marks yes/no questions with [[botones: A | B]]. The web chat shows
+    // them as buttons; the tag is removed from the text on every channel.
+    let quickReplies = null;
+    const buttonsTag = (llmResponse.content || '').match(/\[\[\s*botones\s*:\s*([^\]]+)\]\]/i);
+    if (buttonsTag) {
+      llmResponse.content = llmResponse.content.replace(buttonsTag[0], '').trim();
+      const options = buttonsTag[1].split('|').map(o => o.trim()).filter(Boolean).slice(0, 3);
+      quickReplies = options.length >= 2 ? options.map(o => o.slice(0, 40)) : null;
+    }
+    llmResponse.quick_replies = quickReplies;
+
     // Save assistant response with tool metadata if applicable
-    const messageContent = toolsUsed.length > 0
+    let messageContent = toolsUsed.length > 0
       ? `${llmResponse.content}\n<!-- {"tool":"${toolsUsed[0]}"} -->`
       : llmResponse.content;
+    if (quickReplies) {
+      messageContent += `\n<!-- ${JSON.stringify({ quick_replies: quickReplies })} -->`;
+    }
 
     const assistantMessage = await prisma.chat_messages.create({
       data: {
@@ -9652,6 +9827,15 @@ REGLAS:
             data: updateData
           });
         }
+      }
+
+      // Web visitors report their device so payments can show a QR on a computer
+      // and a button on a phone.
+      const device = ['mobile', 'desktop'].includes(req.body.device) ? req.body.device : null;
+      if (device && conversation.metadata?.device !== device) {
+        const metadata = { ...(conversation.metadata || {}), device };
+        await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { metadata } });
+        conversation.metadata = metadata;
       }
 
       // Check free tier limit for public (non-authenticated) requests

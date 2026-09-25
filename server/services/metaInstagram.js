@@ -63,6 +63,33 @@ async function sendImage(igUserId, token, recipientId, imageUrl) {
 }
 
 /**
+ * Send a card with a button that opens a URL (generic template). Titles are capped
+ * by Instagram: 80 characters for the title and subtitle, 20 for the button.
+ */
+async function sendButton(igUserId, token, recipientId, { title, subtitle, buttonTitle, url }) {
+  return graphRequest(`${GRAPH_API}/${igUserId}/messages`, token, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      recipient: { id: recipientId },
+      message: {
+        attachment: {
+          type: 'template',
+          payload: {
+            template_type: 'generic',
+            elements: [{
+              title: String(title).slice(0, 80),
+              ...(subtitle && { subtitle: String(subtitle).slice(0, 80) }),
+              buttons: [{ type: 'web_url', url, title: String(buttonTitle).slice(0, 20) }]
+            }]
+          }
+        }
+      }
+    })
+  });
+}
+
+/**
  * Subscribe this app to the account's webhook messaging events.
  * Without this call Instagram does NOT forward DMs to the webhook, even if
  * the webhook is verified in Meta and the `messages` field is subscribed at
@@ -204,6 +231,7 @@ async function getAccount(token) {
 module.exports = {
   sendText,
   sendImage,
+  sendButton,
   subscribeApp,
   getSubscribedApps,
   OAUTH_SCOPES,

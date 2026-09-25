@@ -62,6 +62,19 @@
           </button>
         </div>
 
+        <!-- Yes/no question: the options replace the text box until one is picked -->
+        <div v-else-if="quickReplies" class="quick-replies">
+          <button
+            v-for="option in quickReplies"
+            :key="option"
+            :class="['quick-reply', isKeepTalking(option) ? 'quick-reply-secondary' : 'quick-reply-primary']"
+            :disabled="sending"
+            @click="onQuickReply(option)"
+          >
+            {{ option }}
+          </button>
+        </div>
+
         <ChatInput
           v-else
           ref="inputRef"
@@ -96,7 +109,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick, watch, computed } from 'vue'
 import ChatContactForm from './ChatContactForm.vue'
 import ChatMessages from './ChatMessages.vue'
 import ChatInput from './ChatInput.vue'
@@ -168,7 +181,7 @@ const restoreConversation = async (convId) => {
     }
     const data = await res.json()
     conversationId.value = data.id
-    messages.value = data.messages.map(m => ({ role: m.role, content: m.content }))
+    messages.value = mapServerMessages(data.messages)
     messageCount.value = data.message_count
     freeLimit.value = data.free_limit
     visitor.verified = data.is_verified
@@ -207,6 +220,7 @@ const onSendMessage = async (text) => {
       message: text,
       conversation_id: conversationId.value,
       source: 'web',
+      device: detectDevice(),
       contact_type: visitor.contactType,
       contact_value: visitor.contactValue,
       visitor_name: visitor.name,
@@ -239,6 +253,9 @@ const onSendMessage = async (text) => {
       let content = result.message || result.response || ''
       content = content.replace(/\n<!-- \{.*?\} -->/g, '')
       messages.value.push({ role: 'assistant', content })
+      // Messages sent by the system during this turn (e.g. the payment card) only
+      // exist on the server: reload to show them in order.
+      refreshFromServer()
 
       if (result.message_count !== undefined) {
         messageCount.value = result.message_count
@@ -292,6 +309,106 @@ watch(chatState, (newState) => {
     nextTick(() => onSendMessage(q))
   }
 })
+
+// --- Payment follow-up ---
+// On a phone the QR cannot be scanned from the same screen, so the server shows the
+// pay button there and the QR on a computer.
+const detectDevice = () => {
+  try {
+    const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches
+    return coarse || /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent) ? 'mobile' : 'desktop'
+  } catch {
+    return 'mobile'
+  }
+}
+
+const PAYMENT_CONFIRMED = /¡Pago recibido!/
+
+const mapServerMessages = (list) => {
+  const mapped = (list || []).map(m => ({
+    role: m.role,
+    content: m.content,
+    media_url: m.media_url || null,
+    payment: m.payment ? { ...m.payment } : null,
+    quick_replies: m.quick_replies || null
+  }))
+  // A payment card followed by the confirmation is already paid: it stops offering
+  // the QR and the button so the guest does not pay twice.
+  const lastConfirmation = mapped.map(m => m.role === 'assistant' && PAYMENT_CONFIRMED.test(m.content)).lastIndexOf(true)
+  mapped.forEach((m, i) => {
+    if (m.payment && i < lastConfirmation) m.payment.paid = true
+  })
+  return mapped
+}
+
+// --- Yes/no buttons ---
+// Shown for the last assistant message when it asks a yes/no question. The
+// "keep talking" option does not send anything: it only brings the text box back.
+const dismissedRepliesAt = ref(-1)
+
+const quickReplies = computed(() => {
+  const last = messages.value.length - 1
+  const msg = messages.value[last]
+  if (!msg || msg.role !== 'assistant' || !msg.quick_replies?.length) return null
+  if (dismissedRepliesAt.value === last || sending.value) return null
+  return msg.quick_replies
+})
+
+const isKeepTalking = (option) => /seguir|sigamos|conversando|hablando/i.test(option)
+
+const onQuickReply = (option) => {
+  if (isKeepTalking(option)) {
+    dismissedRepliesAt.value = messages.value.length - 1
+    nextTick(() => inputRef.value?.focus())
+    return
+  }
+  onSendMessage(option)
+}
+
+const refreshFromServer = async () => {
+  if (!conversationId.value) return
+  try {
+    const res = await fetch(`/api/public/chat/conversation/${conversationId.value}`)
+    if (!res.ok) return
+    const data = await res.json()
+    // Never drop a message the visitor just typed that the server has not stored yet.
+    if ((data.messages || []).length >= messages.value.length) {
+      messages.value = mapServerMessages(data.messages)
+    }
+  } catch {}
+}
+
+// While a payment is pending, check for the confirmation so it shows up without
+// the visitor having to write (Bold confirms asynchronously).
+const PAYMENT_POLL_MS = 5000
+const PAYMENT_POLL_MAX_MS = 30 * 60 * 1000
+let paymentPollTimer = null
+let paymentPollStarted = 0
+
+const hasPendingPayment = computed(() => {
+  const idx = messages.value.map(m => !!m.payment).lastIndexOf(true)
+  if (idx === -1) return false
+  return !messages.value.slice(idx + 1).some(m => m.role === 'assistant' && PAYMENT_CONFIRMED.test(m.content))
+})
+
+const stopPaymentPoll = () => {
+  if (paymentPollTimer) clearInterval(paymentPollTimer)
+  paymentPollTimer = null
+}
+
+watch([isOpen, hasPendingPayment], ([open, pending]) => {
+  if (open && pending && !paymentPollTimer) {
+    paymentPollStarted = Date.now()
+    paymentPollTimer = setInterval(() => {
+      if (Date.now() - paymentPollStarted > PAYMENT_POLL_MAX_MS) return stopPaymentPoll()
+      refreshFromServer()
+    }, PAYMENT_POLL_MS)
+  } else if (!(open && pending)) {
+    stopPaymentPoll()
+  }
+})
+
+onUnmounted(stopPaymentPoll)
 
 const togglePanel = () => {
   isOpen.value = !isOpen.value
@@ -532,6 +649,39 @@ onUnmounted(() => {
 }
 
 /* Panel header */
+.quick-replies {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  padding: 0.6rem 0.75rem 0.75rem;
+  border-top: 1px solid var(--cabania-border-subtle, rgba(0, 0, 0, 0.05));
+}
+
+.quick-reply {
+  padding: 0.6rem 0.9rem;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: filter 0.15s ease;
+}
+
+.quick-reply:disabled { opacity: 0.6; cursor: default; }
+
+.quick-reply-primary {
+  background: linear-gradient(135deg, #1AA15F, #2B6FDF);
+  color: #fff;
+}
+
+.quick-reply-primary:hover:not(:disabled) { filter: brightness(1.05); }
+
+.quick-reply-secondary {
+  background: transparent;
+  color: var(--cabania-text, #1e293b);
+  border-color: var(--cabania-border, rgba(0, 0, 0, 0.15));
+}
+
 .chat-panel-header {
   padding: 0.6rem 0.85rem;
   background: var(--cabania-card-bg, rgba(255, 255, 255, 0.65));
