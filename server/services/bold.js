@@ -110,7 +110,9 @@ async function getPaymentLink(linkId) {
  */
 function validateWebhookSignature(rawBody, signature) {
   if (!rawBody || !signature) return false;
-  const keys = [process.env.BOLD_SECRET_KEY || ''];
+  // Links/button events and payments API events are signed with the secret key of
+  // their own integration, so both are accepted.
+  const keys = [process.env.BOLD_SECRET_KEY || '', process.env.BOLD_API_SECRET_KEY || ''];
   if (process.env.BOLD_TEST_MODE === 'true') keys.push('');
   const base64Body = Buffer.from(rawBody).toString('base64');
   const received = Buffer.from(String(signature));
@@ -121,8 +123,105 @@ function validateWebhookSignature(rawBody, signature) {
   });
 }
 
+// ==================== API de Pagos en Linea (QR Bre-B directo) ====================
+
+const PAYMENTS_API = 'https://api.online.payments.bold.co';
+
+/** The QR API uses its own keys, distinct from the payment button / links keys. */
+function isQrConfigured() {
+  return !!process.env.BOLD_API_IDENTITY_KEY;
+}
+
+// Bold requires a device fingerprint. The QR is created server-side from a chat,
+// with no payer device involved, so a fixed server fingerprint is sent.
+const SERVER_FINGERPRINT = {
+  ip: '127.0.0.1',
+  device_type: 'DESKTOP',
+  os: 'Linux',
+  browser: 'Node.js',
+  java_enabled: false,
+  language: 'es-CO',
+  color_depth: 24,
+  screen_height: 1080,
+  screen_width: 1920,
+  time_zone_offset: 300
+};
+
+async function paymentsRequest(method, path, body) {
+  const res = await fetch(`${PAYMENTS_API}${path}`, {
+    method,
+    headers: {
+      Authorization: `x-api-key ${process.env.BOLD_API_IDENTITY_KEY || ''}`,
+      'Content-Type': 'application/json'
+    },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const text = await res.text();
+  let json;
+  try { json = JSON.parse(text); } catch { json = { raw: text }; }
+  if (!res.ok) {
+    throw new Error(`Bold payments API ${res.status}: ${text.slice(0, 300)}`);
+  }
+  return json.payload || json;
+}
+
+/**
+ * Create a payment intent and a QR Bre-B payment for it. The QR is valid for 10
+ * minutes and can be paid from any bank app.
+ * @param {object} p
+ * @param {string} p.referenceId - Unique per QR (Bold rejects reused references)
+ * @param {number} p.amount - COP
+ * @param {string} p.description
+ * @param {object} p.payer - { name, email, phone }: Bold requires all three
+ * @returns {Promise<{transactionId: string, qrBase64: string, expiresAt: Date, test: boolean}>}
+ */
+async function createQrPayment({ referenceId, amount, description, payer }) {
+  const intent = await paymentsRequest('POST', '/v1/payment-intent', {
+    reference_id: referenceId,
+    amount: { currency: 'COP', total_amount: Math.round(amount), tip_amount: 0, taxes: [] },
+    description: String(description || 'Reserva').slice(0, 100),
+    device_fingerprint: SERVER_FINGERPRINT
+  });
+  const payment = await paymentsRequest('POST', '/v1/payment', {
+    reference_id: referenceId,
+    payer: { person_type: 'NATURAL_PERSON', ...payer },
+    payment_method: { name: 'QR', qr_format: 'BOLD_BASE64' },
+    device_fingerprint: SERVER_FINGERPRINT
+  });
+  const next = payment.next_actions || {};
+  if (!next.qr_payload) {
+    throw new Error(`Bold QR without payload: ${JSON.stringify(payment).slice(0, 300)}`);
+  }
+  // expires_at comes in nanoseconds since the epoch.
+  const expiresAt = next.expires_at
+    ? new Date(Number(BigInt(next.expires_at) / 1000000n))
+    : new Date(Date.now() + 10 * 60 * 1000);
+  return {
+    transactionId: payment.transaction_id || null,
+    qrBase64: next.qr_payload,
+    expiresAt,
+    test: intent.test === true
+  };
+}
+
+/**
+ * State of a QR payment by its reference: approved, rejected, running...
+ * @returns {Promise<{status: string|null, transactionId: string|null, paymentMethod: string|null}>}
+ */
+async function getQrPayment(referenceId) {
+  const data = await paymentsRequest('GET', `/v1/payment/${encodeURIComponent(referenceId)}`);
+  return {
+    status: data.status ? String(data.status).toLowerCase() : null,
+    transactionId: data.transaction_id || null,
+    paymentMethod: data.payment_method || 'QR'
+  };
+}
+
 module.exports = {
   isConfigured,
+  isQrConfigured,
+  createQrPayment,
+  getQrPayment,
   getPaymentMethods,
   createPaymentLink,
   getPaymentLink,

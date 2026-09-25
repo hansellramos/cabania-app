@@ -8222,6 +8222,84 @@ REGLAS:
   }
 
   /**
+   * Like notifyConversation, with an image. Instagram images take no caption, so
+   * there the image goes first and the text right after.
+   */
+  async function notifyConversationImage(conversation, imageUrl, caption) {
+    const message = await prisma.chat_messages.create({
+      data: {
+        conversation_id: conversation.id,
+        role: 'assistant',
+        content: caption,
+        media_url: imageUrl,
+        media_type: 'image',
+        status: 'pending'
+      }
+    });
+    await prisma.chat_conversations.update({ where: { id: conversation.id }, data: { updated_at: new Date() } });
+    try {
+      if (conversation.source === 'instagram' && conversation.phone) {
+        const conn = await prisma.instagram_connections.findUnique({ where: { venue_id: conversation.venue_id } });
+        if (!conn?.ig_user_id || !conn?.access_token) throw new Error('Instagram is not connected');
+        await metaInstagram.sendImage(conn.ig_user_id, conn.access_token, conversation.phone, imageUrl);
+        await metaInstagram.sendText(conn.ig_user_id, conn.access_token, conversation.phone, caption);
+      } else if (PUSH_SOURCES.includes(conversation.source) && conversation.phone) {
+        await sendWhatsAppImage(conversation.venue_id, conversation.phone, imageUrl, caption);
+      }
+      await prisma.chat_messages.update({ where: { id: message.id }, data: { status: 'sent' } });
+    } catch (err) {
+      console.error('[bold] Could not send image to conversation', { conversationId: conversation.id, error: err.message });
+      await prisma.chat_messages.update({
+        where: { id: message.id },
+        data: { status: 'failed', error_details: err.message }
+      });
+    }
+  }
+
+  /**
+   * Payer data for a QR. Bold requires name, email and phone, although whoever
+   * scans the QR is the one who pays; the chat only knows the name and, on
+   * WhatsApp, the number.
+   */
+  function boldQrPayer(estimate, conversation, venue) {
+    const digits = String(conversation?.phone || '').replace(/\D/g, '');
+    // A Colombian WhatsApp number is 57 + 10 digits. Instagram ids and WhatsApp
+    // BSUIDs are not phone numbers.
+    const guestPhone = /^57\d{10}$/.test(digits) ? digits.slice(2) : null;
+    const venueDigits = venue?.whatsapp ? String(venue.whatsapp).replace(/\D/g, '') : '';
+    const venuePhone = /^(57)?\d{10}$/.test(venueDigits) ? venueDigits.slice(-10) : null;
+    return {
+      name: estimate.customer_name || 'Cliente',
+      email: process.env.BOLD_PAYER_EMAIL || 'hola@cabania.co',
+      phone: guestPhone || venuePhone || process.env.BOLD_PAYER_PHONE || '3000000000'
+    };
+  }
+
+  /**
+   * Create a new QR for the link's amount, upload the image (WhatsApp and Instagram
+   * send images by URL) and store it on the link. A QR lives 10 minutes, so each
+   * one gets its own reference.
+   */
+  async function refreshBoldQr(link, { total, description, payer }) {
+    const referenceId = `CAB-${link.id.slice(0, 8)}-${Date.now()}`;
+    const qr = await bold.createQrPayment({ referenceId, amount: total, description, payer });
+    const { uploadImage } = require('./upload-service');
+    const uploaded = await uploadImage(Buffer.from(qr.qrBase64, 'base64'), { type: 'chat_media', mimetype: 'image/png' });
+    return prisma.bold_payment_links.update({
+      where: { id: link.id },
+      data: {
+        qr_reference: referenceId,
+        qr_transaction_id: qr.transactionId,
+        qr_image_url: uploaded.secure_url,
+        qr_expires_at: qr.expiresAt,
+        qr_status: 'running',
+        is_sandbox: qr.test,
+        updated_at: new Date()
+      }
+    });
+  }
+
+  /**
    * Create (or reuse) a Bold payment link for an estimate and send it to the guest.
    * Used by send_payment_info when the chosen method is Bold.
    * @returns {Promise<object>} tool result for the LLM
@@ -8294,11 +8372,50 @@ REGLAS:
       data: { payment_status: 'link_sent', payment_method_id: paymentMethod.id, updated_at: new Date() }
     });
 
-    const text = `💳 Pago de tu reserva\n\n💰 Monto: $${total.toLocaleString('es-CO')}\n\n`
-      + `Paga aquí con QR, Nequi, PSE, Botón Bancolombia o tarjeta:\n${link.bold_url}\n\n`
-      + 'Apenas se confirme el pago te avisamos por este chat y tu reserva queda confirmada. ✅';
     const pushed = !!(conversation && PUSH_SOURCES.includes(conversation.source) && conversation.phone);
-    if (pushed) await notifyConversation(conversation, text);
+
+    // On WhatsApp and Instagram also send a QR Bre-B, payable at once from any bank
+    // app. It lives 10 minutes, so the link stays as the fallback. On web chat the
+    // guest is on the same device and cannot scan it: link only.
+    let withQr = false;
+    if (pushed && bold.isQrConfigured()) {
+      try {
+        if (link.qr_reference && link.qr_status === 'running') {
+          // The previous QR may have been paid right before this request.
+          if (await syncBoldLink(link, { checkLink: false }) === 'PAID') {
+            return { success: true, message: 'El cliente ya pagó esta reserva y el sistema ya le envió la confirmación.' };
+          }
+        }
+        const qrStillValid = link.qr_image_url && link.qr_status === 'running'
+          && link.qr_expires_at && link.qr_expires_at > new Date(Date.now() + 60 * 1000);
+        if (!qrStillValid) {
+          const venue = await prisma.venues.findUnique({ where: { id: venueId }, select: { name: true, whatsapp: true } });
+          link = await refreshBoldQr(link, {
+            total,
+            description: link.description || 'Reserva',
+            payer: boldQrPayer(estimate, conversation, venue)
+          });
+        }
+        withQr = true;
+      } catch (qrErr) {
+        console.error('[bold] QR not generated, sending only the link:', qrErr);
+      }
+    }
+
+    const amountLabel = `$${total.toLocaleString('es-CO')}`;
+    if (withQr) {
+      const minutes = Math.max(1, Math.round((new Date(link.qr_expires_at) - Date.now()) / 60000));
+      await notifyConversationImage(conversation, link.qr_image_url,
+        `💳 Pago de tu reserva: ${amountLabel}\n\n`
+        + `Escanea este QR desde la app de tu banco (vence en ${minutes} minutos).\n\n`
+        + `¿Prefieres pagar después o con otro método (Nequi, PSE, tarjeta)? Usa este link, válido por ${Number(process.env.BOLD_LINK_EXPIRATION_HOURS) || 48} horas:\n${link.bold_url}\n\n`
+        + 'Apenas se confirme el pago te avisamos por este chat y tu reserva queda confirmada. ✅');
+    } else if (pushed) {
+      await notifyConversation(conversation,
+        `💳 Pago de tu reserva\n\n💰 Monto: ${amountLabel}\n\n`
+        + `Paga aquí con QR, Nequi, PSE, Botón Bancolombia o tarjeta:\n${link.bold_url}\n\n`
+        + 'Apenas se confirme el pago te avisamos por este chat y tu reserva queda confirmada. ✅');
+    }
 
     return {
       success: true,
@@ -8306,7 +8423,7 @@ REGLAS:
       amount: total,
       payment_url: link.bold_url,
       message: pushed
-        ? 'El link de pago ya se le envió al cliente en un mensaje aparte: no lo repitas. Dile que al pagar recibirá la confirmación automática por este chat y que no necesita enviar comprobante.'
+        ? `Ya se le envió al cliente ${withQr ? 'un QR para pagar desde su banco y un link de respaldo' : 'el link de pago'} en un mensaje aparte: no lo repitas. Dile que al pagar recibirá la confirmación automática por este chat y que no necesita enviar comprobante.`
         : `Incluye este link exacto en tu respuesta para que el cliente pague: ${link.bold_url} . Al pagar, la reserva se confirma automáticamente; no necesita enviar comprobante.`
     };
   }
@@ -8323,6 +8440,7 @@ REGLAS:
         status: 'PAID',
         bold_transaction_id: state.transactionId,
         bold_payment_method: state.paymentMethod,
+        ...(state.viaQr && { qr_status: 'approved' }),
         updated_at: new Date()
       }
     });
@@ -8414,7 +8532,28 @@ REGLAS:
    * Ask Bold for the link's real state and act on it. A webhook body is never
    * trusted on its own: it only triggers this check.
    */
-  async function syncBoldLink(link) {
+  async function syncBoldLink(link, { checkLink = true } = {}) {
+    if (link.qr_reference && link.qr_status === 'running' && bold.isQrConfigured()) {
+      const qr = await bold.getQrPayment(link.qr_reference);
+      if (qr.status === 'approved') {
+        // Sandbox QRs approve themselves. With test keys in production that would
+        // confirm bookings nobody paid for.
+        if (link.is_sandbox && process.env.NODE_ENV === 'production' && process.env.BOLD_TEST_MODE !== 'true') {
+          console.error('[bold] Sandbox QR approval ignored in production', { reference: link.qr_reference });
+          await prisma.bold_payment_links.update({ where: { id: link.id }, data: { qr_status: 'sandbox_ignored' } });
+        } else {
+          await finalizeBoldPayment(link, { transactionId: qr.transactionId, paymentMethod: qr.paymentMethod, viaQr: true });
+          return 'PAID';
+        }
+      } else if (qr.status && qr.status !== 'running') {
+        await prisma.bold_payment_links.update({
+          where: { id: link.id },
+          data: { qr_status: qr.status, updated_at: new Date() }
+        });
+      }
+    }
+    if (!checkLink) return link.status;
+
     const state = await bold.getPaymentLink(link.bold_link_id);
     if (state.status === 'PAID') {
       await finalizeBoldPayment(link, state);
@@ -8450,6 +8589,30 @@ REGLAS:
     }
   }
 
+  /**
+   * QRs live 10 minutes, so they are checked every minute while they can still be
+   * paid (plus a grace period for payments made at the last second).
+   */
+  async function reconcileBoldQrs() {
+    if (!bold.isQrConfigured()) return;
+    const graceLimit = new Date(Date.now() - 15 * 60 * 1000);
+    const links = await prisma.bold_payment_links.findMany({
+      where: { qr_status: 'running', qr_expires_at: { gt: graceLimit } },
+      take: 50
+    });
+    for (const link of links) {
+      try {
+        await syncBoldLink(link, { checkLink: false });
+      } catch (err) {
+        console.error('[bold] QR reconcile failed', { reference: link.qr_reference, error: err.message });
+      }
+    }
+    await prisma.bold_payment_links.updateMany({
+      where: { qr_status: 'running', qr_expires_at: { lt: graceLimit } },
+      data: { qr_status: 'expired' }
+    });
+  }
+
   // POST /api/bold/webhook — Bold payment events (SALE_APPROVED, SALE_REJECTED, ...)
   app.post('/api/bold/webhook', (req, res) => {
     if (!bold.validateWebhookSignature(req.rawBody, req.get('x-bold-signature'))) {
@@ -8475,7 +8638,9 @@ REGLAS:
       const candidates = [data.metadata?.reference, data.payment_link, data.reference, data.link_id, payload.subject]
         .filter(v => typeof v === 'string' && v);
       const link = candidates.length
-        ? await prisma.bold_payment_links.findFirst({ where: { bold_link_id: { in: candidates } } })
+        ? await prisma.bold_payment_links.findFirst({
+            where: { OR: [{ bold_link_id: { in: candidates } }, { qr_reference: { in: candidates } }] }
+          })
         : null;
 
       if (link) {
@@ -12534,6 +12699,8 @@ Responde con JSON EXACTAMENTE en este formato:
     // Safety net for Bold payments whose webhook is delayed or never arrives.
     setInterval(() => reconcileBoldLinks().catch(err =>
       console.error('[bold] Reconcile error:', err.message)), 5 * 60 * 1000);
+    setInterval(() => reconcileBoldQrs().catch(err =>
+      console.error('[bold] QR reconcile error:', err.message)), 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });

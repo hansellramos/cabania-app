@@ -92,9 +92,10 @@
           <CFormInput v-model="form.label" placeholder="Ej: Nequi, Bancolombia Ahorros" required />
         </div>
         <CAlert v-if="form.method_type === 'bold'" color="info" class="small py-2">
-          El cliente recibe un link de pago de Bold (QR, Nequi, PSE, Botón Bancolombia o tarjeta)
-          y la reserva se confirma automáticamente cuando Bold aprueba el pago. No hace falta
-          cargar cuenta ni QR.
+          Por WhatsApp e Instagram el cliente recibe un QR de Bold para pagar desde la app de su
+          banco (vence en 10 minutos) y un link de respaldo (QR, Nequi, PSE, Botón Bancolombia o
+          tarjeta). La reserva se confirma automáticamente cuando Bold aprueba el pago. No hace
+          falta cargar cuenta ni QR.
         </CAlert>
         <div v-if="form.method_type !== 'bold'" class="mb-3">
           <CFormLabel>Numero / Cuenta / Llave</CFormLabel>
