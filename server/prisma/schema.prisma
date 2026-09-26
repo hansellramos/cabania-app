@@ -266,6 +266,13 @@ model venues {
   notify_booking_whatsapp_phone String?   @db.VarChar(50)
   notify_booking_email          Boolean   @default(false)
   notify_booking_emails         String?   @db.VarChar(500)
+  // Follow-up for chats the guest left without booking: from followup_time
+  // (Bogotá, "HH:MM") on, once the chat has been idle followup_min_idle_hours,
+  // within Meta's 24-hour window.
+  followup_enabled              Boolean   @default(true)
+  followup_time                 String    @default("22:00") @db.VarChar(5)
+  followup_min_idle_hours       Int       @default(2)
+  followup_message              String?   @db.Text
   location_source               String?   @db.VarChar(20)
   brand_color_primary           String?   @db.VarChar(7)
   brand_color_secondary         String?   @db.VarChar(7)
