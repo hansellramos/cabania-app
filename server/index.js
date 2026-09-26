@@ -1038,6 +1038,10 @@ async function startServer() {
         const pct = parseInt(data.advance_percentage, 10);
         data.advance_percentage = pct > 0 && pct <= 100 ? pct : null;
       }
+      if (data.human_reply_pause_hours !== undefined) {
+        const hours = parseInt(data.human_reply_pause_hours, 10);
+        data.human_reply_pause_hours = Number.isNaN(hours) ? 4 : Math.min(72, Math.max(0, hours));
+      }
       if (data.followup_min_idle_hours !== undefined) {
         data.followup_min_idle_hours = Math.min(23, Math.max(1, parseInt(data.followup_min_idle_hours, 10) || 2));
       }
@@ -1063,6 +1067,10 @@ async function startServer() {
       if (data.advance_percentage !== undefined) {
         const pct = parseInt(data.advance_percentage, 10);
         data.advance_percentage = pct > 0 && pct <= 100 ? pct : null;
+      }
+      if (data.human_reply_pause_hours !== undefined) {
+        const hours = parseInt(data.human_reply_pause_hours, 10);
+        data.human_reply_pause_hours = Number.isNaN(hours) ? 4 : Math.min(72, Math.max(0, hours));
       }
       if (data.followup_min_idle_hours !== undefined) {
         data.followup_min_idle_hours = Math.min(23, Math.max(1, parseInt(data.followup_min_idle_hours, 10) || 2));
@@ -7780,11 +7788,13 @@ REGLAS:
 
         if (!senderId || !recipientId || !msgData) return;
 
-        // Ignore the "echo" of messages the account itself sends. Instagram
-        // also forwards outbound messages over the webhook with is_echo=true
-        // (and recipient.id = the customer's IGSID), causing a useless
-        // "No venue found".
-        if (msgData.is_echo) return;
+        // Instagram echoes every message the account sends (is_echo, sender = the
+        // business, recipient = the guest): ours are ignored, and one written by
+        // someone in the Instagram app is recorded and pauses the AI.
+        if (msgData.is_echo) {
+          await handleInstagramEcho({ businessId: senderId, guestId: recipientId, msgData });
+          return;
+        }
 
         // Find venue by ig_user_id
         const conn = await prisma.instagram_connections.findFirst({
@@ -8524,6 +8534,80 @@ REGLAS:
     };
   }
 
+  /**
+   * Someone on the team took the conversation: the AI stays out of it for the
+   * venue's human_reply_pause_hours (the chat shows it as escalated, with the
+   * usual "Reanudar" button). A reply waiting to go out is dropped.
+   */
+  async function pauseForHuman(conversation) {
+    const venue = await prisma.venues.findUnique({
+      where: { id: conversation.venue_id },
+      select: { human_reply_pause_hours: true }
+    });
+    const hours = venue?.human_reply_pause_hours ?? 4;
+    // The web chat does not honor the pause (the widget always gets the AI).
+    if (hours <= 0 || conversation.source === 'web') return;
+    clearTimeout(chatReplyTimers.get(conversation.id));
+    chatReplyTimers.delete(conversation.id);
+    await prisma.chat_conversations.update({
+      where: { id: conversation.id },
+      data: {
+        status: 'human_attention',
+        escalated_at: new Date(),
+        escalated_reason: 'human_reply',
+        resume_at: new Date(Date.now() + hours * 60 * 60 * 1000),
+        updated_at: new Date()
+      }
+    });
+  }
+
+  /**
+   * An Instagram echo: our own sends are skipped (matched by message id, or by
+   * text for a send still being recorded); anything else was typed by a person
+   * in the Instagram app, so it goes to the history and pauses the AI.
+   */
+  async function handleInstagramEcho({ businessId, guestId, msgData }) {
+    const conn = await prisma.instagram_connections.findFirst({ where: { ig_user_id: businessId } });
+    if (!conn) return;
+    const conversation = await prisma.chat_conversations.findFirst({
+      where: { venue_id: conn.venue_id, phone: guestId, source: 'instagram' }
+    });
+    if (!conversation) return;
+    // Our send may still be saving the message id.
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    const mid = msgData.mid;
+    if (mid && await prisma.chat_messages.findFirst({ where: { external_id: mid } })) return;
+    const text = msgData.text || (msgData.attachments?.length ? `[${msgData.attachments[0].type || 'adjunto'}]` : '');
+    if (!text) return;
+    const recentOwn = await prisma.chat_messages.findFirst({
+      where: {
+        conversation_id: conversation.id,
+        role: 'assistant',
+        content: { startsWith: text.slice(0, 60) },
+        created_at: { gte: new Date(Date.now() - 3 * 60 * 1000) }
+      }
+    });
+    if (recentOwn) return;
+    await prisma.chat_messages.create({
+      data: { conversation_id: conversation.id, role: 'assistant', content: text, provider: 'human', status: 'sent', external_id: mid || null }
+    });
+    await pauseForHuman(conversation);
+    console.log('[ig-webhook] Team reply from the Instagram app, AI paused', { conversation: conversation.id });
+  }
+
+  /** Conversations whose pause is over go back to the AI (the Baileys service resumes its own). */
+  async function resumePausedConversations() {
+    const resumed = await prisma.chat_conversations.updateMany({
+      where: {
+        status: 'human_attention',
+        resume_at: { lte: new Date() },
+        source: { in: ['instagram', 'cloud_api'] }
+      },
+      data: { status: 'active', escalated_at: null, escalated_reason: null, resume_at: null }
+    });
+    if (resumed.count) console.log('[chat] Resumed conversations after pause', { count: resumed.count });
+  }
+
   /** Mark a burst as answered so a later reply does not answer it again. */
   const markBurstAnswered = (ids) => prisma.chat_messages.updateMany({
     where: { id: { in: ids } },
@@ -8617,6 +8701,8 @@ REGLAS:
           const last = conversation.messages[0];
           // Paused on our side: the last word was ours and the guest went quiet.
           if (!last || last.role !== 'assistant' || now - new Date(last.created_at).getTime() < idleMs) continue;
+          // The team had the last word: it is their conversation.
+          if (['human', 'admin'].includes(last.provider)) continue;
           const lastUser = await prisma.chat_messages.findFirst({
             where: { conversation_id: conversation.id, role: 'user' },
             orderBy: { created_at: 'desc' }
@@ -11578,6 +11664,8 @@ REGLAS:
         where: { id },
         data: { updated_at: new Date(), last_read_at: new Date() }
       });
+      // The team took the conversation: keep the AI out of it for a while.
+      await pauseForHuman(conversation);
 
       // Send via the appropriate channel
       if (conversation.source === 'instagram' && conversation.phone) {
@@ -14276,6 +14364,10 @@ Responde con JSON EXACTAMENTE en este formato:
       console.error('[bold] QR reconcile error:', err.message)), 60 * 1000);
     setInterval(() => reconcileRecentBoldLinks().catch(err =>
       console.error('[bold] Recent reconcile error:', err.message)), 60 * 1000);
+
+    // Conversations paused for a person go back to the AI when their time is up.
+    setInterval(() => resumePausedConversations().catch(err =>
+      console.error('[chat] Resume error:', err.message)), 5 * 60 * 1000);
 
     // Follow-up messages to chats left without booking (per venue settings).
     setInterval(() => sendChatFollowups().catch(err =>

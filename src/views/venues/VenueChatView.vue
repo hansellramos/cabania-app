@@ -87,7 +87,9 @@
             <strong>{{ selectedConv.name || selectedConv.phone || 'Sin nombre' }}</strong>
             <span v-if="selectedConv.phone" class="text-body-secondary small ms-2">+{{ selectedConv.phone }}</span>
             <CBadge :color="getSourceColor(selectedConv.source)" class="ms-2" size="sm">{{ getSourceLabel(selectedConv.source) }}</CBadge>
-            <CBadge v-if="selectedConv.status === 'human_attention'" color="warning" class="ms-2 text-dark" size="sm">Escalado</CBadge>
+            <CBadge v-if="selectedConv.status === 'human_attention'" color="warning" class="ms-2 text-dark" size="sm">
+              {{ selectedConv.escalated_reason === 'human_reply' ? 'Atendiendo el equipo' : 'Escalado' }}<template v-if="selectedConv.resume_at"> · la IA vuelve {{ formatResumeAt(selectedConv.resume_at) }}</template>
+            </CBadge>
           </div>
           <div class="chat-header-actions">
             <CButton
@@ -134,6 +136,7 @@
                 <!-- Provider badge for assistant messages -->
                 <div v-if="msg.role === 'assistant'" class="message-provider-badge mb-1">
                   <span v-if="msg.provider === 'admin'" class="badge-admin">Admin</span>
+                  <span v-else-if="msg.provider === 'human'" class="badge-admin" title="Enviado desde la app de Instagram">Equipo</span>
                   <span v-else class="badge-ai">IA</span>
                 </div>
 
@@ -488,6 +491,14 @@ onUnmounted(() => {
   if (pollInterval) clearInterval(pollInterval)
   clearTimeout(searchTimeout)
 })
+
+// "a las 3:40 p. m." today, or "mañana a las …" for a pause that ends tomorrow.
+function formatResumeAt(value) {
+  const at = new Date(value)
+  const time = at.toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Bogota' })
+  const day = (d) => d.toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })
+  return day(at) === day(new Date()) ? `a las ${time}` : `mañana a las ${time}`
+}
 </script>
 
 <style scoped>

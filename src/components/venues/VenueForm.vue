@@ -253,6 +253,13 @@
         />
         <div class="form-text">Vacío = el texto de ejemplo. {nombre} se reemplaza por el nombre del cliente si lo conocemos.</div>
       </template>
+      <hr />
+      <CFormLabel for="humanPause" class="small">Cuando alguien del equipo responde, la IA se pausa en esa conversación (horas)</CFormLabel>
+      <CFormInput id="humanPause" v-model="form.human_reply_pause_hours" type="number" min="0" max="72" style="max-width: 120px" />
+      <div class="form-text">
+        Aplica a respuestas desde el chat de CabanIA o desde la app de Instagram. Pasado ese tiempo la IA retoma sola;
+        también puedes reanudarla antes con "Reanudar bot". 0 = no pausar.
+      </div>
       <CModal :visible="showFollowupHelp" @close="showFollowupHelp = false">
         <CModalHeader close-button>
           <CModalTitle>¿Cómo funciona el mensaje de seguimiento?</CModalTitle>
@@ -277,7 +284,11 @@
               si quien escribe es un comisionista o si ya se le envió un seguimiento.
             </li>
           </ul>
-          <p class="mb-0">El mensaje queda en el historial del chat como cualquier otra respuesta.</p>
+          <p>El mensaje queda en el historial del chat como cualquier otra respuesta.</p>
+          <p class="mb-0">
+            <strong>Si respondes tú</strong> (desde el chat de CabanIA o la app de Instagram), la IA se pausa en esa
+            conversación las horas configuradas y no envía seguimiento mientras la última palabra sea tuya.
+          </p>
         </CModalBody>
         <CModalFooter>
           <CButton color="primary" @click="showFollowupHelp = false">Entendido</CButton>
