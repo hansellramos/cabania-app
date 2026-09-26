@@ -220,6 +220,70 @@
         No hay ningún canal seleccionado: los alquileres nuevos solo se verán en la campana de notificaciones de la app.
       </CAlert>
     </div>
+    <div class="mb-4 p-3 border rounded">
+      <h6 class="d-flex align-items-center gap-2">
+        Mensaje de seguimiento
+        <CButton color="link" size="sm" class="p-0" title="¿Cómo funciona?" @click="showFollowupHelp = true">
+          <CIcon icon="cil-info" />
+        </CButton>
+      </h6>
+      <CFormSwitch id="followupEnabled" v-model="form.followup_enabled" label="Enviar mensaje de seguimiento" />
+      <template v-if="form.followup_enabled">
+        <CRow class="g-2 mt-1">
+          <CCol :xs="6" :md="4">
+            <CFormLabel for="followupTime" class="small">Desde la hora</CFormLabel>
+            <CFormInput id="followupTime" v-model="form.followup_time" type="time" />
+          </CCol>
+          <CCol :xs="6" :md="4">
+            <CFormLabel for="followupIdle" class="small">Horas sin respuesta</CFormLabel>
+            <CFormInput id="followupIdle" v-model="form.followup_min_idle_hours" type="number" min="1" max="23" />
+          </CCol>
+        </CRow>
+        <div class="form-text">
+          Ejemplo: desde las {{ form.followup_time || '22:00' }} y con {{ form.followup_min_idle_hours || 2 }} h sin respuesta,
+          a quien escribió por última vez a las 21:00 se le envía a las
+          {{ exampleFollowupTime }}.
+        </div>
+        <CFormLabel for="followupMessage" class="small mt-2">Mensaje</CFormLabel>
+        <CFormTextarea
+          id="followupMessage"
+          v-model="form.followup_message"
+          rows="2"
+          placeholder="Hola{nombre} 😊 Quedamos atentos por si decides reservar con nosotros. Si necesitas más información, aquí estaremos."
+        />
+        <div class="form-text">Vacío = el texto de ejemplo. {nombre} se reemplaza por el nombre del cliente si lo conocemos.</div>
+      </template>
+      <CModal :visible="showFollowupHelp" @close="showFollowupHelp = false">
+        <CModalHeader close-button>
+          <CModalTitle>¿Cómo funciona el mensaje de seguimiento?</CModalTitle>
+        </CModalHeader>
+        <CModalBody class="small">
+          <p>
+            Cuando un cliente escribe por <strong>Instagram o WhatsApp</strong>, pregunta y deja de responder sin reservar,
+            CabanIA le envía <strong>un solo mensaje</strong> para recordarle que aquí estás.
+          </p>
+          <ul>
+            <li><strong>Desde la hora:</strong> los mensajes salen a partir de esa hora (por defecto, 10:00 p. m.).</li>
+            <li>
+              <strong>Horas sin respuesta:</strong> solo se escribe si la conversación lleva al menos ese tiempo quieta.
+              Si el cliente escribió a las 9:00 p. m. y son 2 horas, el mensaje sale a las 11:00 p. m., no a las 10:00.
+            </li>
+            <li>
+              <strong>Límite de Meta:</strong> Instagram y WhatsApp solo permiten escribirle dentro de las
+              <strong>24 horas</strong> siguientes a su último mensaje. Si ya pasaron, no se envía.
+            </li>
+            <li>
+              <strong>No se envía</strong> si el cliente ya reservó, si la conversación está con una persona del equipo,
+              si quien escribe es un comisionista o si ya se le envió un seguimiento.
+            </li>
+          </ul>
+          <p class="mb-0">El mensaje queda en el historial del chat como cualquier otra respuesta.</p>
+        </CModalBody>
+        <CModalFooter>
+          <CButton color="primary" @click="showFollowupHelp = false">Entendido</CButton>
+        </CModalFooter>
+      </CModal>
+    </div>
     <div class="mb-4">
       <div
         class="d-flex align-items-center justify-content-between p-2 border rounded cursor-pointer"
@@ -378,6 +442,17 @@ const skipReverseGeocode = ref(false)
 // open; without it, the current domain.
 const publicBaseUrl = (import.meta.env.VITE_APP_URL || window.location.origin).replace(/\/$/, '')
 const publicHost = publicBaseUrl.replace(/^https?:\/\//, '')
+
+const showFollowupHelp = ref(false)
+
+// "22:00" + 2 h, for a guest who last wrote at 21:00: the later of the two.
+const exampleFollowupTime = computed(() => {
+  const [h, m] = String(form.value.followup_time || '22:00').split(':').map(Number)
+  const idle = Math.min(23, Math.max(1, Number(form.value.followup_min_idle_hours) || 2))
+  const minutes = Math.max(h * 60 + (m || 0), 21 * 60 + idle * 60)
+  if (minutes >= 24 * 60) return 'la noche siguiente (si aún está dentro de las 24 h)'
+  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+})
 
 const publicVenueUrl = computed(() => {
   return `${publicBaseUrl}/#/p/${form.value.slug || ''}`
