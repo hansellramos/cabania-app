@@ -10415,40 +10415,79 @@ REGLAS:
           const numAdults = parseInt(args.adults) || 1;
           const numChildren = parseInt(args.children) || 0;
           const totalGuests = numAdults + numChildren;
+          // Guests usually give a head count, not the split: all count as adults.
+          const childrenAssumed = args.children === undefined || args.children === null;
 
           // Check for existing accommodations
           const existingAccommodations = await prisma.accommodations.findMany({
             where: { venue: venue_id }
           });
-
-          let isAvailable = true;
-          for (const acc of existingAccommodations) {
+          const overlaps = (from, to) => existingAccommodations.some(acc => {
+            if (!acc.date) return false;
             const accDate = new Date(acc.date);
-            const durationSeconds = parseInt(acc.duration) || 43200;
-            const accEndDate = new Date(accDate.getTime() + durationSeconds * 1000);
-
+            const accEndDate = new Date(accDate.getTime() + (parseInt(acc.duration) || 43200) * 1000);
             const accStartDay = new Date(accDate.getUTCFullYear(), accDate.getUTCMonth(), accDate.getUTCDate());
             const accEndDay = new Date(accEndDate.getUTCFullYear(), accEndDate.getUTCMonth(), accEndDate.getUTCDate());
-            const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
-            const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
+            return accStartDay <= to && accEndDay >= from;
+          });
 
-            if (accStartDay <= checkOutDay && accEndDay >= checkInDay) {
-              isAvailable = false;
-              break;
+          // Without an overnight plan a range ("del 2 al 4") is not a stay: it is a
+          // choice of single days, each checked on its own.
+          const hasOvernight = plans.some(p => p.includes_overnight || ['pasanoche', 'hospedaje'].includes(p.plan_type));
+          const isRange = checkOutDay > checkInDay;
+          // Several possible days: an explicit list ("el 3 o el 10"), or a range
+          // when no plan includes a night.
+          const listedDays = (Array.isArray(args.dates) ? args.dates : [])
+            .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d))
+            .map(d => new Date(Number(d.slice(0, 4)), Number(d.slice(5, 7)) - 1, Number(d.slice(8, 10))))
+            .filter(d => d >= today);
+          const rangeDays = [];
+          if (isRange && !hasOvernight) {
+            for (let d = new Date(checkInDay), n = 0; d <= checkOutDay && n < 14; d.setDate(d.getDate() + 1), n++) rangeDays.push(new Date(d));
+          }
+          const optionDays = listedDays.length > 1 ? listedDays.slice(0, 14) : rangeDays;
+          const candidateDays = optionDays.length > 1;
+          const availableDates = [];
+          const bookedDates = [];
+          let isAvailable;
+          if (candidateDays) {
+            for (const day of optionDays) {
+              const label = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+              (overlaps(day, day) ? bookedDates : availableDates).push(label);
             }
+            isAvailable = availableDates.length > 0;
+          } else {
+            isAvailable = !overlaps(checkInDay, checkOutDay);
           }
 
-          // Check suitable plans
-          const suitablePlans = plans.filter(p => {
-            const planMin = p.min_guests || 1;
-            const planMax = p.max_capacity || 999;
-            return totalGuests >= planMin && totalGuests <= planMax;
-          }).map(p => ({
-            name: p.name,
-            plan_type: p.plan_type,
-            adult_price: p.adult_price,
-            child_price: p.child_price
-          }));
+          // Every active plan, with the group's total worked out here so the
+          // model presents the options instead of asking which one first.
+          // "09:00" -> "9:00 a. m.", so the model does not mix 24 h and a. m./p. m.
+          const clock = (t) => {
+            const [h, m] = String(t).split(':').map(Number);
+            if (Number.isNaN(h)) return t;
+            return `${h % 12 || 12}:${String(m || 0).padStart(2, '0')} ${h < 12 ? 'a. m.' : 'p. m.'}`;
+          };
+          const hours = (p) => [p.check_in_time, p.check_out_time].filter(Boolean).map(clock).join(' a ') || null;
+          const planOptions = plans.map(p => {
+            const min = p.min_guests || 1;
+            const max = p.max_capacity || 999;
+            const fits = totalGuests >= min && totalGuests <= max;
+            return {
+              name: p.name,
+              fits,
+              ...(fits
+                ? { total_for_group: Math.round(parseFloat(p.adult_price || 0) * numAdults + parseFloat(p.child_price || 0) * numChildren) }
+                : { not_available_because: totalGuests < min ? `mínimo ${min} personas` : `máximo ${max} personas` }),
+              adult_price: parseFloat(p.adult_price || 0),
+              child_price: parseFloat(p.child_price || 0),
+              hours: hours(p),
+              includes_food: !!p.includes_food,
+              food: p.includes_food ? (p.food_description || null) : null,
+              overnight: !!p.includes_overnight
+            };
+          });
+          const suitablePlans = planOptions.filter(p => p.fits);
 
           // Get next available dates if not available
           let nextAvailableDates = [];
@@ -10457,7 +10496,7 @@ REGLAS:
             const checkInDayOfWeek = checkInDate.getDay();
             const preferWeekends = checkInDayOfWeek === 0 || checkInDayOfWeek === 6;
             // Calculate stay length in days
-            const stayLength = Math.max(1, Math.ceil((checkOutDay - checkInDay) / (1000 * 60 * 60 * 24)) + 1);
+            const stayLength = candidateDays ? 1 : Math.max(1, Math.ceil((checkOutDay - checkInDay) / (1000 * 60 * 60 * 24)) + 1);
 
             nextAvailableDates = llmService.getNextAvailableDates(existingAccommodations, checkInDate, {
               preferWeekends,
@@ -10473,8 +10512,20 @@ REGLAS:
             adults: numAdults,
             children: numChildren,
             total_guests: totalGuests,
+            children_assumed: childrenAssumed,
             is_available: isAvailable,
-            suitable_plans: suitablePlans,
+            ...(candidateDays && {
+              range_is_single_day_options: true,
+              available_dates: availableDates,
+              booked_dates: bookedDates
+            }),
+            plan_options: planOptions,
+            how_to_answer: 'Si el cliente ya eligió un plan, presenta solo ese con su total_for_group y ofrece reservarlo. '
+              + 'Si no, presenta cada plan con fits=true en una línea: nombre, total_for_group (tal cual, no lo recalcules), horario y si incluye comida; '
+              + 'lístalos siempre completos, aunque ya los hayas mencionado antes. '
+              + (childrenAssumed ? 'El total se calculó con todos como adultos: aclara que los niños pagan menos (child_price). ' : '')
+              + (candidateDays ? 'No hay planes con pernocta: el rango son fechas posibles para un solo día; di cuáles están libres y pregunta cuál prefiere. ' : '')
+              + 'Los planes con fits=false menciónalos solo si el grupo está cerca de cumplir el mínimo. Termina con una sola pregunta (plan y, si aplica, el día o cuántos son niños).',
             next_available_dates: nextAvailableDates,
             message: isAvailable
               ? (suitablePlans.length > 0

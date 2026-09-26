@@ -376,7 +376,7 @@ FLUJO DE CONVERSACIÓN:
 1. Si el cliente NO ha dado su nombre, pregúntalo amablemente al inicio
 2. Si preguntan por amenidades (piscina, jacuzzi, parrilla, etc.), USA la herramienta get_venue_info
 3. Si preguntan por planes o precios, USA la herramienta get_plans
-4. Si preguntan por disponibilidad, recolecta: fechas, adultos, niños, y luego usa check_availability
+4. Si preguntan por disponibilidad o precios y ya tienes fecha(s) y cantidad de personas, usa check_availability de una vez (ver PRESENTAR OPCIONES)
 5. Si el cliente quiere CONFIRMAR/RESERVAR, verifica que tienes TODOS estos datos antes de usar create_estimate:
    - Nombre del cliente
    - Fecha(s)
@@ -394,13 +394,25 @@ INTERPRETACIÓN DE FECHAS:
 
 VERIFICACIÓN DE DISPONIBILIDAD:
 - Cuando el cliente pregunte por disponibilidad, usa la herramienta check_availability.
-- Antes de verificar disponibilidad, asegúrate de tener:
-  * La fecha de llegada (check_in)
-  * La fecha de salida (check_out) - SOLO si es hospedaje/pasanoche
-  * Cuántos adultos van
-  * Cuántos niños van
-- Si el cliente solo menciona una fecha sin especificar hospedaje, asume que es pasadía.
-- Si no tienes toda la información necesaria, pregunta amablemente antes de verificar.
+- Para verificar solo necesitas la fecha (o el rango de fechas) y cuántas personas son. No preguntes antes por el plan ni por cuántos son niños.
+- Si dio un total de personas sin separar niños, pon ese total en adults y omite children.
+- Si mencionó varias fechas posibles, un rango ("del 2 al 4") o fechas sueltas ("el 3 o el 10"), llama check_availability UNA sola vez con TODAS en dates (y la primera en check_in). No la llames una vez por fecha.
+- Si solo menciona una fecha sin especificar hospedaje, asume que es pasadía.
+- Si falta la fecha o la cantidad de personas, pregunta solo eso.
+
+PRESENTAR OPCIONES (después de check_availability):
+- El cliente todavía no sabe qué ofrece cada plan: NUNCA le preguntes "¿qué plan prefieres?" sin antes mostrarle las opciones con precio.
+- Muestra en una lista corta cada plan de plan_options con fits=true: nombre, total_for_group (úsalo tal cual, no lo recalcules), horario y si incluye comida. Es la diferencia que le ayuda a decidir.
+- Si children_assumed es true, aclara que el total es con todos como adultos y que los niños pagan menos (child_price de cada plan).
+- Si range_is_single_day_options es true, son días posibles para un solo día (no hay pernocta): di cuáles de available_dates están libres (y cuáles no) y pregunta cuál prefiere.
+- Los planes con fits=false no los listes; menciónalos en una línea solo si el grupo está cerca de cumplir el mínimo (ej: "desde 50 personas también está Plan Eventos").
+- Termina con UNA sola pregunta que junte lo que falta: el plan y, si aplica, el día o cuántos son niños.
+- Si el cliente YA eligió plan (y día, si había varios), no vuelvas a listar todos: confirma ese plan con su total y sigue con la reserva (resumen y [[botones: Sí, reservar | Sigamos conversando]]).
+- Ejemplo, para "20 personas del 2 al 4 de octubre" con todas las fechas libres:
+  "¡Listo! El 2, 3 y 4 de octubre están disponibles. Para 20 personas:
+  • Pasadía: $800.000 · de 9:00 a. m. a 9:00 p. m.
+  • Pasadía con Comida: $1.600.000 · de 9:00 a. m. a 7:00 p. m., incluye almuerzo
+  Si van niños, pagan menos. ¿Qué día prefieres y cuál de los dos planes te gusta más?"
 
 CONFIRMACIÓN DE RESERVA:
 - NUNCA uses create_estimate sin tener TODOS los datos requeridos.
@@ -511,7 +523,7 @@ const CHAT_TOOLS = [
     type: 'function',
     function: {
       name: 'check_availability',
-      description: 'Verifica la disponibilidad de la cabaña para fechas específicas y cantidad de personas. Usar cuando el cliente pregunte si hay disponibilidad.',
+      description: 'Verifica la disponibilidad para una fecha o un rango de fechas y una cantidad de personas, y devuelve cada plan con el total para ese grupo. Usar en cuanto se tenga fecha y cantidad de personas, antes de preguntar por el plan.',
       parameters: {
         type: 'object',
         properties: {
@@ -521,15 +533,20 @@ const CHAT_TOOLS = [
           },
           check_out: {
             type: 'string',
-            description: 'Fecha de salida en formato YYYY-MM-DD. Si es pasadía, usar la misma fecha que check_in.'
+            description: 'Fecha de salida (YYYY-MM-DD) solo para hospedaje o pasanoche. En pasadía, igual a check_in.'
+          },
+          dates: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Si el cliente mencionó VARIAS fechas posibles, todas ellas (YYYY-MM-DD): un rango ("del 2 al 4" = los 3 días) o fechas sueltas ("el 3 o el 10"). Con una sola fecha, omítelo.'
           },
           adults: {
             type: 'integer',
-            description: 'Número de adultos'
+            description: 'Número de adultos. Si el cliente dio solo un total de personas, pon el total aquí.'
           },
           children: {
             type: 'integer',
-            description: 'Número de niños'
+            description: 'Número de niños. Omítelo si el cliente no lo dijo.'
           }
         },
         required: ['check_in', 'adults']
