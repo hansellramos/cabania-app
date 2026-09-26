@@ -7628,38 +7628,43 @@ REGLAS:
                 data: { updated_at: new Date() }
               });
 
-              // Process with AI
-              const result = await processChat({
-                venue_id,
-                userMessage,
-                conversation,
-                source: 'cloud_api',
-                media_url,
-                media_type,
-                verifiedSender: true
-              });
+              // Answer once the guest stops writing (see scheduleChatReply).
+              scheduleChatReply(conversation.id, async () => {
+                const burst = await loadChatBurst(conversation.id);
+                if (!burst) return;
+                const result = await processChat({
+                  venue_id,
+                  userMessage: burst.userMessage,
+                  conversation: burst.conversation,
+                  source: 'cloud_api',
+                  media_url: burst.media_url,
+                  media_type: burst.media_type,
+                  verifiedSender: true
+                });
+                await markBurstAnswered(burst.burstIds);
 
-              // Send AI response
-              if (result?.llmResponse?.content) {
-                try {
-                  const sendResult = await metaWhatsApp.sendText(
-                    phoneNumberId, conn.meta_access_token, from, result.llmResponse.content
-                  );
-                  await prisma.chat_messages.update({
-                    where: { id: result.assistantMessage.id },
-                    data: {
-                      status: 'sent',
-                      external_id: sendResult.messages?.[0]?.id || null
-                    }
-                  });
-                } catch (sendErr) {
-                  console.error('[meta-webhook] Failed to send reply:', sendErr.message);
-                  await prisma.chat_messages.update({
-                    where: { id: result.assistantMessage.id },
-                    data: { status: 'failed', error_details: sendErr.message }
-                  });
+                // Send AI response
+                if (result?.llmResponse?.content) {
+                  try {
+                    const sendResult = await metaWhatsApp.sendText(
+                      phoneNumberId, conn.meta_access_token, from, result.llmResponse.content
+                    );
+                    await prisma.chat_messages.update({
+                      where: { id: result.assistantMessage.id },
+                      data: {
+                        status: 'sent',
+                        external_id: sendResult.messages?.[0]?.id || null
+                      }
+                    });
+                  } catch (sendErr) {
+                    console.error('[meta-webhook] Failed to send reply:', sendErr.message);
+                    await prisma.chat_messages.update({
+                      where: { id: result.assistantMessage.id },
+                      data: { status: 'failed', error_details: sendErr.message }
+                    });
+                  }
                 }
-              }
+              }, { immediate: CHAT_RESET_COMMAND.test(userMessage.trim()) });
 
               // Mark incoming message as read
               await metaWhatsApp.markAsRead(phoneNumberId, conn.meta_access_token, wamid).catch(() => {});
@@ -7896,40 +7901,45 @@ REGLAS:
         }
         const igUsername = conversation.metadata?.instagram_username;
 
-        // Process with AI
-        const result = await processChat({
-          venue_id,
-          userMessage,
-          conversation,
-          source: 'instagram',
-          media_url,
-          media_type,
-          contact_type: 'instagram',
-          contact_value: igUsername ? `@${igUsername}` : senderId,
-          verifiedSender: true
-        });
+        // Answer once the guest stops writing (see scheduleChatReply).
+        scheduleChatReply(conversation.id, async () => {
+          const burst = await loadChatBurst(conversation.id);
+          if (!burst) return;
+          const result = await processChat({
+            venue_id,
+            userMessage: burst.userMessage,
+            conversation: burst.conversation,
+            source: 'instagram',
+            media_url: burst.media_url,
+            media_type: burst.media_type,
+            contact_type: 'instagram',
+            contact_value: igUsername ? `@${igUsername}` : senderId,
+            verifiedSender: true
+          });
+          await markBurstAnswered(burst.burstIds);
 
-        // Send AI response via Instagram
-        if (result?.llmResponse?.content) {
-          try {
-            const sendResult = await metaInstagram.sendText(
-              conn.ig_user_id, conn.access_token, senderId, result.llmResponse.content
-            );
-            await prisma.chat_messages.update({
-              where: { id: result.assistantMessage.id },
-              data: {
-                status: 'sent',
-                external_id: sendResult.message_id || null
-              }
-            });
-          } catch (sendErr) {
-            console.error('[ig-webhook] Failed to send reply:', sendErr.message);
-            await prisma.chat_messages.update({
-              where: { id: result.assistantMessage.id },
-              data: { status: 'failed', error_details: sendErr.message }
-            });
+          // Send AI response via Instagram
+          if (result?.llmResponse?.content) {
+            try {
+              const sendResult = await metaInstagram.sendText(
+                conn.ig_user_id, conn.access_token, senderId, result.llmResponse.content
+              );
+              await prisma.chat_messages.update({
+                where: { id: result.assistantMessage.id },
+                data: {
+                  status: 'sent',
+                  external_id: sendResult.message_id || null
+                }
+              });
+            } catch (sendErr) {
+              console.error('[ig-webhook] Failed to send reply:', sendErr.message);
+              await prisma.chat_messages.update({
+                where: { id: result.assistantMessage.id },
+                data: { status: 'failed', error_details: sendErr.message }
+              });
+            }
           }
-        }
+        }, { immediate: CHAT_RESET_COMMAND.test(userMessage.trim()) });
 
       } catch (err) {
         console.error('[ig-webhook] Unhandled error:', err);
@@ -8441,6 +8451,72 @@ REGLAS:
   const AGENT_HISTORY_HOURS = 12;
   // Typed in any chat, makes the model start over (see processChat).
   const CHAT_RESET_COMMAND = /^\/(reiniciar|restart|clean|nuevo|nueva)$/i;
+
+  // Guests often write in bursts ("No se puede" + "??"). Instagram and WhatsApp
+  // replies wait this long after the last message and answer the burst once.
+  const CHAT_REPLY_PAUSE_MS = Number(process.env.CHAT_REPLY_PAUSE_MS) || 6000;
+  // Unanswered messages older than this are history, not part of the burst
+  // (e.g. written while the chat was with a human).
+  const CHAT_BURST_WINDOW_MS = 10 * 60 * 1000;
+  const chatReplyTimers = new Map();
+  const chatReplyBusy = new Set();
+
+  /**
+   * Run `reply` for the conversation once the guest stops writing. A new message
+   * restarts the wait; a reply already in flight finishes first.
+   */
+  function scheduleChatReply(conversationId, reply, { immediate = false } = {}) {
+    clearTimeout(chatReplyTimers.get(conversationId));
+    const fire = async () => {
+      chatReplyTimers.delete(conversationId);
+      if (chatReplyBusy.has(conversationId)) {
+        chatReplyTimers.set(conversationId, setTimeout(fire, 1000));
+        return;
+      }
+      chatReplyBusy.add(conversationId);
+      try {
+        await reply();
+      } catch (err) {
+        console.error('[chat] Reply failed', { conversation: conversationId, error: err.message });
+      } finally {
+        chatReplyBusy.delete(conversationId);
+      }
+    };
+    chatReplyTimers.set(conversationId, setTimeout(fire, immediate ? 0 : CHAT_REPLY_PAUSE_MS));
+  }
+
+  /**
+   * The guest's unanswered messages (the burst) joined into one, plus the
+   * conversation with the history before them. Null when there is nothing to
+   * answer or the chat went to a human meanwhile.
+   */
+  async function loadChatBurst(conversationId) {
+    const conversation = await prisma.chat_conversations.findUnique({
+      where: { id: conversationId },
+      include: { messages: { orderBy: { created_at: 'desc' }, take: 40 } }
+    });
+    if (!conversation || conversation.status === 'human_attention') return null;
+    const since = Date.now() - CHAT_BURST_WINDOW_MS;
+    const isBurst = (m) => m.role === 'user' && m.status === 'delivered' && new Date(m.created_at).getTime() >= since;
+    const ordered = [...conversation.messages].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const burst = ordered.filter(isBurst);
+    if (!burst.length) return null;
+    conversation.messages = ordered.filter(m => !isBurst(m)).slice(-20);
+    const withMedia = [...burst].reverse().find(m => m.media_url);
+    return {
+      conversation,
+      burstIds: burst.map(m => m.id),
+      userMessage: burst.map(m => m.content).join('\n'),
+      media_url: withMedia?.media_url || null,
+      media_type: withMedia?.media_type || null
+    };
+  }
+
+  /** Mark a burst as answered so a later reply does not answer it again. */
+  const markBurstAnswered = (ids) => prisma.chat_messages.updateMany({
+    where: { id: { in: ids } },
+    data: { status: 'answered' }
+  });
   /** Epoch ms of the last "/reiniciar" in the conversation, or 0. */
   const contextResetAt = (conversation) => {
     const at = conversation?.metadata?.context_reset_at;
