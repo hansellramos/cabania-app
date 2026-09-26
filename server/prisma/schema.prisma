@@ -273,6 +273,9 @@ model venues {
   followup_time                 String    @default("22:00") @db.VarChar(5)
   followup_min_idle_hours       Int       @default(2)
   followup_message              String?   @db.Text
+  // When someone on the team replies (CabanIA chat or the Instagram app), the AI
+  // stays out of that conversation this many hours. 0 = never pause.
+  human_reply_pause_hours       Int       @default(4)
   location_source               String?   @db.VarChar(20)
   brand_color_primary           String?   @db.VarChar(7)
   brand_color_secondary         String?   @db.VarChar(7)
