@@ -1038,6 +1038,12 @@ async function startServer() {
         const pct = parseInt(data.advance_percentage, 10);
         data.advance_percentage = pct > 0 && pct <= 100 ? pct : null;
       }
+      if (data.followup_min_idle_hours !== undefined) {
+        data.followup_min_idle_hours = Math.min(23, Math.max(1, parseInt(data.followup_min_idle_hours, 10) || 2));
+      }
+      if (data.followup_time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(data.followup_time))) {
+        delete data.followup_time;
+      }
       const venue = await prisma.venues.create({ data });
       res.json(venue);
     } catch (error) {
@@ -1057,6 +1063,12 @@ async function startServer() {
       if (data.advance_percentage !== undefined) {
         const pct = parseInt(data.advance_percentage, 10);
         data.advance_percentage = pct > 0 && pct <= 100 ? pct : null;
+      }
+      if (data.followup_min_idle_hours !== undefined) {
+        data.followup_min_idle_hours = Math.min(23, Math.max(1, parseInt(data.followup_min_idle_hours, 10) || 2));
+      }
+      if (data.followup_time !== undefined && !/^([01]\d|2[0-3]):[0-5]\d$/.test(String(data.followup_time))) {
+        delete data.followup_time;
       }
       if (data.commission_percentage !== undefined) {
         data.commission_percentage = data.commission_percentage ? parseFloat(data.commission_percentage) : null;
@@ -8487,6 +8499,81 @@ REGLAS:
     }
   }
 
+  // ==================== Follow-up of chats left without booking ====================
+
+  const FOLLOWUP_DEFAULT_MESSAGE = 'Hola{nombre} 😊 Quedamos atentos por si decides reservar con nosotros. '
+    + 'Si necesitas más información, aquí estaremos.';
+  // Meta only allows free messages within 24 hours of the guest's last one.
+  const FOLLOWUP_WINDOW_MS = 23.5 * 60 * 60 * 1000;
+
+  /** "22:05" and "2026-09-26" in Bogotá time. */
+  function bogotaNow() {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Bogota', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+    }).formatToParts(new Date()).map(p => [p.type, p.value]));
+    return { time: `${parts.hour === '24' ? '00' : parts.hour}:${parts.minute}`, date: `${parts.year}-${parts.month}-${parts.day}` };
+  }
+
+  /**
+   * Once a day from the venue's follow-up time, write once to Instagram/WhatsApp
+   * chats the guest left without booking, after the configured idle time and
+   * within the 24-hour window.
+   */
+  async function sendChatFollowups() {
+    const venues = await prisma.venues.findMany({ where: { followup_enabled: true } });
+    if (!venues.length) return;
+    const now = Date.now();
+    const local = bogotaNow();
+    for (const venue of venues) {
+      if (local.time < (venue.followup_time || '22:00')) continue;
+      const idleMs = Math.max(1, venue.followup_min_idle_hours || 2) * 60 * 60 * 1000;
+      const conversations = await prisma.chat_conversations.findMany({
+        where: {
+          venue_id: venue.id,
+          source: { in: ['instagram', 'cloud_api'] },
+          status: { not: 'human_attention' },
+          updated_at: { gte: new Date(now - FOLLOWUP_WINDOW_MS) }
+        },
+        include: { messages: { orderBy: { created_at: 'desc' }, take: 1 } }
+      });
+      for (const conversation of conversations) {
+        try {
+          const last = conversation.messages[0];
+          // Paused on our side: the last word was ours and the guest went quiet.
+          if (!last || last.role !== 'assistant' || now - new Date(last.created_at).getTime() < idleMs) continue;
+          const lastUser = await prisma.chat_messages.findFirst({
+            where: { conversation_id: conversation.id, role: 'user' },
+            orderBy: { created_at: 'desc' }
+          });
+          if (!lastUser || now - new Date(lastUser.created_at).getTime() > FOLLOWUP_WINDOW_MS) continue;
+          const sentAt = conversation.metadata?.followup_sent_at;
+          if (sentAt && new Date(sentAt) > new Date(lastUser.created_at)) continue;
+          // Not for guests who booked, nor for commission agents.
+          const booked = await prisma.estimates.count({
+            where: { conversation_id: conversation.id, OR: [{ status: 'converted' }, { commission_agent_id: { not: null } }] }
+          });
+          if (booked) continue;
+          if (await findCommissionAgentForChat({ conversation, venue })) continue;
+
+          const firstName = String(conversation.name || '').startsWith('@')
+            ? ''
+            : String(conversation.name || '').trim().split(/\s+/)[0];
+          const text = (venue.followup_message || FOLLOWUP_DEFAULT_MESSAGE)
+            .replace(/\{nombre\}/g, firstName ? ` ${firstName}` : '');
+          // Claim first, so a slow send cannot be picked up twice.
+          await prisma.chat_conversations.update({
+            where: { id: conversation.id },
+            data: { metadata: { ...(conversation.metadata || {}), followup_sent_at: new Date().toISOString() } }
+          });
+          await notifyConversation(conversation, text);
+          console.log('[followup] Sent', { venue: venue.name, conversation: conversation.id });
+        } catch (err) {
+          console.error('[followup] Failed', { conversation: conversation.id, error: err.message });
+        }
+      }
+    }
+  }
+
   /**
    * Like notifyConversation, with an image. Instagram images take no caption, so
    * there the image goes first and the text right after.
@@ -14113,6 +14200,10 @@ Responde con JSON EXACTAMENTE en este formato:
       console.error('[bold] QR reconcile error:', err.message)), 60 * 1000);
     setInterval(() => reconcileRecentBoldLinks().catch(err =>
       console.error('[bold] Recent reconcile error:', err.message)), 60 * 1000);
+
+    // Follow-up messages to chats left without booking (per venue settings).
+    setInterval(() => sendChatFollowups().catch(err =>
+      console.error('[followup] Error:', err.message)), 5 * 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });
