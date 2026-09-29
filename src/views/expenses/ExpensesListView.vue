@@ -178,6 +178,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { RouterLink, useRoute } from 'vue-router'
 import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton,
@@ -388,10 +389,16 @@ const deleteExpense = async () => {
 
 const route = useRoute()
 
+// Filters live in the URL: linkable, and kept on reload and back.
+useUrlState([
+  urlField(filters.value, 'venue_id'),
+  urlField(filters.value, 'category_id'),
+  urlField(filters.value, 'from_date', { param: 'from' }),
+  urlField(filters.value, 'to_date', { param: 'to' }),
+  urlRef(searchQuery, 'q'),
+], { onRouteChange: () => loadExpenses() })
+
 onMounted(() => {
-  if (route.query.venue_id) {
-    filters.value.venue_id = route.query.venue_id
-  }
   loadExpenses()
   loadVenues()
   loadCategories()

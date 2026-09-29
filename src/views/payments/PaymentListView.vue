@@ -266,6 +266,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import { cilCheckAlt, cilX, cilPencil, cilTrash, cilImage } from '@coreui/icons'
@@ -516,6 +517,16 @@ const deletePayment = async () => {
     console.error('Error deleting payment:', error)
   }
 }
+
+// Filters live in the URL: linkable, and kept on reload and back.
+useUrlState([
+  urlField(filters, 'basis'),
+  urlField(filters, 'method'),
+  urlField(filters, 'status'),
+  urlField(filters, 'from_date', { param: 'from' }),
+  urlField(filters, 'to_date', { param: 'to' }),
+  urlRef(searchQuery, 'q'),
+])
 
 onMounted(() => {
   loadPayments()

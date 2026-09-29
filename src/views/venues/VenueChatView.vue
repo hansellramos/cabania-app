@@ -205,6 +205,7 @@
 const stripMarkers = (text) => (text || '').replace(/\n?<!-- \{.*?\} -->/g, '')
 
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { useRoute } from 'vue-router'
 import {
   CRow, CCol, CButton, CSpinner,
@@ -474,16 +475,26 @@ const pollData = async () => {
 
 watch(messages, () => scrollToBottom(), { deep: true })
 
+// Channel filter, search and the open conversation live in the URL, so a
+// conversation can be linked (?conversation_id=…) and back returns to the list.
+useUrlState([
+  urlRef(activeChannelFilter, 'channel'),
+  urlRef(searchQuery, 'q'),
+  {
+    param: 'conversation_id',
+    type: 'string',
+    default: undefined,
+    get: () => selectedConv.value?.id,
+    set: (id) => {
+      if (id && id !== selectedConv.value?.id) selectConversation({ id })
+      else if (!id) selectedConv.value = null
+    },
+  },
+], { onRouteChange: () => loadConversations() })
+
 onMounted(async () => {
   loadVenue()
   loadConversations()
-
-  // If arrived with conversation_id in query
-  const qConversationId = route.query.conversation_id
-  if (qConversationId) {
-    await selectConversation({ id: qConversationId })
-  }
-
   pollInterval = setInterval(pollData, 5000)
 })
 

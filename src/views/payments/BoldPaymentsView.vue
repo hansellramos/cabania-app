@@ -225,6 +225,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 
 const links = ref([])
 const loading = ref(false)
@@ -393,6 +394,14 @@ async function markPaid() {
 }
 
 watch(() => [filters.from, filters.to], loadLinks)
+
+// Filters live in the URL: linkable, and kept on reload and back.
+useUrlState([
+  urlField(filters, 'view'),
+  urlField(filters, 'from'),
+  urlField(filters, 'to'),
+  urlRef(searchQuery, 'q'),
+])
 
 onMounted(() => {
   loadLinks()
