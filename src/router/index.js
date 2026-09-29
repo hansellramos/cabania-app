@@ -665,6 +665,12 @@ const routes = [
     component: () => import('@/views/invitations/AcceptInvitationView.vue'),
   },
   {
+    path: '/contract/amendment/:token',
+    name: 'PublicContractAmendment',
+    component: () => import('@/views/contracts/PublicContractView.vue'),
+    props: true,
+  },
+  {
     path: '/contract/:token',
     name: 'PublicContract',
     component: () => import('@/views/contracts/PublicContractView.vue'),
