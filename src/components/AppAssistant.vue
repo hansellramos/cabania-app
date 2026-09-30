@@ -85,8 +85,12 @@
 import { ref, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { renderMarkdown } from '@/utils/contractMarkdown'
+import { useSettingsStore } from '@/stores/settings'
+import { useAuth } from '@/composables/useAuth'
 
 const route = useRoute()
+const settingsStore = useSettingsStore()
+const { user } = useAuth()
 const router = useRouter()
 const STORAGE_KEY = 'cabania.assistant.messages'
 
@@ -155,7 +159,9 @@ async function send(text) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         messages: messages.value.map(m => ({ role: m.role, content: m.content })),
-        context: { path: route.fullPath }
+        context: { path: route.fullPath },
+        // Super admins: only their organizations unless "view all" is on, as in the rest of the app.
+        view_all: !!(user.value?.is_super_admin && settingsStore.godModeViewAll)
       })
     })
     const data = await response.json().catch(() => ({}))

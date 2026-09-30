@@ -171,16 +171,28 @@ module.exports = function registerAssistantRoutes(app, deps) {
   async function userScope(req) {
     const userId = String(req.user.claims?.sub || req.user.id || '');
     const perms = req.userPermissions;
-    const venueIds = await getAccessibleVenueIds(perms); // null = all
+    let venueIds = await getAccessibleVenueIds(perms); // null = all
+    // Like the rest of the app, a super admin sees only their own organizations
+    // unless they turned on "view all" (god mode).
+    if (venueIds === null && perms?.isSuperAdmin && req.body?.view_all !== true) {
+      const memberships = await prisma.user_organizations.findMany({ where: { user_id: userId }, select: { organization_id: true } });
+      const own = await prisma.venues.findMany({
+        where: { organization: { in: memberships.map(m => m.organization_id) } },
+        select: { id: true }
+      });
+      venueIds = own.map(v => v.id);
+    }
     const venues = await prisma.venues.findMany({
       where: venueIds === null ? {} : { id: { in: venueIds } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, organization: true },
       orderBy: { name: 'asc' }
     });
+    // Organizations the user works in (null = all, only for a super admin viewing all).
+    const orgIds = venueIds === null ? null : [...new Set(venues.map(v => v.organization).filter(Boolean))];
     const can = (p) => hasPermission(perms, p) || hasPermission(perms, `${p}:own`);
     const ownBookingsOnly = hasOwnOnly(perms, 'accommodations:view');
     const agentBookingIds = ownBookingsOnly ? await getAgentAccommodationIds(userId) : new Set();
-    return { userId, perms, venueIds, venues, can, ownBookingsOnly, agentBookingIds };
+    return { userId, perms, venueIds, orgIds, venues, can, ownBookingsOnly, agentBookingIds };
   }
 
   const venueFilter = (scope, venueId) => {
@@ -360,7 +372,11 @@ module.exports = function registerAssistantRoutes(app, deps) {
     async commissions(args, scope) {
       const canAll = hasPermission(scope.perms, 'commissions:view');
       const agents = await prisma.commission_agents.findMany({
-        where: canAll ? {} : { user_id: scope.userId },
+        where: canAll
+          ? (scope.orgIds === null ? {} : {
+            OR: [{ organization_id: { in: scope.orgIds } }, { venue_id: { in: scope.venueIds } }]
+          })
+          : { user_id: scope.userId },
         select: { id: true, name: true }
       });
       if (!agents.length) return { error: canAll ? 'No hay comisionistas.' : 'Sin permiso para ver comisiones.' };
@@ -506,8 +522,19 @@ module.exports = function registerAssistantRoutes(app, deps) {
       const q = String(args.query || '').trim();
       if (q.length < 2) return { error: 'Escribe al menos 2 caracteres.' };
       const digits = q.replace(/\D/g, '');
+      // Same scope as the contacts screen: the user's organizations, plus the
+      // customers of bookings in their venues (e.g. created by the chat).
+      let allowedIds = null;
+      if (scope.orgIds !== null) {
+        const [linked, customers] = await Promise.all([
+          prisma.contact_organization.findMany({ where: { organization: { in: scope.orgIds } }, select: { contact: true } }),
+          prisma.accommodations.findMany({ where: { venue: { in: scope.venueIds }, customer: { not: null } }, select: { customer: true } })
+        ]);
+        allowedIds = [...new Set([...linked.map(l => l.contact), ...customers.map(c => c.customer)])];
+      }
       const contacts = await prisma.contacts.findMany({
         where: {
+          ...(allowedIds !== null && { id: { in: allowedIds } }),
           OR: [
             { fullname: { contains: q, mode: 'insensitive' } },
             { instagram: { contains: q.replace(/^@/, ''), mode: 'insensitive' } },
