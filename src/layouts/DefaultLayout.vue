@@ -6,6 +6,7 @@ import AppSidebar from '@/components/AppSidebar.vue'
 import ImpersonationBanner from '@/components/ImpersonationBanner.vue'
 import TrialBanner from '@/components/TrialBanner.vue'
 import PasskeyBanner from '@/components/PasskeyBanner.vue'
+import AppAssistant from '@/components/AppAssistant.vue'
 </script>
 
 <template>
@@ -23,5 +24,7 @@ import PasskeyBanner from '@/components/PasskeyBanner.vue'
       </div>
       <AppFooter />
     </div>
+    <!-- Floating in-app assistant (bottom right) -->
+    <AppAssistant />
   </div>
 </template>

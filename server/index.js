@@ -9821,6 +9821,12 @@ REGLAS:
     await logBoldEvent(link.id, 'unpaid_notified', { detail: { reason } });
   }
 
+  // In-app assistant for the team (server/assistant.js)
+  require('./assistant')(app, {
+    prisma, llmService, isAuthenticated, hasPermission, hasOwnOnly,
+    getAccessibleVenueIds, getAgentAccommodationIds, logAICall
+  });
+
   // ==================== In-app notifications ====================
 
   const currentUserId = (req) => String(req.user?.claims?.sub || req.user?.id || '');
