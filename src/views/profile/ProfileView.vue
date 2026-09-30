@@ -323,6 +323,8 @@
           </CListGroup>
         </CCardBody>
       </CCard>
+
+      <AgentKeysCard />
     </CCol>
   </CRow>
 
@@ -354,6 +356,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useAuth } from '@/composables/useAuth'
+import AgentKeysCard from '@/components/profile/AgentKeysCard.vue'
 import { CIcon } from '@coreui/icons-vue'
 import { cilFingerprint, cilLockLocked, cilLockUnlocked } from '@coreui/icons'
 
