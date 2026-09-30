@@ -14087,7 +14087,27 @@ Responde con JSON EXACTAMENTE en este formato:
         include: { attachments: true, template: { include: { sections: { orderBy: { sort_order: 'asc' } } } } },
       });
       if (!contract) return res.json(null);
-      res.json(contract);
+      const amendments = await prisma.contract_amendments.findMany({
+        where: { contract_id: contract.id },
+        orderBy: { number: 'asc' },
+        select: { id: true, number: true, status: true, changes: true, note: true, qr_token: true, accepted_at: true, created_at: true }
+      });
+      let pending = null;
+      if (contract.status === 'signed') {
+        const accommodation = await prisma.accommodations.findUnique({ where: { id: req.params.id } });
+        const current = await contractTerms(accommodation);
+        const baseline = await amendmentBaseline(contract);
+        const draft = await prisma.contract_amendments.findFirst({ where: { contract_id: contract.id, status: 'draft' } });
+        pending = {
+          current,
+          baseline_unknown: !baseline,
+          // Changes since the last signed version not yet covered by a draft.
+          changes: baseline && !(draft && diffTerms(draft.terms_after, current).length === 0)
+            ? diffTerms(baseline, current)
+            : []
+        };
+      }
+      res.json({ ...contract, amendments, pending });
     } catch (error) {
       res.status(500).json({ error: error.message });
     }
@@ -14198,6 +14218,207 @@ Responde con JSON EXACTAMENTE en este formato:
   });
 
   // Regenerar el snapshot del contrato EN SITIO (conserva adjuntos, qr_token y código)
+  // ==================== Otrosí (contract amendments) ====================
+
+  /** The booking terms a contract covers, comparable across versions. */
+  async function contractTerms(accommodation) {
+    const plan = accommodation.plan_id
+      ? await prisma.venue_plans.findUnique({ where: { id: accommodation.plan_id }, select: { name: true } })
+      : null;
+    return {
+      date: accommodation.date ? new Date(accommodation.date).toISOString().slice(0, 10) : null,
+      plan_id: accommodation.plan_id || null,
+      plan_name: plan?.name || null,
+      adults: accommodation.adults || 0,
+      children: accommodation.children || 0,
+      agreed_price: Math.round(Number(accommodation.agreed_price ?? accommodation.calculated_price ?? 0))
+    };
+  }
+
+  const TERM_FIELDS = [
+    { field: 'date', key: 'date', label: 'Fecha', format: (t) => (t.date ? formatBookingDate(t.date) : '—') },
+    { field: 'plan', key: 'plan_id', label: 'Plan', format: (t) => t.plan_name || '—' },
+    { field: 'adults', key: 'adults', label: 'Adultos', format: (t) => String(t.adults ?? 0) },
+    { field: 'children', key: 'children', label: 'Niños', format: (t) => String(t.children ?? 0) },
+    { field: 'agreed_price', key: 'agreed_price', label: 'Valor total', format: (t) => money(t.agreed_price) }
+  ];
+
+  /** What changed between two versions of the terms, ready to show. */
+  function diffTerms(before, after) {
+    if (!before || !after) return [];
+    return TERM_FIELDS
+      .filter(({ key }) => String(before[key] ?? '') !== String(after[key] ?? ''))
+      .map(({ field, label, format }) => ({ field, label, before: format(before), after: format(after) }));
+  }
+
+  /** The terms currently in force: the last signed otrosí, or the contract as signed. */
+  async function amendmentBaseline(contract) {
+    const lastSigned = await prisma.contract_amendments.findFirst({
+      where: { contract_id: contract.id, status: 'signed' },
+      orderBy: { number: 'desc' }
+    });
+    return lastSigned?.terms_after || contract.signed_terms || null;
+  }
+
+  /** The otrosí text, in the same section format as the contract snapshot. */
+  async function renderAmendment({ number, contract, accommodation, changes, note }) {
+    const venue = accommodation.venue ? await prisma.venues.findUnique({ where: { id: accommodation.venue } }) : null;
+    const organization = venue?.organization ? await prisma.organizations.findUnique({ where: { id: venue.organization } }) : null;
+    const customer = accommodation.customer ? await prisma.contacts.findUnique({ where: { id: accommodation.customer } }) : null;
+    const paid = await prisma.payments.aggregate({ where: { accommodation: accommodation.id, verified: true }, _sum: { amount: true } });
+    const total = Math.round(Number(accommodation.agreed_price ?? accommodation.calculated_price ?? 0));
+    const paidAmount = Number(paid._sum.amount || 0);
+    const signedOn = contract.accepted_at
+      ? new Date(contract.accepted_at).toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'America/Bogota' })
+      : null;
+    const lines = [
+      `Entre **${organization?.name || venue?.name || 'la cabaña'}** y **${customer?.fullname || 'el cliente'}**, partes del contrato de alquiler de **${venue?.name || 'la cabaña'}**${signedOn ? ` firmado el ${signedOn}` : ''}, se acuerda modificarlo en lo siguiente:`,
+      '',
+      ...changes.map(c => `- **${c.label}:** antes ${c.before}; ahora **${c.after}**.`)
+    ];
+    if (changes.some(c => c.field === 'agreed_price' || c.field === 'adults' || c.field === 'children' || c.field === 'plan')) {
+      lines.push('', `Con este cambio el valor total queda en **${money(total)}**. Pagado a la fecha: ${money(paidAmount)}. Saldo pendiente: **${money(Math.max(0, total - paidAmount))}**.`);
+    }
+    if (note) lines.push('', String(note).trim());
+    lines.push('', 'Las demás cláusulas del contrato continúan vigentes sin modificación.');
+    return JSON.stringify([{ title: `Otrosí No. ${number} al contrato de alquiler`, content: lines.join('\n') }]);
+  }
+
+  // POST /api/accommodations/:id/contract/amendments — draft an otrosí for the
+  // changes since the last signed version. `before` is only for contracts signed
+  // before terms were recorded: the previous values, typed by the user.
+  app.post('/api/accommodations/:id/contract/amendments', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await canAccessAccommodationContract(req, req.params.id, 'manage'))) {
+        return res.status(403).json({ error: 'Permiso denegado' });
+      }
+      const contract = await prisma.contracts.findFirst({ where: { accommodation_id: req.params.id } });
+      if (!contract) return res.status(404).json({ error: 'Contrato no encontrado' });
+      if (contract.status !== 'signed') {
+        return res.status(400).json({ error: 'El contrato aún no está firmado: regenéralo en lugar de hacer un otrosí' });
+      }
+      const accommodation = await prisma.accommodations.findUnique({ where: { id: req.params.id } });
+      const current = await contractTerms(accommodation);
+      let baseline = await amendmentBaseline(contract);
+      if (!baseline) {
+        const b = req.body?.before || {};
+        const plan = b.plan_id && UUID_PATTERN.test(b.plan_id)
+          ? await prisma.venue_plans.findUnique({ where: { id: b.plan_id }, select: { name: true } })
+          : null;
+        baseline = {
+          date: /^\d{4}-\d{2}-\d{2}$/.test(b.date || '') ? b.date : current.date,
+          plan_id: plan ? b.plan_id : current.plan_id,
+          plan_name: plan ? plan.name : current.plan_name,
+          adults: Number.isFinite(parseInt(b.adults)) ? parseInt(b.adults) : current.adults,
+          children: Number.isFinite(parseInt(b.children)) ? parseInt(b.children) : current.children,
+          agreed_price: Number.isFinite(Number(b.agreed_price)) && b.agreed_price !== '' ? Math.round(Number(b.agreed_price)) : current.agreed_price
+        };
+      }
+      const changes = diffTerms(baseline, current);
+      if (!changes.length) return res.status(400).json({ error: 'No hay cambios frente a lo firmado' });
+
+      // A new draft replaces the previous one (the booking may have changed again).
+      await prisma.contract_amendments.deleteMany({ where: { contract_id: contract.id, status: 'draft' } });
+      const signedCount = await prisma.contract_amendments.count({ where: { contract_id: contract.id, status: 'signed' } });
+      const number = signedCount + 1;
+      const note = String(req.body?.note || '').trim() || null;
+      const amendment = await prisma.contract_amendments.create({
+        data: {
+          contract_id: contract.id,
+          accommodation_id: accommodation.id,
+          number,
+          changes,
+          terms_after: current,
+          note,
+          snapshot_html: await renderAmendment({ number, contract, accommodation, changes, note }),
+          created_by: String(req.user.claims?.sub || '')
+        }
+      });
+      res.json(amendment);
+    } catch (error) {
+      console.error('[amendment] Create failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.delete('/api/accommodations/:id/contract/amendments/:amendmentId', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await canAccessAccommodationContract(req, req.params.id, 'manage'))) {
+        return res.status(403).json({ error: 'Permiso denegado' });
+      }
+      const deleted = await prisma.contract_amendments.deleteMany({
+        where: { id: req.params.amendmentId, accommodation_id: req.params.id, status: 'draft' }
+      });
+      if (!deleted.count) return res.status(400).json({ error: 'Solo se puede borrar un otrosí sin firmar' });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Public otrosí page: same shape as a public contract so the contract page renders it.
+  app.get('/api/public/contract-amendments/:token', async (req, res) => {
+    try {
+      if (!UUID_PATTERN.test(req.params.token)) return res.status(404).json({ error: 'Otrosí no encontrado' });
+      const amendment = await prisma.contract_amendments.findUnique({ where: { qr_token: req.params.token } });
+      if (!amendment) return res.status(404).json({ error: 'Otrosí no encontrado' });
+      const accommodation = await prisma.accommodations.findUnique({ where: { id: amendment.accommodation_id } });
+      const venue = accommodation?.venue ? await prisma.venues.findUnique({ where: { id: accommodation.venue } }) : null;
+      res.json({
+        ...amendment,
+        kind: 'amendment',
+        attachments: [],
+        venue_branding: venue ? {
+          name: venue.name,
+          logo_url: venue.logo_url,
+          brand_color_primary: venue.brand_color_primary,
+          brand_color_secondary: venue.brand_color_secondary,
+        } : null,
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/public/contract-amendments/:token/upload', upload.single('file'), async (req, res) => {
+    try {
+      if (!UUID_PATTERN.test(req.params.token)) return res.status(404).json({ error: 'Otrosí no encontrado' });
+      const amendment = await prisma.contract_amendments.findUnique({ where: { qr_token: req.params.token }, select: { status: true } });
+      if (!amendment) return res.status(404).json({ error: 'Otrosí no encontrado' });
+      if (amendment.status === 'signed') return res.status(400).json({ error: 'El otrosí ya está firmado' });
+      if (!req.file) return res.status(400).json({ error: 'No se envió archivo' });
+      const result = await uploadImage(req.file.buffer, { type: 'receipt', mimetype: req.file.mimetype });
+      res.json({ imageUrl: result.secure_url });
+    } catch (error) {
+      res.status(500).json({ error: 'Error al subir la imagen' });
+    }
+  });
+
+  app.post('/api/public/contract-amendments/:token/sign', async (req, res) => {
+    try {
+      if (!UUID_PATTERN.test(req.params.token)) return res.status(404).json({ error: 'Otrosí no encontrado' });
+      const amendment = await prisma.contract_amendments.findUnique({ where: { qr_token: req.params.token } });
+      if (!amendment) return res.status(404).json({ error: 'Otrosí no encontrado' });
+      if (amendment.status === 'signed') return res.status(400).json({ error: 'El otrosí ya está firmado' });
+      if (!req.body?.signature_image_url) return res.status(400).json({ error: 'Falta la firma' });
+      const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
+      const updated = await prisma.contract_amendments.update({
+        where: { id: amendment.id },
+        data: {
+          status: 'signed',
+          signature_image_url: req.body.signature_image_url,
+          accepted_at: new Date(),
+          accepted_ip: String(ip).split(',')[0].trim(),
+          accepted_user_agent: req.headers['user-agent'] || null,
+          updated_at: new Date()
+        }
+      });
+      res.json({ ...updated, kind: 'amendment', attachments: [] });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.post('/api/accommodations/:id/contract/regenerate', isAuthenticated, async (req, res) => {
     try {
       if (!(await canAccessAccommodationContract(req, req.params.id, 'manage'))) {
@@ -14327,10 +14548,13 @@ Responde con JSON EXACTAMENTE en este formato:
       const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
       const userAgent = req.headers['user-agent'];
 
+      const signedAccommodation = await prisma.accommodations.findUnique({ where: { id: contract.accommodation_id } });
       const updated = await prisma.contracts.update({
         where: { qr_token: req.params.token },
         data: {
           status: 'signed',
+          // What the guest agreed to: later changes need an amendment (otrosí).
+          signed_terms: signedAccommodation ? await contractTerms(signedAccommodation) : null,
           signature_image_url,
           signer_photo_url,
           signer_photo_sepia_url,

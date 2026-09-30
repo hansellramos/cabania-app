@@ -132,6 +132,109 @@
         </CCardBody>
       </CCard>
 
+      <!-- Otrosí: changes after the contract was signed -->
+      <CCard v-if="contract.status === 'signed'" class="mb-3" :class="{ 'border-warning': contract.pending?.changes?.length }">
+        <CCardHeader class="d-flex justify-content-between align-items-center">
+          <strong>Otrosíes</strong>
+          <CButton color="primary" size="sm" variant="outline" @click="openAmendment">Nuevo otrosí</CButton>
+        </CCardHeader>
+        <CCardBody>
+          <CAlert v-if="contract.pending?.changes?.length" color="warning" class="small">
+            <strong>El alquiler cambió desde la firma:</strong>
+            <ul class="mb-2 mt-1">
+              <li v-for="c in contract.pending.changes" :key="c.field">{{ c.label }}: {{ c.before }} → <strong>{{ c.after }}</strong></li>
+            </ul>
+            <CButton color="warning" size="sm" @click="openAmendment">Generar otrosí</CButton>
+          </CAlert>
+          <div v-if="!contract.amendments?.length && !contract.pending?.changes?.length" class="text-muted small">
+            Sin otrosíes. Si cambias la fecha, el plan, las personas o el valor del alquiler, aquí aparecerá el aviso para generar uno.
+          </div>
+          <div v-for="a in contract.amendments" :key="a.id" class="border rounded p-2 mb-2">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+              <div>
+                <strong>Otrosí No. {{ a.number }}</strong>
+                <CBadge :color="a.status === 'signed' ? 'success' : 'warning'" class="ms-2">
+                  {{ a.status === 'signed' ? `Firmado el ${formatDateTime(a.accepted_at)}` : 'Pendiente de firma' }}
+                </CBadge>
+              </div>
+              <div class="d-flex gap-2">
+                <CButton size="sm" color="secondary" variant="outline" @click="openAmendmentPage(a)">Ver</CButton>
+                <CButton v-if="a.status !== 'signed'" size="sm" :color="shareChannel === 'instagram' ? 'danger' : 'success'" @click="shareAmendment(a)">
+                  Enviar por {{ shareChannel === 'instagram' ? 'Instagram' : 'WhatsApp' }}
+                </CButton>
+                <CButton v-if="a.status !== 'signed'" size="sm" color="danger" variant="ghost" @click="deleteAmendment(a)">Borrar</CButton>
+              </div>
+            </div>
+            <ul class="small mb-0 mt-2">
+              <li v-for="c in a.changes" :key="c.field">{{ c.label }}: {{ c.before }} → <strong>{{ c.after }}</strong></li>
+            </ul>
+            <div v-if="a.note" class="small text-muted mt-1">{{ a.note }}</div>
+          </div>
+          <div v-if="amendmentMsg" class="small mt-2" :class="amendmentMsgClass">{{ amendmentMsg }}</div>
+        </CCardBody>
+      </CCard>
+
+      <CModal :visible="showAmendment" @close="showAmendment = false">
+        <CModalHeader close-button>
+          <CModalTitle>Generar otrosí</CModalTitle>
+        </CModalHeader>
+        <CModalBody>
+          <template v-if="!contract.pending?.baseline_unknown">
+            <p v-if="contract.pending?.changes?.length" class="small">El otrosí incluirá estos cambios frente a lo firmado:</p>
+            <ul v-if="contract.pending?.changes?.length" class="small">
+              <li v-for="c in contract.pending.changes" :key="c.field">{{ c.label }}: {{ c.before }} → <strong>{{ c.after }}</strong></li>
+            </ul>
+            <p v-else class="small text-muted">
+              No hay cambios frente a lo firmado. Primero edita el alquiler (fecha, plan, personas o valor) y vuelve aquí.
+            </p>
+          </template>
+          <template v-else>
+            <p class="small">
+              Este contrato se firmó antes de que CabanIA guardara los datos firmados. Indica <strong>cómo estaba al firmar</strong>
+              (los datos actuales del alquiler son los nuevos):
+            </p>
+            <CRow class="g-2 small">
+              <CCol :xs="6">
+                <CFormLabel class="small">Fecha firmada</CFormLabel>
+                <CFormInput v-model="before.date" type="date" size="sm" />
+              </CCol>
+              <CCol :xs="6">
+                <CFormLabel class="small">Plan firmado</CFormLabel>
+                <CFormSelect v-model="before.plan_id" size="sm">
+                  <option v-for="p in venuePlans" :key="p.id" :value="p.id">{{ p.name }}</option>
+                </CFormSelect>
+              </CCol>
+              <CCol :xs="4">
+                <CFormLabel class="small">Adultos</CFormLabel>
+                <CFormInput v-model="before.adults" type="number" min="0" size="sm" />
+              </CCol>
+              <CCol :xs="4">
+                <CFormLabel class="small">Niños</CFormLabel>
+                <CFormInput v-model="before.children" type="number" min="0" size="sm" />
+              </CCol>
+              <CCol :xs="4">
+                <CFormLabel class="small">Valor total</CFormLabel>
+                <CFormInput v-model="before.agreed_price" type="number" min="0" size="sm" />
+              </CCol>
+            </CRow>
+          </template>
+          <CFormLabel class="small mt-3">Nota (opcional)</CFormLabel>
+          <CFormTextarea v-model="amendmentNote" rows="2" placeholder="Ej: Se reprograma a solicitud del cliente." />
+          <p class="small text-muted mt-2 mb-0">
+            El otrosí dice que las demás cláusulas del contrato siguen vigentes. El cliente lo firma desde su link, solo con su firma.
+          </p>
+          <div v-if="amendmentError" class="text-danger small mt-2">{{ amendmentError }}</div>
+        </CModalBody>
+        <CModalFooter>
+          <CButton color="secondary" variant="outline" @click="showAmendment = false">Cancelar</CButton>
+          <CButton
+            color="primary"
+            :disabled="creatingAmendment || (!contract.pending?.baseline_unknown && !contract.pending?.changes?.length)"
+            @click="createAmendment"
+          >{{ creatingAmendment ? 'Generando...' : 'Generar otrosí' }}</CButton>
+        </CModalFooter>
+      </CModal>
+
       <!-- Contract preview (collapsible sections) -->
       <CCard class="mb-3">
         <CCardHeader class="d-flex justify-content-between align-items-center">
@@ -332,6 +435,92 @@ function toggleAllSections() {
   const next = {}
   sections.value.forEach((_, i) => { next[i] = target })
   expanded.value = next
+}
+
+// ----- Otrosí -----
+const showAmendment = ref(false)
+const amendmentNote = ref('')
+const amendmentError = ref('')
+const amendmentMsg = ref('')
+const amendmentMsgClass = ref('text-success')
+const creatingAmendment = ref(false)
+const venuePlans = ref([])
+const before = ref({ date: '', plan_id: '', adults: 0, children: 0, agreed_price: 0 })
+
+function amendmentUrl(a) {
+  return `${window.location.origin}/#/contract/amendment/${a.qr_token}`
+}
+
+async function openAmendment() {
+  amendmentNote.value = ''
+  amendmentError.value = ''
+  const current = contract.value?.pending?.current || {}
+  before.value = {
+    date: current.date || '',
+    plan_id: current.plan_id || '',
+    adults: current.adults ?? 0,
+    children: current.children ?? 0,
+    agreed_price: current.agreed_price ?? 0
+  }
+  if (contract.value?.pending?.baseline_unknown && props.accommodation?.venue && !venuePlans.value.length) {
+    const res = await fetch(`/api/venue-plans?venue_id=${props.accommodation.venue}`, { credentials: 'include' })
+    if (res.ok) venuePlans.value = await res.json()
+  }
+  showAmendment.value = true
+}
+
+async function createAmendment() {
+  creatingAmendment.value = true
+  amendmentError.value = ''
+  try {
+    const res = await fetch(`/api/accommodations/${props.accommodationId}/contract/amendments`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        note: amendmentNote.value,
+        ...(contract.value?.pending?.baseline_unknown && { before: before.value })
+      })
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) throw new Error(data.error || 'No se pudo generar el otrosí')
+    showAmendment.value = false
+    amendmentMsgClass.value = 'text-success'
+    amendmentMsg.value = `Otrosí No. ${data.number} generado. Envíaselo al cliente para que lo firme.`
+    await loadContract()
+  } catch (err) {
+    amendmentError.value = err.message
+  } finally {
+    creatingAmendment.value = false
+  }
+}
+
+function openAmendmentPage(a) {
+  window.open(amendmentUrl(a), '_blank')
+}
+
+async function shareAmendment(a) {
+  const customerName = props.accommodation?.customer_data?.fullname || 'cliente'
+  const venueName = props.accommodation?.venue_data?.name || 'la cabaña'
+  const message = `Hola ${customerName}, te comparto el Otrosí No. ${a.number} a tu contrato de reserva en ${venueName}, `
+    + `con los cambios que acordamos. Por favor léelo y fírmalo aquí:\n${amendmentUrl(a)}`
+  const target = contactChannel(props.accommodation?.customer_data, message)
+  if (target?.channel === 'instagram') {
+    amendmentMsgClass.value = 'text-success'
+    amendmentMsg.value = (await copyText(message)) ? 'Mensaje copiado: pégalo en el chat de Instagram.' : ''
+  }
+  window.open(target?.url || `https://wa.me/?text=${encodeURIComponent(message)}`, '_blank')
+}
+
+async function deleteAmendment(a) {
+  const res = await fetch(`/api/accommodations/${props.accommodationId}/contract/amendments/${a.id}`, {
+    method: 'DELETE',
+    credentials: 'include'
+  })
+  const data = await res.json().catch(() => ({}))
+  amendmentMsgClass.value = res.ok ? 'text-success' : 'text-danger'
+  amendmentMsg.value = res.ok ? `Otrosí No. ${a.number} borrado.` : (data.error || 'No se pudo borrar')
+  await loadContract()
 }
 
 async function loadContract() {

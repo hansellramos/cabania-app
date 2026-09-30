@@ -51,7 +51,7 @@
           class="cabania-contract__logo"
         />
         <h1 class="cabania-contract__title">{{ contract.venue_branding?.name || 'Contrato de Hospedaje' }}</h1>
-        <p class="cabania-contract__subtitle">Contrato de Reserva</p>
+        <p class="cabania-contract__subtitle">{{ isAmendment ? `Otrosí No. ${contract.number} al contrato de reserva` : 'Contrato de Reserva' }}</p>
 
         <div v-if="contract.status === 'signed'" class="cabania-contract__status cabania-contract__status--signed">
           <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
@@ -154,7 +154,7 @@
       <!-- Sign CTA (hidden in print) -->
       <div v-if="contract.status !== 'signed'" class="cabania-contract__cta">
         <button class="cabania-btn cabania-btn--gradient" @click="startSigning">
-          Firmar y Aceptar Contrato
+          {{ isAmendment ? 'Firmar y aceptar otrosí' : 'Firmar y Aceptar Contrato' }}
         </button>
       </div>
     </article>
@@ -223,11 +223,20 @@
             @click="beginSignature"
           >Comenzar</button>
           <button
-            v-if="signStep === 1"
+            v-if="signStep === 1 && !isAmendment"
             class="cabania-btn cabania-btn--gradient"
             :disabled="!hasSignature"
             @click="goToPhotoStep"
           >Siguiente</button>
+          <button
+            v-if="signStep === 1 && isAmendment"
+            class="cabania-btn cabania-btn--gradient"
+            :disabled="signing || !hasSignature"
+            @click="submitSignature"
+          >
+            <span v-if="signing" class="cabania-spinner cabania-spinner--sm"></span>
+            {{ signing ? 'Procesando...' : 'Confirmar y firmar' }}
+          </button>
           <button
             v-if="signStep === 2"
             class="cabania-btn cabania-btn--gradient"
@@ -265,6 +274,11 @@ const THEME_KEY = 'coreui-free-vue-admin-template-theme'
 
 const route = useRoute()
 const token = computed(() => route.params.token)
+// The same page shows an otrosí (contract amendment): its own API, only a signature.
+const isAmendment = computed(() => route.name === 'PublicContractAmendment')
+const apiBase = computed(() => isAmendment.value
+  ? `/api/public/contract-amendments/${token.value}`
+  : `/api/public/contracts/${token.value}`)
 
 const contract = ref(null)
 const loading = ref(true)
@@ -336,7 +350,7 @@ const brandingStyles = computed(() => {
 async function loadContract() {
   try {
     loading.value = true
-    const res = await fetch(`/api/public/contracts/${token.value}`)
+    const res = await fetch(apiBase.value)
     if (!res.ok) {
       error.value = 'Contrato no encontrado'
       return
@@ -384,6 +398,8 @@ function startSigning() {
   capturedPhoto.value = null
   capturedDoc.value = null
   showSignModal.value = true
+  // An otrosí only needs the signature (photo and ID were taken with the contract).
+  if (isAmendment.value) beginSignature()
 }
 
 function beginSignature() {
@@ -518,7 +534,7 @@ function stopCamera() {
 async function uploadContractAsset(blob, filename) {
   const form = new FormData()
   form.append('file', blob, filename)
-  const res = await fetch(`/api/public/contracts/${token.value}/upload`, {
+  const res = await fetch(`${apiBase.value}/upload`, {
     method: 'POST',
     body: form,
   })
@@ -560,7 +576,7 @@ async function submitSignature() {
       })
     }
 
-    const signRes = await fetch(`/api/public/contracts/${token.value}/sign`, {
+    const signRes = await fetch(`${apiBase.value}/sign`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

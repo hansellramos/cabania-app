@@ -1176,12 +1176,40 @@ model contracts {
   updated_at            DateTime? @db.Timestamptz(6)
   created_by            String?   @db.VarChar(255)
 
+  // Date, plan, people and price as the guest signed them: changes after that
+  // need an amendment (otrosí).
+  signed_terms          Json?     @db.Json
   template              contract_templates? @relation(fields: [template_id], references: [id])
   attachments           contract_attachments[]
+  amendments            contract_amendments[]
 
   @@index([accommodation_id])
   @@index([qr_token])
   @@index([status])
+}
+
+// Otrosí: a signed change to a signed contract (date, plan, people, price).
+model contract_amendments {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  contract_id         String    @db.Uuid
+  accommodation_id    String    @db.Uuid
+  number              Int
+  changes             Json      @db.Json
+  terms_after         Json      @db.Json
+  note                String?   @db.Text
+  snapshot_html       String?   @db.Text
+  qr_token            String    @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  status              String    @default("draft") @db.VarChar(20)
+  signature_image_url String?   @db.Text
+  accepted_at         DateTime? @db.Timestamptz(6)
+  accepted_ip         String?   @db.VarChar(45)
+  accepted_user_agent String?   @db.Text
+  created_by          String?   @db.VarChar(255)
+  created_at          DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime? @db.Timestamptz(6)
+  contract            contracts @relation(fields: [contract_id], references: [id], onDelete: Cascade)
+
+  @@index([contract_id])
 }
 
 model contract_attachments {
