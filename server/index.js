@@ -7,7 +7,7 @@ const multer = require('multer');
 const { uploadImage, deleteImage, extractPublicId } = require('./upload-service');
 const { prisma } = require('./db');
 const { setupAuth, isAuthenticated } = require('./auth/replitAuth');
-const { loadUserPermissions, hasPermission, hasOwnOnly, hasAnyPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
+const { getUserPermissions, loadUserPermissions, hasPermission, hasOwnOnly, hasAnyPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
 const llmService = require('./llm-service');
 
 // WhatsApp service — proxied to external Baileys microservice via HTTP
@@ -9822,10 +9822,14 @@ REGLAS:
   }
 
   // In-app assistant for the team (server/assistant.js)
-  require('./assistant')(app, {
-    prisma, llmService, isAuthenticated, hasPermission, hasOwnOnly,
-    getAccessibleVenueIds, getAgentAccommodationIds, logAICall
-  });
+  const agentToolDeps = {
+    prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
+    findBookingConflict, cleanPhone, cleanInstagram
+  };
+  require('./assistant')(app, { ...agentToolDeps, llmService, isAuthenticated, logAICall });
+
+  // ==================== API for external AI agents (keys, REST, OpenAPI, MCP) ====================
+  require('./agent-api')(app, { ...agentToolDeps, isAuthenticated, getUserPermissions });
 
   // ==================== In-app notifications ====================
 
