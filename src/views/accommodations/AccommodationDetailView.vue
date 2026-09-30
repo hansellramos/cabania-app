@@ -516,7 +516,7 @@
     </CCol>
   </CRow>
 
-  <CModal
+  <CModal teleport
     :visible="showRefundModal"
     @close="showRefundModal = false"
     backdrop="static"
@@ -591,7 +591,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal
+  <CModal teleport
     :visible="showClaimModal"
     @close="showClaimModal = false"
     backdrop="static"
@@ -647,7 +647,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal
+  <CModal teleport
     :visible="showEvidenceModal"
     @close="showEvidenceModal = false"
     size="lg"
@@ -666,7 +666,7 @@
     </CModalBody>
   </CModal>
 
-  <CModal
+  <CModal teleport
     :visible="showReceiptModal"
     @close="showReceiptModal = false"
     size="xl"
@@ -766,7 +766,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal :visible="showNoShow" @close="showNoShow = false">
+  <CModal teleport :visible="showNoShow" @close="showNoShow = false">
     <CModalHeader close-button>
       <CModalTitle>Marcar como "No asistió"</CModalTitle>
     </CModalHeader>
@@ -784,7 +784,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal :visible="showReschedule" @close="showReschedule = false">
+  <CModal teleport :visible="showReschedule" @close="showReschedule = false">
     <CModalHeader close-button>
       <CModalTitle>Reagendar por cortesía</CModalTitle>
     </CModalHeader>

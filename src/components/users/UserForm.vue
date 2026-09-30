@@ -123,7 +123,7 @@
     </div>
 
     <!-- Modal: Resetear clave temporal -->
-    <CModal :visible="showTempKeyModal" @close="closeTempKeyModal" alignment="center" size="lg">
+    <CModal teleport :visible="showTempKeyModal" @close="closeTempKeyModal" alignment="center" size="lg">
       <CModalHeader>
         <CModalTitle>Resetear Clave</CModalTitle>
       </CModalHeader>

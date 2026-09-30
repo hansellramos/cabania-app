@@ -16,7 +16,7 @@
       </li>
     </ul>
     
-    <CModal :visible="showCreateForm" @close="cancelCreate" alignment="center">
+    <CModal teleport :visible="showCreateForm" @close="cancelCreate" alignment="center">
       <CModalHeader>
         <CModalTitle>Crear Nuevo Cliente</CModalTitle>
       </CModalHeader>

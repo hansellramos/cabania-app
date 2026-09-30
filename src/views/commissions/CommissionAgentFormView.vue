@@ -225,7 +225,7 @@
   </CRow>
 
   <!-- Modal: Enviar clave temporal por WhatsApp -->
-  <CModal :visible="showTempKeyModal" @close="showTempKeyModal = false" alignment="center" size="lg">
+  <CModal teleport :visible="showTempKeyModal" @close="showTempKeyModal = false" alignment="center" size="lg">
     <CModalHeader>
       <CModalTitle>Enviar clave temporal por WhatsApp</CModalTitle>
     </CModalHeader>

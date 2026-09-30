@@ -260,7 +260,7 @@
         Aplica a respuestas desde el chat de CabanIA o desde la app de Instagram. Pasado ese tiempo la IA retoma sola;
         también puedes reanudarla antes con "Reanudar bot". 0 = no pausar.
       </div>
-      <CModal :visible="showFollowupHelp" @close="showFollowupHelp = false">
+      <CModal teleport :visible="showFollowupHelp" @close="showFollowupHelp = false">
         <CModalHeader close-button>
           <CModalTitle>¿Cómo funciona el mensaje de seguimiento?</CModalTitle>
         </CModalHeader>

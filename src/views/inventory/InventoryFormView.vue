@@ -298,7 +298,7 @@
   </CRow>
 
   <!-- Usage Modal -->
-  <CModal :visible="showUsageModal" @close="showUsageModal = false">
+  <CModal teleport :visible="showUsageModal" @close="showUsageModal = false">
     <CModalHeader>
       <CModalTitle>Registrar Uso</CModalTitle>
     </CModalHeader>
@@ -331,7 +331,7 @@
   </CModal>
 
   <!-- Adjust Stock Modal -->
-  <CModal :visible="showAdjustModal" @close="showAdjustModal = false">
+  <CModal teleport :visible="showAdjustModal" @close="showAdjustModal = false">
     <CModalHeader>
       <CModalTitle>Ajustar Stock</CModalTitle>
     </CModalHeader>

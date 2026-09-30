@@ -327,7 +327,7 @@
   </CRow>
 
   <!-- Register Passkey Modal -->
-  <CModal :visible="showRegisterModal" @close="showRegisterModal = false" alignment="center">
+  <CModal teleport :visible="showRegisterModal" @close="showRegisterModal = false" alignment="center">
     <CModalHeader>
       <CModalTitle>Registrar Passkey</CModalTitle>
     </CModalHeader>

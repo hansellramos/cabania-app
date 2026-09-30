@@ -59,7 +59,7 @@
   </CRow>
 
   <!-- Import Modal -->
-  <CModal :visible="showImportModal" @close="closeImportModal" size="xl" backdrop="static">
+  <CModal teleport :visible="showImportModal" @close="closeImportModal" size="xl" backdrop="static">
     <CModalHeader>
       <CModalTitle>Importar Plantilla desde PDF/Word</CModalTitle>
     </CModalHeader>
@@ -140,7 +140,7 @@
   </CModal>
 
   <!-- Preview Modal -->
-  <CModal :visible="showPreviewModal" @close="showPreviewModal = false" size="lg">
+  <CModal teleport :visible="showPreviewModal" @close="showPreviewModal = false" size="lg">
     <CModalHeader>
       <CModalTitle>Preview: {{ previewData?.name }}</CModalTitle>
     </CModalHeader>

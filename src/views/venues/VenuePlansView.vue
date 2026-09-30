@@ -61,7 +61,7 @@
     </CCol>
   </CRow>
 
-  <CModal :visible="showFormModal" @close="closeFormModal" size="xl" scrollable>
+  <CModal teleport :visible="showFormModal" @close="closeFormModal" size="xl" scrollable>
     <CModalHeader>
       <CModalTitle>{{ editingPlan ? 'Editar Plan' : 'Nuevo Plan' }}</CModalTitle>
     </CModalHeader>
@@ -297,7 +297,7 @@ No incluye bebidas" />
     </CModalFooter>
   </CModal>
 
-  <CModal :visible="showDeleteModal" @close="showDeleteModal = false">
+  <CModal teleport :visible="showDeleteModal" @close="showDeleteModal = false">
     <CModalHeader>
       <CModalTitle>Confirmar eliminación</CModalTitle>
     </CModalHeader>

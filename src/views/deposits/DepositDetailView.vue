@@ -276,7 +276,7 @@
     </CCol>
   </CRow>
 
-  <CModal :visible="showRefundModal" @close="showRefundModal = false">
+  <CModal teleport :visible="showRefundModal" @close="showRefundModal = false">
     <CModalHeader>
       <CModalTitle>Devolver Depósito</CModalTitle>
     </CModalHeader>
@@ -308,7 +308,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal :visible="showClaimModal" @close="showClaimModal = false" size="lg">
+  <CModal teleport :visible="showClaimModal" @close="showClaimModal = false" size="lg">
     <CModalHeader>
       <CModalTitle>Cobrar por Daños</CModalTitle>
     </CModalHeader>
@@ -346,7 +346,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal 
+  <CModal teleport 
     :visible="showReceiptModal" 
     @close="showReceiptModal = false" 
     size="xl"
@@ -359,7 +359,7 @@
     </CModalBody>
   </CModal>
 
-  <CModal 
+  <CModal teleport 
     :visible="showEvidenceModal" 
     @close="showEvidenceModal = false" 
     size="xl"

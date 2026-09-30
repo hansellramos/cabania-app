@@ -174,7 +174,7 @@
         </CCardBody>
       </CCard>
 
-      <CModal :visible="showAmendment" @close="showAmendment = false">
+      <CModal teleport :visible="showAmendment" @close="showAmendment = false">
         <CModalHeader close-button>
           <CModalTitle>Generar otrosí</CModalTitle>
         </CModalHeader>
@@ -316,7 +316,7 @@
       </CCard>
     </template>
 
-    <CModal
+    <CModal teleport
       :visible="!!modalImageUrl"
       @close="modalImageUrl = null"
       size="xl"
@@ -487,7 +487,7 @@ async function createAmendment() {
     showAmendment.value = false
     amendmentMsgClass.value = 'text-success'
     amendmentMsg.value = `Otrosí No. ${data.number} generado. Envíaselo al cliente para que lo firme.`
-    await loadContract()
+    await loadContract({ silent: true })
   } catch (err) {
     amendmentError.value = err.message
   } finally {
@@ -520,11 +520,14 @@ async function deleteAmendment(a) {
   const data = await res.json().catch(() => ({}))
   amendmentMsgClass.value = res.ok ? 'text-success' : 'text-danger'
   amendmentMsg.value = res.ok ? `Otrosí No. ${a.number} borrado.` : (data.error || 'No se pudo borrar')
-  await loadContract()
+  await loadContract({ silent: true })
 }
 
-async function loadContract() {
-  loading.value = true
+// silent: refresh without the spinner. The spinner replaces the whole tab,
+// modals included, and a modal removed while closing leaves the page unable
+// to scroll.
+async function loadContract({ silent = false } = {}) {
+  if (!silent) loading.value = true
   try {
     const res = await fetch(`/api/accommodations/${props.accommodationId}/contract`, {
       credentials: 'include'
@@ -682,7 +685,7 @@ async function uploadAttachmentFile(file) {
       const e = await attRes.json().catch(() => ({}))
       throw new Error(e.error || 'Error al adjuntar')
     }
-    await loadContract()
+    await loadContract({ silent: true })
   } catch (e) {
     attachError.value = e.message
   } finally {
@@ -742,7 +745,7 @@ async function deleteAttachment(att) {
       const e = await res.json().catch(() => ({}))
       throw new Error(e.error || 'No se pudo eliminar')
     }
-    await loadContract()
+    await loadContract({ silent: true })
   } catch (e) {
     alert(e.message)
   }

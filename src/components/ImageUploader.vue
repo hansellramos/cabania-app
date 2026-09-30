@@ -89,7 +89,7 @@
       {{ uploadError }}
     </div>
 
-    <CModal
+    <CModal teleport
       :visible="!!previewImage"
       @close="previewImage = null"
       size="xl"

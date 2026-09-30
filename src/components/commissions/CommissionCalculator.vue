@@ -169,7 +169,7 @@
   </CRow>
 
   <!-- Payment Modal -->
-  <CModal
+  <CModal teleport
     :visible="showPaymentModal"
     @close="showPaymentModal = false"
     backdrop="static"

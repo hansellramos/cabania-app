@@ -207,7 +207,7 @@
   </CRow>
 
   <!-- Image Preview Modal -->
-  <CModal :visible="showImageModal" @close="showImageModal = false" size="xl">
+  <CModal teleport :visible="showImageModal" @close="showImageModal = false" size="xl">
     <CModalHeader>
       <CModalTitle>Imagen</CModalTitle>
     </CModalHeader>

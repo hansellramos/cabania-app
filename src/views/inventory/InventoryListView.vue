@@ -271,7 +271,7 @@
     </CCol>
   </CRow>
 
-  <CModal :visible="showDeleteModal" @close="showDeleteModal = false">
+  <CModal teleport :visible="showDeleteModal" @close="showDeleteModal = false">
     <CModalHeader>
       <CModalTitle>Confirmar eliminacion</CModalTitle>
     </CModalHeader>

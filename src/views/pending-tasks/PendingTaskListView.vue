@@ -155,7 +155,7 @@
     </CCol>
   </CRow>
 
-  <CModal :visible="showDeleteModal" @close="showDeleteModal = false">
+  <CModal teleport :visible="showDeleteModal" @close="showDeleteModal = false">
     <CModalHeader>
       <CModalTitle>Confirmar eliminacion</CModalTitle>
     </CModalHeader>
@@ -170,7 +170,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal :visible="showImageModal" @close="showImageModal = false" size="lg">
+  <CModal teleport :visible="showImageModal" @close="showImageModal = false" size="lg">
     <CModalHeader>
       <CModalTitle>Imagen</CModalTitle>
     </CModalHeader>

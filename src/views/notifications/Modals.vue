@@ -36,7 +36,7 @@ const fullscreenXxlDemo = ref(false)
             possible, or provide another explicit dismiss action.
           </p>
           <DocsExample href="components/modal.html#modal-components">
-            <CModal
+            <CModal teleport
               class="show d-block position-static"
               :backdrop="false"
               :keyboard="false"
@@ -73,7 +73,7 @@ const fullscreenXxlDemo = ref(false)
               "
               >Launch demo modal</CButton
             >
-            <CModal
+            <CModal teleport
               :visible="visibleLiveDemo"
               @close="
                 () => {
@@ -129,7 +129,7 @@ const fullscreenXxlDemo = ref(false)
               "
               >Launch demo modal</CButton
             >
-            <CModal
+            <CModal teleport
               backdrop="static"
               :visible="visibleStaticBackdropDemo"
               @close="
@@ -187,7 +187,7 @@ const fullscreenXxlDemo = ref(false)
               "
               >Launch demo modal</CButton
             >
-            <CModal
+            <CModal teleport
               :visible="visibleScrollingLongContentDemo"
               @close="
                 () => {
@@ -307,7 +307,7 @@ const fullscreenXxlDemo = ref(false)
               "
               >Launch demo modal</CButton
             >
-            <CModal
+            <CModal teleport
               scrollable
               :visible="visibleScrollableDemo"
               @close="
@@ -435,7 +435,7 @@ const fullscreenXxlDemo = ref(false)
               "
               >Vertically centered modal</CButton
             >
-            <CModal
+            <CModal teleport
               alignment="center"
               :visible="visibleVerticallyCenteredDemo"
               @close="
@@ -485,7 +485,7 @@ const fullscreenXxlDemo = ref(false)
               "
               >Vertically centered scrollable modal</CButton
             >
-            <CModal
+            <CModal teleport
               alignment="center"
               scrollable
               :visible="visibleVerticallyCenteredScrollableDemo"
@@ -547,7 +547,7 @@ const fullscreenXxlDemo = ref(false)
               "
               >Launch demo modal</CButton
             >
-            <CModal
+            <CModal teleport
               :visible="tooltipsAndPopoversDemo"
               @close="
                 () => {
@@ -685,7 +685,7 @@ const fullscreenXxlDemo = ref(false)
               "
               >Small modal</CButton
             >
-            <CModal
+            <CModal teleport
               size="xl"
               :visible="xlDemo"
               @close="
@@ -706,7 +706,7 @@ const fullscreenXxlDemo = ref(false)
               </CModalHeader>
               <CModalBody> ... </CModalBody>
             </CModal>
-            <CModal
+            <CModal teleport
               size="lg"
               :visible="lgDemo"
               @close="
@@ -727,7 +727,7 @@ const fullscreenXxlDemo = ref(false)
               </CModalHeader>
               <CModalBody> ... </CModalBody>
             </CModal>
-            <CModal
+            <CModal teleport
               size="sm"
               :visible="smDemo"
               @close="
@@ -861,7 +861,7 @@ const fullscreenXxlDemo = ref(false)
               "
               >Full screen below xxl</CButton
             >
-            <CModal
+            <CModal teleport
               fullscreen
               :visible="fullscreenDemo"
               @close="
@@ -882,7 +882,7 @@ const fullscreenXxlDemo = ref(false)
               </CModalHeader>
               <CModalBody> ... </CModalBody>
             </CModal>
-            <CModal
+            <CModal teleport
               fullscreen="sm"
               :visible="fullscreenSmDemo"
               @close="
@@ -903,7 +903,7 @@ const fullscreenXxlDemo = ref(false)
               </CModalHeader>
               <CModalBody> ... </CModalBody>
             </CModal>
-            <CModal
+            <CModal teleport
               fullscreen="md"
               :visible="fullscreenMdDemo"
               @close="
@@ -924,7 +924,7 @@ const fullscreenXxlDemo = ref(false)
               </CModalHeader>
               <CModalBody> ... </CModalBody>
             </CModal>
-            <CModal
+            <CModal teleport
               fullscreen="lg"
               :visible="fullscreenLgDemo"
               @close="
@@ -945,7 +945,7 @@ const fullscreenXxlDemo = ref(false)
               </CModalHeader>
               <CModalBody> ... </CModalBody>
             </CModal>
-            <CModal
+            <CModal teleport
               fullscreen="xl"
               :visible="fullscreenXlDemo"
               @close="
@@ -966,7 +966,7 @@ const fullscreenXxlDemo = ref(false)
               </CModalHeader>
               <CModalBody> ... </CModalBody>
             </CModal>
-            <CModal
+            <CModal teleport
               fullscreen="xxl"
               :visible="fullscreenXxlDemo"
               @close="

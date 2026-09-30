@@ -117,7 +117,7 @@
     </CCol>
   </CRow>
 
-  <CModal :visible="showFormModal" @close="closeFormModal" size="lg">
+  <CModal teleport :visible="showFormModal" @close="closeFormModal" size="lg">
     <CModalHeader>
       <CModalTitle>{{ editingCategory ? 'Editar Categoria de Inventario' : 'Nueva Categoria de Inventario' }}</CModalTitle>
     </CModalHeader>
@@ -209,7 +209,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal :visible="showDeleteModal" @close="showDeleteModal = false">
+  <CModal teleport :visible="showDeleteModal" @close="showDeleteModal = false">
     <CModalHeader>
       <CModalTitle>Confirmar eliminacion</CModalTitle>
     </CModalHeader>

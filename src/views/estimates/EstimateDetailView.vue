@@ -151,7 +151,7 @@
     </CCol>
   </CRow>
 
-  <CModal :visible="receiptModalVisible" @close="receiptModalVisible = false" size="lg" alignment="center">
+  <CModal teleport :visible="receiptModalVisible" @close="receiptModalVisible = false" size="lg" alignment="center">
     <CModalBody class="text-center p-0">
       <img v-if="estimate?.receipt_url" :src="estimate.receipt_url" class="img-fluid" alt="Comprobante completo" />
     </CModalBody>
