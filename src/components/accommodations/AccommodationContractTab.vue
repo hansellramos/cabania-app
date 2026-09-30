@@ -174,7 +174,7 @@
         </CCardBody>
       </CCard>
 
-      <CModal :visible="showAmendment" @close="showAmendment = false">
+      <CModal teleport :visible="showAmendment" @close="showAmendment = false">
         <CModalHeader close-button>
           <CModalTitle>Generar otrosí</CModalTitle>
         </CModalHeader>
@@ -316,7 +316,7 @@
       </CCard>
     </template>
 
-    <CModal
+    <CModal teleport
       :visible="!!modalImageUrl"
       @close="modalImageUrl = null"
       size="xl"

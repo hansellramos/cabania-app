@@ -498,7 +498,7 @@
     </CCol>
   </CRow>
 
-  <CModal 
+  <CModal teleport 
     :visible="showReceiptModal" 
     @close="showReceiptModal = false" 
     size="xl"
@@ -521,7 +521,7 @@
   </CModal>
 
   <!-- Create Inventory Item Modal -->
-  <CModal
+  <CModal teleport
     :visible="showCreateInventoryModal"
     @close="showCreateInventoryModal = false"
     size="md"

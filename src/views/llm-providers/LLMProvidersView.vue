@@ -87,7 +87,7 @@
     </CCol>
   </CRow>
 
-  <CModal :visible="showFormModal" @close="closeFormModal" size="lg">
+  <CModal teleport :visible="showFormModal" @close="closeFormModal" size="lg">
     <CModalHeader>
       <CModalTitle>{{ editingProvider ? 'Editar Proveedor LLM' : 'Nuevo Proveedor LLM' }}</CModalTitle>
     </CModalHeader>
@@ -159,7 +159,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal :visible="showDeleteModal" @close="showDeleteModal = false">
+  <CModal teleport :visible="showDeleteModal" @close="showDeleteModal = false">
     <CModalHeader>
       <CModalTitle>Confirmar eliminación</CModalTitle>
     </CModalHeader>

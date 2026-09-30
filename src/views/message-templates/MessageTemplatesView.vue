@@ -158,7 +158,7 @@
     </CCol>
   </CRow>
 
-  <CModal :visible="showFormModal" @close="closeFormModal" size="lg">
+  <CModal teleport :visible="showFormModal" @close="closeFormModal" size="lg">
     <CModalHeader>
       <CModalTitle>{{ editingTemplate ? 'Editar Template de Mensaje' : 'Nuevo Template de Mensaje' }}</CModalTitle>
     </CModalHeader>
@@ -244,7 +244,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal :visible="showViewModal" @close="showViewModal = false" size="lg">
+  <CModal teleport :visible="showViewModal" @close="showViewModal = false" size="lg">
     <CModalHeader>
       <CModalTitle>{{ viewingTemplate?.name }}</CModalTitle>
     </CModalHeader>
@@ -287,7 +287,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal :visible="showDeleteModal" @close="showDeleteModal = false">
+  <CModal teleport :visible="showDeleteModal" @close="showDeleteModal = false">
     <CModalHeader>
       <CModalTitle>Confirmar eliminación</CModalTitle>
     </CModalHeader>

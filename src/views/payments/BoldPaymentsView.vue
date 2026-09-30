@@ -94,7 +94,7 @@
     </CCol>
   </CRow>
 
-  <CModal :visible="!!detail" size="lg" @close="closeDetail">
+  <CModal teleport :visible="!!detail" size="lg" @close="closeDetail">
     <CModalHeader close-button>
       <CModalTitle>Pago {{ detail?.bold_link_id }}</CModalTitle>
     </CModalHeader>

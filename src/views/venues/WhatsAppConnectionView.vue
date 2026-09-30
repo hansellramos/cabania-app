@@ -169,7 +169,7 @@
       </CCard>
 
       <!-- Test Message Modal -->
-      <CModal :visible="showTestModal" @close="showTestModal = false" alignment="center">
+      <CModal teleport :visible="showTestModal" @close="showTestModal = false" alignment="center">
         <CModalHeader>
           <CModalTitle>Enviar mensaje de prueba</CModalTitle>
         </CModalHeader>

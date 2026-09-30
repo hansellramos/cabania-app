@@ -328,7 +328,7 @@
   </CRow>
 
   <!-- Supply Modal -->
-  <CModal :visible="showSupplyModal" @close="showSupplyModal = false">
+  <CModal teleport :visible="showSupplyModal" @close="showSupplyModal = false">
     <CModalHeader>
       <CModalTitle>Agregar Insumo</CModalTitle>
     </CModalHeader>
@@ -369,7 +369,7 @@
   </CModal>
 
   <!-- Image Preview Modal -->
-  <CModal :visible="showImageModal" @close="showImageModal = false" size="xl">
+  <CModal teleport :visible="showImageModal" @close="showImageModal = false" size="xl">
     <CModalHeader>
       <CModalTitle>Imagen</CModalTitle>
     </CModalHeader>

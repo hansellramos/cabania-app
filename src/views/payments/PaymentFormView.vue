@@ -216,7 +216,7 @@
     </CCol>
   </CRow>
 
-  <CModal 
+  <CModal teleport 
     :visible="showReceiptModal" 
     @close="showReceiptModal = false" 
     size="xl"

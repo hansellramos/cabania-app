@@ -193,7 +193,7 @@
     </CToast>
   </CToaster>
 
-  <CModal :visible="!!imageModalUrl" @close="imageModalUrl = null" size="lg" alignment="center">
+  <CModal teleport :visible="!!imageModalUrl" @close="imageModalUrl = null" size="lg" alignment="center">
     <CModalBody class="text-center p-0">
       <img v-if="imageModalUrl" :src="imageModalUrl" class="img-fluid" alt="Imagen completa" />
     </CModalBody>

@@ -93,7 +93,7 @@
   </CRow>
 
   <!-- Invite Modal -->
-  <CModal :visible="showModal" @close="closeModal" size="lg">
+  <CModal teleport :visible="showModal" @close="closeModal" size="lg">
     <CModalHeader>
       <CModalTitle>Invitar usuario</CModalTitle>
     </CModalHeader>

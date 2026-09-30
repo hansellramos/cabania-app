@@ -196,7 +196,7 @@
     </CCol>
   </CRow>
 
-  <CModal
+  <CModal teleport
     :visible="showReceiptModal"
     @close="showReceiptModal = false"
     size="xl"
@@ -250,7 +250,7 @@
     </CModalFooter>
   </CModal>
 
-  <CModal :visible="showDeleteModal" @close="showDeleteModal = false">
+  <CModal teleport :visible="showDeleteModal" @close="showDeleteModal = false">
     <CModalHeader>
       <CModalTitle>Confirmar eliminación</CModalTitle>
     </CModalHeader>

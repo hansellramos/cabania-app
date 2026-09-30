@@ -72,7 +72,7 @@
   </CRow>
 
   <!-- Form Modal -->
-  <CModal :visible="showForm" @close="showForm = false" size="lg">
+  <CModal teleport :visible="showForm" @close="showForm = false" size="lg">
     <CModalHeader>
       <CModalTitle>{{ editingMethod ? 'Editar' : 'Agregar' }} Metodo de Pago</CModalTitle>
     </CModalHeader>
@@ -139,7 +139,7 @@
   </CModal>
 
   <!-- Image Preview Modal -->
-  <CModal :visible="!!previewImage" @close="previewImage = null" size="lg" alignment="center">
+  <CModal teleport :visible="!!previewImage" @close="previewImage = null" size="lg" alignment="center">
     <CModalBody class="text-center p-0">
       <img v-if="previewImage" :src="previewImage" class="img-fluid" alt="QR" />
     </CModalBody>
