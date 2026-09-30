@@ -676,6 +676,29 @@ body {
   color: var(--cabania-text);
 }
 
+// Autocomplete suggestions (a list-group floating over the form): the items
+// above are transparent, so the floating list needs its own solid surface.
+.wrapper .list-group.position-absolute {
+  background-color: var(--cui-body-bg);
+  border: 1px solid var(--cabania-border);
+  border-radius: var(--cabania-radius-sm);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.18);
+  overflow: hidden;
+  z-index: 1050 !important;
+
+  .list-group-item {
+    border-left: 0;
+    border-right: 0;
+  }
+  .list-group-item:first-child {
+    border-top: 0;
+  }
+  .list-group-item-action:hover,
+  .list-group-item-action:focus {
+    background-color: var(--cabania-hover-bg);
+  }
+}
+
 // --- Utility text overrides ---
 .wrapper .text-body {
   color: var(--cabania-text) !important;
