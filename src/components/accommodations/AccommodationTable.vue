@@ -19,7 +19,10 @@
         </div>
       </div>
     </div>
-    <CButton color="primary" class="mb-3" @click="$router.push('/business/accommodations/create')">Nuevo Hospedaje</CButton>
+    <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+      <CButton color="primary" @click="$router.push('/business/accommodations/create')">Nuevo Hospedaje</CButton>
+      <CFormSwitch id="showCancelled" v-model="showCancelled" label="Ver cancelados" />
+    </div>
     <CTable responsive hover>
       <thead>
         <tr>
@@ -47,7 +50,7 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="item in paginatedAccommodations" :key="item.id" :class="{ 'table-secondary': item._redacted }">
+        <tr v-for="item in paginatedAccommodations" :key="item.id" :class="{ 'table-secondary': item._redacted, 'opacity-50': item.cancelled_at }">
           <td>
             <router-link v-if="item.venue_data?.id" :to="`/business/venues/${item.venue_data.id}/read`" class="text-decoration-none">
               {{ item.venue_data.name }}
@@ -61,7 +64,10 @@
             </router-link>
             <span v-else>—</span>
           </td>
-          <td>{{ formatDate(item.date) }}</td>
+          <td>
+            {{ formatDate(item.date) }}
+            <CBadge v-if="item.cancelled_at" color="danger" class="ms-1">Cancelado</CBadge>
+          </td>
           <td class="d-mobile-none">{{ formatDuration(item.duration) }}</td>
           <td class="d-mobile-none">{{ item._redacted ? '—' : formatTime(item.time) }}</td>
           <td class="d-mobile-none">{{ item._redacted ? '—' : calcCheckout(item.time, item.duration, item.date) }}</td>
@@ -159,6 +165,7 @@ const accommodations = ref([])
 const dateInput = ref('')
 const selectedDates = ref([])
 const searchQuery = ref('')
+const showCancelled = ref(false)
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
 
@@ -183,11 +190,11 @@ function sortIcon(key) {
 
 async function load() {
   const viewAll = user.value?.is_super_admin ? settingsStore.godModeViewAll : false
-  accommodations.value = await fetchAccommodations({ viewAll })
+  accommodations.value = await fetchAccommodations({ viewAll, includeCancelled: showCancelled.value })
   currentPage.value = 1
 }
 
-watch(() => settingsStore.godModeViewAll, () => {
+watch(() => [settingsStore.godModeViewAll, showCancelled.value], () => {
   load()
 })
 

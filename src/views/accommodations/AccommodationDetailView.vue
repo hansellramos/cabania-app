@@ -6,12 +6,21 @@
           <strong>Detalle del Hospedaje</strong>
           <div class="d-flex gap-2 flex-wrap">
             <CButton
-              v-if="accommodation && !accommodation.no_show_at && isPastOrToday"
+              v-if="accommodation && !accommodation.no_show_at && !accommodation.cancelled_at && isPastOrToday"
               color="secondary"
               size="sm"
               @click="openNoShow"
             >
               No asistió
+            </CButton>
+            <CButton
+              v-if="accommodation && !accommodation.cancelled_at && !(accommodation.no_show_at && !accommodation.rescheduled_at)"
+              color="danger"
+              variant="outline"
+              size="sm"
+              @click="openCancel"
+            >
+              Cancelar alquiler
             </CButton>
             <CButton color="warning" size="sm" @click="$router.push(`/business/accommodations/${route.params.id}/edit`)">
               Editar
@@ -25,6 +34,15 @@
           </div>
         </CCardHeader>
         <CCardBody v-if="accommodation">
+          <CAlert v-if="accommodation.cancelled_at" color="danger" class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+            <div>
+              <strong>Cancelado</strong> · {{ formatDateTimeShort(accommodation.cancelled_at) }} · La fecha quedó libre.
+              <template v-if="refundExpense">Se devolvieron {{ formatCurrency(refundExpense.amount) }} (egreso "Devoluciones").</template>
+              <template v-else>No hubo devolución: lo pagado se conserva.</template>
+              <div v-if="accommodation.cancel_note" class="small mt-1" style="white-space: pre-line">{{ accommodation.cancel_note }}</div>
+            </div>
+            <CButton color="secondary" size="sm" variant="outline" :disabled="savingNoShow" @click="undoCancel">Reactivar</CButton>
+          </CAlert>
           <CAlert v-if="accommodation.no_show_at && !accommodation.rescheduled_at" color="warning" class="d-flex flex-wrap justify-content-between align-items-center gap-2">
             <div>
               <strong>No asistió</strong> · marcado el {{ formatDateTimeShort(accommodation.no_show_at) }}.
@@ -161,7 +179,14 @@
                         <p class="fs-4 fw-bold text-success mb-0">{{ formatCurrency(totalPaid) }}</p>
                       </div>
                     </div>
-                    <div class="col-md-4">
+                    <div v-if="accommodation.cancelled_at" class="col-md-4">
+                      <div class="p-3 border rounded text-center">
+                        <h6 class="text-muted mb-2">Saldo Pendiente</h6>
+                        <p class="fs-4 fw-bold mb-0 text-body-secondary">—</p>
+                        <small class="text-body-secondary">Cancelado: no se cobra</small>
+                      </div>
+                    </div>
+                    <div v-else class="col-md-4">
                       <div class="p-3 border rounded text-center" :class="{ 'border-danger': pendingBalance > 0, 'border-success': pendingBalance <= 0 }">
                         <h6 class="text-muted mb-2">Saldo Pendiente</h6>
                         <p class="fs-4 fw-bold mb-0" :class="{ 'text-danger': pendingBalance > 0, 'text-success': pendingBalance <= 0 }">
@@ -784,6 +809,52 @@
     </CModalFooter>
   </CModal>
 
+  <CModal teleport :visible="showCancel" @close="showCancel = false">
+    <CModalHeader close-button>
+      <CModalTitle>Cancelar alquiler</CModalTitle>
+    </CModalHeader>
+    <CModalBody>
+      <p class="small text-muted mb-2">
+        La fecha queda libre para otras reservas y se anula la comisión pendiente del comisionista.
+        El alquiler no se borra: queda como cancelado con sus pagos y su contrato.
+      </p>
+      <p class="small mb-3">Pagado y verificado: <strong>{{ formatCurrency(verifiedPaid) }}</strong></p>
+      <CFormLabel for="cancelNote">Motivo</CFormLabel>
+      <CFormTextarea id="cancelNote" v-model="cancelForm.note" rows="2" placeholder="Ej: el cliente canceló por viaje" class="mb-3" />
+      <CFormCheck
+        id="cancelRefund"
+        v-model="cancelForm.refund"
+        :disabled="!verifiedPaid"
+        label="Se le devuelve dinero al cliente"
+      />
+      <div v-if="!cancelForm.refund" class="small text-body-secondary mt-1">Lo pagado se conserva (lo usual).</div>
+      <CRow v-else class="g-2 mt-1">
+        <CCol :sm="6">
+          <CFormLabel for="cancelRefundAmount" class="small mb-1">Monto a devolver</CFormLabel>
+          <CFormInput id="cancelRefundAmount" v-model.number="cancelForm.amount" type="number" min="0" :max="verifiedPaid" step="1000" />
+        </CCol>
+        <CCol :sm="6">
+          <CFormLabel for="cancelRefundDate" class="small mb-1">Fecha</CFormLabel>
+          <CFormInput id="cancelRefundDate" v-model="cancelForm.date" type="date" />
+        </CCol>
+        <CCol :sm="6">
+          <CFormLabel for="cancelRefundMethod" class="small mb-1">Cómo se devuelve</CFormLabel>
+          <CFormInput id="cancelRefundMethod" v-model="cancelForm.method" placeholder="Transferencia, Nequi…" />
+        </CCol>
+        <CCol :sm="6">
+          <CFormLabel for="cancelRefundRef" class="small mb-1">Referencia</CFormLabel>
+          <CFormInput id="cancelRefundRef" v-model="cancelForm.reference" placeholder="Opcional" />
+        </CCol>
+        <CCol :xs="12" class="small text-body-secondary">Se registra como egreso en la categoría "Devoluciones".</CCol>
+      </CRow>
+      <div v-if="cancelError" class="text-danger small mt-2">{{ cancelError }}</div>
+    </CModalBody>
+    <CModalFooter>
+      <CButton color="secondary" variant="outline" @click="showCancel = false">Volver</CButton>
+      <CButton color="danger" :disabled="savingNoShow || (cancelForm.refund && !(cancelForm.amount > 0))" @click="cancelBooking">Cancelar alquiler</CButton>
+    </CModalFooter>
+  </CModal>
+
   <CModal teleport :visible="showReschedule" @close="showReschedule = false">
     <CModalHeader close-button>
       <CModalTitle>Reagendar por cortesía</CModalTitle>
@@ -874,6 +945,42 @@ async function markNoShow() {
 async function undoNoShow() {
   const error = await noShowRequest('no-show', 'DELETE')
   if (error) window.alert(error)
+}
+
+// Cancellation
+const showCancel = ref(false)
+const cancelError = ref('')
+const cancelForm = ref({ note: '', refund: false, amount: 0, date: todayIso, method: '', reference: '' })
+const verifiedPaid = computed(() => payments.value
+  .filter(p => p.verified)
+  .reduce((sum, p) => sum + (Number(p.amount) || 0), 0))
+const refundExpense = computed(() => accommodation.value?.cancel_refund_expense_id
+  ? expenses.value.find(e => e.id === accommodation.value.cancel_refund_expense_id) || null
+  : null)
+
+function openCancel() {
+  cancelForm.value = { note: '', refund: false, amount: verifiedPaid.value, date: todayIso, method: '', reference: '' }
+  cancelError.value = ''
+  showCancel.value = true
+}
+
+async function cancelBooking() {
+  const f = cancelForm.value
+  cancelError.value = await noShowRequest('cancel', 'POST', {
+    note: f.note,
+    refund: f.refund ? { amount: f.amount, date: f.date, method: f.method, reference: f.reference } : null
+  })
+  if (!cancelError.value) {
+    showCancel.value = false
+    loadExpenses()
+  }
+}
+
+async function undoCancel() {
+  if (!window.confirm('¿Reactivar este alquiler? Se borra el egreso de devolución si lo hubo y la comisión vuelve a quedar pendiente.')) return
+  const error = await noShowRequest('cancel', 'DELETE')
+  if (error) window.alert(error)
+  else loadExpenses()
 }
 
 async function reschedule() {
@@ -1070,8 +1177,10 @@ const totalExpenses = computed(() => {
   return expenses.value.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
 })
 
+// A cancelled booking only earns what was kept: paid minus refund and other expenses.
 const profit = computed(() => {
-  return agreedPrice.value - totalExpenses.value
+  const income = accommodation.value?.cancelled_at ? totalPaid.value : agreedPrice.value
+  return income - totalExpenses.value
 })
 
 const hasDiscount = computed(() => {

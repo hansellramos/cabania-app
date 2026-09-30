@@ -39,7 +39,7 @@ const DEFINITIONS = [
       from: { type: 'string', description: 'Desde (YYYY-MM-DD). Por defecto hoy.' },
       to: { type: 'string', description: 'Hasta (YYYY-MM-DD). Por defecto 60 días después de from.' },
       venue_id: { type: 'string', description: 'Solo esta cabaña.' },
-      only: { type: 'string', enum: ['all', 'with_balance', 'unsigned_contract', 'no_show'], description: 'Filtro: con saldo pendiente, contrato sin firmar o no asistieron.' },
+      only: { type: 'string', enum: ['all', 'with_balance', 'unsigned_contract', 'no_show', 'cancelled'], description: 'Filtro: con saldo pendiente, contrato sin firmar, no asistieron o cancelados (los cancelados no salen en los demás).' },
       customer: { type: 'string', description: 'Parte del nombre del cliente.' }
     }
   },
@@ -167,6 +167,20 @@ const DEFINITIONS = [
     required: ['booking_id', 'amount', 'method']
   },
   {
+    name: 'cancel_booking',
+    write: true,
+    http: { method: 'POST', path: '/bookings/{booking_id}/cancel' },
+    description: 'Cancela un alquiler: la fecha queda libre y se anula la comisión pendiente. Normalmente la cabaña se queda con lo pagado; si se devuelve dinero, indica refund_amount (queda como egreso "Devoluciones"). Confirma con el usuario el monto a devolver.',
+    properties: {
+      booking_id: { type: 'string', description: 'ID del alquiler.' },
+      reason: { type: 'string', description: 'Motivo de la cancelación.' },
+      refund_amount: { type: 'number', description: 'Dinero que se le devuelve al cliente (0 si no se devuelve nada). No puede ser mayor que lo pagado y verificado.' },
+      refund_method: { type: 'string', description: 'Cómo se devuelve: Transferencia, Nequi, Efectivo…' },
+      refund_date: { type: 'string', description: 'Fecha de la devolución (YYYY-MM-DD). Por defecto hoy.' }
+    },
+    required: ['booking_id', 'refund_amount']
+  },
+  {
     name: 'mark_no_show',
     write: true,
     http: { method: 'POST', path: '/bookings/{booking_id}/no-show' },
@@ -195,7 +209,7 @@ const ASSISTANT_TOOLS = DEFINITIONS.filter(t => !t.write && t.name !== 'get_cont
 function createAgentTools(deps) {
   const {
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
-    findBookingConflict, cleanPhone, cleanInstagram
+    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation
   } = deps;
 
   /**
@@ -275,6 +289,7 @@ function createAgentTools(deps) {
         contract: contractMap[a.id] ? (contractMap[a.id] === 'signed' ? 'firmado' : 'sin firmar') : 'sin contrato',
         // A no-show moved to a new date as a courtesy is an active booking again.
         no_show: !!a.no_show_at && !a.rescheduled_at,
+        cancelled: !!a.cancelled_at,
         rescheduled_from: a.rescheduled_at && a.original_date ? isoDay(a.original_date) : null,
         link: `/business/accommodations/${a.id}`
       };
@@ -288,6 +303,7 @@ function createAgentTools(deps) {
       const to = validDay(args.to) || isoDay(new Date(new Date(`${from}T00:00:00Z`).getTime() + 60 * 86400000));
       const where = bookingWhere(scope, { venue: venueFilter(scope, args.venue_id), date: dayRange(from, to) });
       if (args.only === 'no_show') where.no_show_at = { not: null };
+      where.cancelled_at = args.only === 'cancelled' ? { not: null } : null;
       let list = await prisma.accommodations.findMany({ where, orderBy: { date: 'asc' }, take: 200 });
       let rows = await describeBookings(list);
       if (args.customer) {
@@ -328,7 +344,8 @@ function createAgentTools(deps) {
             : []
         } : null,
         commission_agent: agent?.name || null,
-        no_show_note: acc.no_show_note || null
+        no_show_note: acc.no_show_note || null,
+        cancel_note: acc.cancel_note || null
       };
     },
 
@@ -338,7 +355,7 @@ function createAgentTools(deps) {
       if (!dates.length) return { error: 'Indica las fechas en formato YYYY-MM-DD.' };
       const venues = scope.venues.filter(v => !args.venue_id || v.id === args.venue_id);
       const booked = await prisma.accommodations.findMany({
-        where: { venue: { in: venues.map(v => v.id) }, date: { in: dates.map(d => new Date(`${d}T00:00:00.000Z`)) } },
+        where: { venue: { in: venues.map(v => v.id) }, date: { in: dates.map(d => new Date(`${d}T00:00:00.000Z`)) }, cancelled_at: null },
         select: { venue: true, date: true }
       });
       const taken = new Set(booked.map(b => `${b.venue}|${isoDay(b.date)}`));
@@ -384,7 +401,7 @@ function createAgentTools(deps) {
       }
 
       const upcoming = await prisma.accommodations.findMany({
-        where: { venue, date: { gte: new Date(`${todayIso()}T00:00:00.000Z`) }, no_show_at: null },
+        where: { venue, date: { gte: new Date(`${todayIso()}T00:00:00.000Z`) }, no_show_at: null, cancelled_at: null },
         take: 300
       });
       const upcomingRows = await describeBookings(upcoming);
@@ -754,11 +771,33 @@ function createAgentTools(deps) {
       };
     },
 
+    async cancel_booking(args, scope) {
+      const booking = await findBooking(args.booking_id, scope);
+      const canEdit = booking && (hasPermission(scope.perms, 'accommodations:edit')
+        || (hasPermission(scope.perms, 'accommodations:edit:own') && booking.created_by === scope.userId));
+      if (!canEdit) return { error: 'Alquiler no encontrado o sin permiso para editarlo.' };
+      const amount = Number(args.refund_amount);
+      if (!Number.isFinite(amount) || amount < 0) return { error: 'refund_amount debe ser 0 o un monto positivo.' };
+      const result = await cancelAccommodation(booking, {
+        userId: scope.userId,
+        note: agentNote(scope, args.reason),
+        refund: { amount, method: args.refund_method, date: validDay(args.refund_date) }
+      });
+      if (result.error) return { error: result.error };
+      return {
+        ok: true,
+        booking_id: booking.id,
+        refund: amount > 0 ? money(amount) : 'sin devolución',
+        note: 'Cancelado: la fecha quedó libre y la comisión pendiente se anuló.'
+      };
+    },
+
     async mark_no_show(args, scope) {
       const booking = await findBooking(args.booking_id, scope);
       const canEdit = booking && (hasPermission(scope.perms, 'accommodations:edit')
         || (hasPermission(scope.perms, 'accommodations:edit:own') && booking.created_by === scope.userId));
       if (!canEdit) return { error: 'Alquiler no encontrado o sin permiso para editarlo.' };
+      if (booking.cancelled_at) return { error: 'Ese alquiler está cancelado.' };
       if (booking.no_show_at) return { error: 'Ya estaba marcado como "no asistió".' };
       if (booking.date && isoDay(booking.date) > todayIso()) return { error: 'Solo se puede marcar el día del alquiler o después.' };
       await prisma.accommodations.update({

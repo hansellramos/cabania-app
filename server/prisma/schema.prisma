@@ -30,6 +30,12 @@ model accommodations {
   original_date         DateTime? @db.Date
   rescheduled_at        DateTime? @db.Timestamptz(6)
   rescheduled_by        String?   @db.VarChar(255)
+  // Cancelled before the date: the day is free again. Usually the venue keeps
+  // what was paid; when part is returned it is an expense ("Devoluciones").
+  cancelled_at          DateTime? @db.Timestamptz(6)
+  cancelled_by          String?   @db.VarChar(255)
+  cancel_note           String?   @db.Text
+  cancel_refund_expense_id String? @db.Uuid
 }
 
 model payments {
