@@ -1,20 +1,30 @@
 <template>
-  <CNavItem>
-    <CNavLink href="javascript:void(0)" title="Asistente" @click="open = true">
-      <span class="assistant-trigger">✨</span>
-    </CNavLink>
-  </CNavItem>
+  <Teleport to="body">
+    <!-- Floating bubble, bottom right (like the air-school chat) -->
+    <button
+      v-show="!open"
+      type="button"
+      class="assistant-bubble-btn"
+      title="Asistente"
+      aria-label="Abrir el asistente"
+      @click="open = true"
+    >
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="white" aria-hidden="true">
+        <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z" />
+      </svg>
+    </button>
 
-  <COffcanvas :visible="open" placement="end" class="assistant-panel" @hide="open = false">
-    <COffcanvasHeader class="border-bottom">
-      <COffcanvasTitle>✨ Asistente</COffcanvasTitle>
-      <div class="d-flex gap-2 align-items-center">
-        <CButton v-if="messages.length" color="link" size="sm" class="p-0 text-decoration-none" @click="reset">Nueva conversación</CButton>
-        <CCloseButton class="text-reset" @click="open = false" />
-      </div>
-    </COffcanvasHeader>
-    <COffcanvasBody class="d-flex flex-column p-0">
-      <div ref="scroller" class="flex-grow-1 overflow-auto p-3">
+    <!-- Chat window: anchored bottom right on desktop, full screen on phones -->
+    <section v-if="open" class="assistant-window" role="dialog" aria-label="Asistente">
+      <header class="assistant-header">
+        <strong>✨ Asistente</strong>
+        <div class="d-flex gap-2 align-items-center">
+          <CButton v-if="messages.length" color="link" size="sm" class="p-0 text-decoration-none text-white" @click="reset">Nueva conversación</CButton>
+          <button type="button" class="assistant-close" aria-label="Cerrar" @click="open = false">&times;</button>
+        </div>
+      </header>
+
+      <div ref="scroller" class="assistant-body">
         <div v-if="!messages.length" class="text-body-secondary small">
           <p class="mb-2">
             Pregúntame por tus alquileres, pagos, chats o comisiones, y te llevo a la pantalla que necesites.
@@ -34,8 +44,8 @@
 
         <div v-for="(m, i) in messages" :key="i" class="mb-3" :class="m.role === 'user' ? 'text-end' : ''">
           <div
-            class="d-inline-block px-3 py-2 rounded-3 small text-start assistant-bubble"
-            :class="m.role === 'user' ? 'bg-primary text-white' : 'bg-body-tertiary'"
+            class="d-inline-block px-3 py-2 rounded-3 small text-start assistant-msg"
+            :class="m.role === 'user' ? 'assistant-msg--user' : 'bg-body-tertiary'"
           >
             <div v-if="m.role === 'user'" style="white-space: pre-line">{{ m.content }}</div>
             <div v-else class="assistant-md" v-html="renderMarkdown(m.content)"></div>
@@ -57,7 +67,7 @@
         <div v-if="error" class="small text-danger">{{ error }}</div>
       </div>
 
-      <form class="border-top p-2 d-flex gap-2" @submit.prevent="send()">
+      <form class="assistant-input" @submit.prevent="send()">
         <CFormTextarea
           v-model="draft"
           rows="2"
@@ -67,8 +77,8 @@
         />
         <CButton type="submit" color="primary" :disabled="thinking || !draft.trim()">Enviar</CButton>
       </form>
-    </COffcanvasBody>
-  </COffcanvas>
+    </section>
+  </Teleport>
 </template>
 
 <script setup>
@@ -121,6 +131,8 @@ watch(open, (value) => { if (value) scrollDown() })
 
 function go(path) {
   router.push(path)
+  // Full screen on phones: close it so the opened screen is visible.
+  if (window.matchMedia('(max-width: 575.98px)').matches) open.value = false
 }
 
 function reset() {
@@ -162,16 +174,79 @@ async function send(text) {
 </script>
 
 <style scoped>
-.assistant-trigger {
-  font-size: 1.15rem;
+.assistant-bubble-btn {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  background: var(--cabania-gradient, var(--cui-primary));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+  z-index: 1045;
+  transition: transform 0.2s;
+}
+.assistant-bubble-btn:hover {
+  transform: scale(1.08);
+}
+.assistant-window {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  width: 400px;
+  height: min(600px, calc(100vh - 2.5rem));
+  display: flex;
+  flex-direction: column;
+  background: var(--cui-body-bg);
+  color: var(--cui-body-color);
+  border: 1px solid var(--cui-border-color);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  z-index: 1046;
+}
+.assistant-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.65rem 0.9rem;
+  background: var(--cabania-gradient, var(--cui-primary));
+  color: #fff;
+}
+.assistant-close {
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 1.5rem;
   line-height: 1;
+  cursor: pointer;
 }
-.assistant-panel {
-  width: 420px;
-  max-width: 100vw;
+.assistant-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.9rem;
 }
-.assistant-bubble {
+.assistant-input {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border-top: 1px solid var(--cui-border-color);
+}
+.assistant-input :deep(textarea) {
+  font-size: 16px; /* no iOS zoom on focus */
+  resize: none;
+}
+.assistant-msg {
   max-width: 92%;
+}
+.assistant-msg--user {
+  background: var(--cui-primary);
+  color: #fff;
 }
 .assistant-md :deep(p) {
   margin-bottom: 0.4rem;
@@ -180,5 +255,21 @@ async function send(text) {
 .assistant-md :deep(ol) {
   padding-left: 1.1rem;
   margin-bottom: 0.4rem;
+}
+/* Phones: full screen, like the air-school chat */
+@media (max-width: 575.98px) {
+  .assistant-window {
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border-radius: 0;
+    border: none;
+  }
+  .assistant-bubble-btn {
+    right: 0.9rem;
+    bottom: 0.9rem;
+    width: 52px;
+    height: 52px;
+  }
 }
 </style>
