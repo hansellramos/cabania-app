@@ -753,7 +753,7 @@ async function startServer() {
 
       // Check overlapping accommodations
       const existingAccommodations = await prisma.accommodations.findMany({
-        where: { venue: venueId }
+        where: { venue: venueId, cancelled_at: null }
       });
 
       let isAvailable = true;
@@ -1486,7 +1486,8 @@ async function startServer() {
         accessibleVenueIds = [];
       }
       
-      const whereClause = {};
+      // Cancelled bookings free their day: hidden unless asked for.
+      const whereClause = req.query.include_cancelled === 'true' ? {} : { cancelled_at: null };
       
       if (from_date) {
         whereClause.date = { gte: new Date(from_date) };
@@ -1768,6 +1769,7 @@ async function startServer() {
     try {
       const acc = await findEditableAccommodation(req);
       if (!acc) return res.status(404).json({ error: 'Alquiler no encontrado o sin permiso' });
+      if (acc.cancelled_at) return res.status(400).json({ error: 'Este alquiler está cancelado' });
       const today = new Date(new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }));
       if (acc.date && new Date(acc.date) > today) {
         return res.status(400).json({ error: 'Solo se puede marcar después de la fecha del alquiler' });
@@ -1831,6 +1833,127 @@ async function startServer() {
       });
       res.json(updated);
     } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== Cancellation ====================
+
+  /**
+   * Cancels a booking before its date: the day is free again and a pending
+   * commission is voided. Usually the venue keeps what was paid; a refund, when
+   * given, is recorded as an expense ("Devoluciones") linked to the booking.
+   * @returns {Promise<{ error?: string, status?: number, accommodation?: object, refund_expense?: object }>}
+   */
+  async function cancelAccommodation(acc, { userId, note, refund }) {
+    if (acc.cancelled_at) return { status: 400, error: 'Este alquiler ya está cancelado' };
+    if (acc.no_show_at && !acc.rescheduled_at) return { status: 400, error: 'Ya está marcado como "No asistió"' };
+
+    const amount = Math.round(Number(refund?.amount) || 0);
+    if (amount < 0) return { status: 400, error: 'La devolución no puede ser negativa' };
+    if (amount > 0) {
+      const paid = await prisma.payments.aggregate({ where: { accommodation: acc.id, verified: true }, _sum: { amount: true } });
+      const paidTotal = Math.round(Number(paid._sum.amount || 0));
+      if (amount > paidTotal) {
+        return { status: 400, error: `La devolución ($${amount.toLocaleString('es-CO')}) es mayor que lo pagado y verificado ($${paidTotal.toLocaleString('es-CO')})` };
+      }
+    }
+    const refundDate = /^\d{4}-\d{2}-\d{2}$/.test(refund?.date || '')
+      ? refund.date
+      : new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+    const text = String(note || '').trim().slice(0, 2000) || null;
+
+    return prisma.$transaction(async (tx) => {
+      let expense = null;
+      if (amount > 0) {
+        const categoryName = 'Devoluciones';
+        const category = await tx.expense_categories.findFirst({ where: { name: categoryName } })
+          || await tx.expense_categories.create({
+            data: { name: categoryName, description: 'Dinero devuelto a clientes por cancelaciones', is_system: true }
+          });
+        const venue = acc.venue ? await tx.venues.findUnique({ where: { id: acc.venue }, select: { organization: true } }) : null;
+        const customer = acc.customer ? await tx.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true } }) : null;
+        const day = acc.date ? new Date(acc.date).toISOString().slice(0, 10) : '';
+        expense = await tx.expenses.create({
+          data: {
+            organization_id: venue?.organization || null,
+            venue_id: acc.venue,
+            category_id: category.id,
+            accommodation_id: acc.id,
+            amount,
+            description: `Devolución por cancelación · ${customer?.fullname || 'cliente'} · ${day}`,
+            expense_date: new Date(`${refundDate}T00:00:00.000Z`),
+            reference: refund?.reference ? String(refund.reference).slice(0, 255) : null,
+            notes: [refund?.method ? `Método: ${String(refund.method).slice(0, 100)}` : null, text].filter(Boolean).join('\n') || null,
+            created_by: userId
+          }
+        });
+      }
+      // What is still owed to a commission agent for this booking is voided.
+      await tx.commission_payments.updateMany({
+        where: { accommodation_id: acc.id, status: 'pending' },
+        data: { status: 'cancelled', updated_at: new Date(), updated_by: userId }
+      });
+      const accommodation = await tx.accommodations.update({
+        where: { id: acc.id },
+        data: {
+          cancelled_at: new Date(),
+          cancelled_by: userId,
+          cancel_note: text,
+          cancel_refund_expense_id: expense?.id || null
+        }
+      });
+      return { accommodation, refund_expense: expense };
+    });
+  }
+
+  // POST /api/accommodations/:id/cancel { note, refund: { amount, method, date, reference } }
+  app.post('/api/accommodations/:id/cancel', isAuthenticated, async (req, res) => {
+    try {
+      const acc = await findEditableAccommodation(req);
+      if (!acc) return res.status(404).json({ error: 'Alquiler no encontrado o sin permiso' });
+      const result = await cancelAccommodation(acc, {
+        userId: String(req.user.claims?.sub),
+        note: req.body?.note,
+        refund: req.body?.refund
+      });
+      if (result.error) return res.status(result.status || 400).json({ error: result.error });
+      res.json(result);
+    } catch (error) {
+      console.error('[accommodations] Cancel failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // DELETE /api/accommodations/:id/cancel — cancelled by mistake. Only while the
+  // day is still free; the refund expense is removed and commissions come back.
+  app.delete('/api/accommodations/:id/cancel', isAuthenticated, async (req, res) => {
+    try {
+      const acc = await findEditableAccommodation(req);
+      if (!acc) return res.status(404).json({ error: 'Alquiler no encontrado o sin permiso' });
+      if (!acc.cancelled_at) return res.status(400).json({ error: 'Este alquiler no está cancelado' });
+      if (acc.date) {
+        const { conflict } = await findBookingConflict(acc.venue, new Date(acc.date), new Date(acc.date));
+        if (conflict && conflict.id !== acc.id) {
+          return res.status(409).json({ error: 'La fecha ya se volvió a reservar: no se puede reactivar' });
+        }
+      }
+      const updated = await prisma.$transaction(async (tx) => {
+        if (acc.cancel_refund_expense_id) {
+          await tx.expenses.deleteMany({ where: { id: acc.cancel_refund_expense_id, accommodation_id: acc.id } });
+        }
+        await tx.commission_payments.updateMany({
+          where: { accommodation_id: acc.id, status: 'cancelled' },
+          data: { status: 'pending', updated_at: new Date(), updated_by: String(req.user.claims?.sub) }
+        });
+        return tx.accommodations.update({
+          where: { id: acc.id },
+          data: { cancelled_at: null, cancelled_by: null, cancel_note: null, cancel_refund_expense_id: null }
+        });
+      });
+      res.json(updated);
+    } catch (error) {
+      console.error('[accommodations] Undo cancel failed', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -2455,7 +2578,7 @@ async function startServer() {
       }
 
       const accommodations = await prisma.accommodations.findMany({
-        where: whereClause
+        where: { ...whereClause, cancelled_at: null }
       });
 
       // Get all venues for the chart
@@ -2529,7 +2652,7 @@ async function startServer() {
       }
 
       const accommodations = await prisma.accommodations.findMany({
-        where: whereClause
+        where: { ...whereClause, cancelled_at: null }
       });
 
       // Get all venues for the chart
@@ -2657,7 +2780,7 @@ async function startServer() {
       // Get accommodations grouped by venue
       const accommodations = await prisma.accommodations.groupBy({
         by: ['venue'],
-        where: whereClause,
+        where: { ...whereClause, cancelled_at: null },
         _count: { id: true }
       });
 
@@ -3771,7 +3894,8 @@ async function startServer() {
       // Get all accommodations for these venues
       const existingAccommodations = await prisma.accommodations.findMany({
         where: {
-          venue: { in: venueIds }
+          venue: { in: venueIds },
+          cancelled_at: null
         }
       });
       
@@ -5381,7 +5505,7 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
     const day = (d) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
     const from = day(checkIn);
     const to = day(checkOut || checkIn);
-    const bookings = await prisma.accommodations.findMany({ where: { venue: venueId } });
+    const bookings = await prisma.accommodations.findMany({ where: { venue: venueId, cancelled_at: null } });
     const conflict = bookings.find(acc => {
       if (!acc.date) return false;
       const start = new Date(acc.date);
@@ -9824,7 +9948,7 @@ REGLAS:
   // In-app assistant for the team (server/assistant.js)
   const agentToolDeps = {
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
-    findBookingConflict, cleanPhone, cleanInstagram
+    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation
   };
   require('./assistant')(app, { ...agentToolDeps, llmService, isAuthenticated, logAICall });
 
@@ -10430,7 +10554,7 @@ REGLAS:
 
           // Check for existing accommodations
           const existingAccommodations = await prisma.accommodations.findMany({
-            where: { venue: venue_id }
+            where: { venue: venue_id, cancelled_at: null }
           });
           const overlaps = (from, to) => existingAccommodations.some(acc => {
             if (!acc.date) return false;

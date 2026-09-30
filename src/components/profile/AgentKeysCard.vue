@@ -53,7 +53,7 @@
         id="agent-key-write"
         v-model="form.can_write"
         class="mt-3"
-        label="Permitir cambios: crear cotizaciones y alquileres, registrar pagos y marcar no asistencia"
+        label="Permitir cambios: crear cotizaciones y alquileres, registrar pagos, marcar no asistencia y cancelar alquileres"
       />
       <p class="small text-body-secondary mt-2 mb-0">
         Sin esto el agente solo puede consultar. Los pagos que registre quedan sin verificar hasta que alguien los revise.

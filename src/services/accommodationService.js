@@ -11,6 +11,9 @@ export async function fetchAccommodations(options = {}) {
   if (options.venue_ids) {
     params.append('venue_ids', options.venue_ids);
   }
+  if (options.includeCancelled) {
+    params.append('include_cancelled', 'true');
+  }
   const url = params.toString() ? `${API_BASE}/accommodations?${params}` : `${API_BASE}/accommodations`;
   const response = await fetch(url, {
     credentials: 'include'

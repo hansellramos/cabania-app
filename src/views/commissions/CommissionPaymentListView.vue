@@ -22,6 +22,7 @@
                 <option value="">Todos</option>
                 <option value="pending">Pendiente</option>
                 <option value="paid">Pagado</option>
+                <option value="cancelled">Anulada</option>
               </CFormSelect>
             </CCol>
             <CCol :md="3">
@@ -92,13 +93,13 @@
                 <CTableDataCell>{{ formatCurrency(payment.agreed_price) }}</CTableDataCell>
                 <CTableDataCell>{{ formatCurrency(payment.calculated_amount) }}</CTableDataCell>
                 <CTableDataCell>
-                  <CBadge :color="payment.status === 'Pagado' ? 'success' : 'warning'">
-                    {{ payment.status }}
+                  <CBadge :color="STATUS[payment.status]?.color || 'secondary'">
+                    {{ STATUS[payment.status]?.label || payment.status }}
                   </CBadge>
                 </CTableDataCell>
                 <CTableDataCell>
                   <CButton
-                    v-if="payment.status === 'Pendiente'"
+                    v-if="payment.status === 'pending'"
                     color="danger"
                     size="sm"
                     variant="ghost"
@@ -262,15 +263,22 @@ const filteredPayments = computed(() => {
   return result
 })
 
+// Stored in English; 'cancelled' when the booking was cancelled.
+const STATUS = {
+  pending: { label: 'Pendiente', color: 'warning' },
+  paid: { label: 'Pagado', color: 'success' },
+  cancelled: { label: 'Anulada', color: 'secondary' }
+}
+
 const totalPending = computed(() => {
   return filteredPayments.value
-    .filter((p) => p.status === 'Pendiente')
+    .filter((p) => p.status === 'pending')
     .reduce((sum, p) => sum + (parseFloat(p.calculated_amount) || 0), 0)
 })
 
 const totalPaid = computed(() => {
   return filteredPayments.value
-    .filter((p) => p.status === 'Pagado')
+    .filter((p) => p.status === 'paid')
     .reduce((sum, p) => sum + (parseFloat(p.calculated_amount) || 0), 0)
 })
 
