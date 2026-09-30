@@ -9948,7 +9948,7 @@ REGLAS:
   // In-app assistant for the team (server/assistant.js)
   const agentToolDeps = {
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
-    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation
+    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission
   };
   require('./assistant')(app, { ...agentToolDeps, llmService, isAuthenticated, logAICall });
 

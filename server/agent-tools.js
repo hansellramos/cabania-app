@@ -147,9 +147,30 @@ const DEFINITIONS = [
       customer_name: { type: 'string', description: 'Nombre, para crear el contacto si no existe.' },
       whatsapp: { type: 'string', description: 'WhatsApp con indicativo, para el contacto nuevo.' },
       email: { type: 'string', description: 'Correo, para el contacto nuevo.' },
-      agreed_price: { type: 'number', description: 'Precio acordado total, si es distinto al del plan.' }
+      agreed_price: { type: 'number', description: 'Precio acordado total, si es distinto al del plan.' },
+      start_time: { type: 'string', description: 'Hora de llegada HH:MM en 24 h (ej: 19:30). Por defecto la del plan.' },
+      end_time: { type: 'string', description: 'Hora de salida HH:MM en 24 h (ej: 00:00 = medianoche). Si es menor o igual a la de llegada, es del día siguiente. Por defecto la del plan.' },
+      commission_agent: { type: 'string', description: 'Comisionista que vendió el alquiler: su id o su nombre (de commissions). Se registra su comisión pendiente según sus reglas.' }
     },
     required: ['venue_id', 'date', 'plan_id', 'adults']
+  },
+  {
+    name: 'update_booking',
+    write: true,
+    http: { method: 'PATCH', path: '/bookings/{booking_id}' },
+    description: 'Corrige un alquiler: horario, comisionista, personas, precio acordado, plan o fecha. Solo cambia los campos que envíes.',
+    properties: {
+      booking_id: { type: 'string', description: 'ID del alquiler.' },
+      date: { type: 'string', description: 'Nueva fecha (YYYY-MM-DD); debe estar libre.' },
+      start_time: { type: 'string', description: 'Hora de llegada HH:MM (24 h).' },
+      end_time: { type: 'string', description: 'Hora de salida HH:MM (24 h); menor o igual a la llegada = día siguiente.' },
+      plan_id: { type: 'string', description: 'ID del plan (de venue_info).' },
+      adults: { type: 'integer', description: 'Adultos.' },
+      children: { type: 'integer', description: 'Niños.' },
+      agreed_price: { type: 'number', description: 'Precio acordado total.' },
+      commission_agent: { type: 'string', description: 'Comisionista (id o nombre). "ninguno" para quitarlo.' }
+    },
+    required: ['booking_id']
   },
   {
     name: 'record_payment',
@@ -209,7 +230,7 @@ const ASSISTANT_TOOLS = DEFINITIONS.filter(t => !t.write && t.name !== 'get_cont
 function createAgentTools(deps) {
   const {
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
-    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation
+    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission
   } = deps;
 
   /**
@@ -282,6 +303,7 @@ function createAgentTools(deps) {
         adults: a.adults || 0,
         children: a.children || 0,
         plan: p[a.plan_id]?.name || null,
+        hours: hoursLabel(a),
         total: money(total),
         paid: money(paidAmount),
         balance: money(Math.max(0, total - paidAmount)),
@@ -712,18 +734,29 @@ function createAgentTools(deps) {
       const { conflict } = await findBookingConflict(venue.id, day, day);
       if (conflict) return { error: `${dayLabel(date)} ya está ocupado en ${venue.name}.` };
 
+      const schedule = scheduleFrom(args.start_time || plan.check_in_time, args.end_time || plan.check_out_time);
+      if (schedule.error) return schedule;
+
+      // Named agent, or like the app: a user linked to an agent of the venue sells as that agent.
+      let agent = null;
+      if (args.commission_agent) {
+        agent = await findCommissionAgent(args.commission_agent, venue);
+        if (agent.error) return agent;
+      } else {
+        agent = await prisma.commission_agents.findFirst({
+          where: { user_id: scope.userId, venue_id: venue.id, is_active: true }
+        });
+      }
+
       const customer = await resolveCustomer(args, scope, venue);
       if (customer.error) return customer;
 
       const calculated = planPrice(plan, adults, children);
-      // Like the app: a user linked to a commission agent of the venue sells as that agent.
-      const linkedAgent = await prisma.commission_agents.findFirst({
-        where: { user_id: scope.userId, venue_id: venue.id, is_active: true }
-      });
       const booking = await prisma.accommodations.create({
         data: {
           venue: venue.id,
           date: day,
+          ...schedule.data,
           plan_id: plan.id,
           adults,
           children,
@@ -731,11 +764,96 @@ function createAgentTools(deps) {
           calculated_price: calculated,
           agreed_price: positive(args.agreed_price) ?? calculated,
           created_by: scope.userId,
-          ...(linkedAgent && { commission_agent_id: linkedAgent.id })
+          ...(agent && { commission_agent_id: agent.id })
         }
       });
+      const commission = agent ? await recordCommission(booking, agent, plan, scope) : null;
       const [summary] = await describeBookings([booking]);
-      return { ok: true, booking: summary, customer_created: customer.created };
+      return { ok: true, booking: summary, customer_created: customer.created, commission };
+    },
+
+    async update_booking(args, scope) {
+      const booking = await findBooking(args.booking_id, scope);
+      const canEdit = booking && (hasPermission(scope.perms, 'accommodations:edit')
+        || (hasPermission(scope.perms, 'accommodations:edit:own') && booking.created_by === scope.userId));
+      if (!canEdit) return { error: 'Alquiler no encontrado o sin permiso para editarlo.' };
+      if (booking.cancelled_at) return { error: 'Ese alquiler está cancelado.' };
+      const venue = scope.venues.find(v => v.id === booking.venue) || { id: booking.venue, name: 'la cabaña' };
+      const data = {};
+      const changed = [];
+
+      if (args.date !== undefined) {
+        const date = validDay(args.date);
+        if (!date) return { error: 'date debe ser YYYY-MM-DD.' };
+        if (date < todayIso()) return { error: 'Esa fecha ya pasó.' };
+        const day = new Date(`${date}T00:00:00.000Z`);
+        const { conflict } = await findBookingConflict(booking.venue, day, day);
+        if (conflict && conflict.id !== booking.id) return { error: `${dayLabel(date)} ya está ocupado en ${venue.name}.` };
+        data.date = day;
+        changed.push('fecha');
+      }
+      let plan = booking.plan_id ? await prisma.venue_plans.findUnique({ where: { id: booking.plan_id } }) : null;
+      if (args.plan_id !== undefined) {
+        plan = await findPlan(booking.venue, args.plan_id);
+        if (!plan) return { error: 'Plan no encontrado en esa cabaña: usa un id de venue_info.' };
+        data.plan_id = plan.id;
+        changed.push('plan');
+      }
+      if (args.adults !== undefined || args.children !== undefined) {
+        const { adults, children } = people({
+          adults: args.adults ?? booking.adults,
+          children: args.children ?? booking.children
+        });
+        if (!adults) return { error: 'Indica cuántos adultos.' };
+        data.adults = adults;
+        data.children = children;
+        changed.push('personas');
+      }
+      if (plan && (data.plan_id || data.adults !== undefined)) {
+        const capacityError = checkCapacity(plan, (data.adults ?? booking.adults ?? 0) + (data.children ?? booking.children ?? 0));
+        if (capacityError) return { error: capacityError };
+        data.calculated_price = planPrice(plan, data.adults ?? booking.adults ?? 0, data.children ?? booking.children ?? 0);
+      }
+      if (args.agreed_price !== undefined) {
+        const price = positive(args.agreed_price);
+        if (!price) return { error: 'agreed_price debe ser un monto mayor que cero.' };
+        data.agreed_price = price;
+        changed.push('precio');
+      }
+      if (args.start_time !== undefined || args.end_time !== undefined) {
+        const current = currentSchedule(booking);
+        const schedule = scheduleFrom(args.start_time ?? current.start, args.end_time ?? current.end);
+        if (schedule.error) return schedule;
+        Object.assign(data, schedule.data);
+        changed.push('horario');
+      }
+      let agent;
+      if (args.commission_agent !== undefined) {
+        if (/^(ninguno|none|no)$/i.test(String(args.commission_agent).trim())) {
+          data.commission_agent_id = null;
+        } else {
+          agent = await findCommissionAgent(args.commission_agent, venue);
+          if (agent.error) return agent;
+          data.commission_agent_id = agent.id;
+        }
+        changed.push('comisionista');
+      }
+      if (!changed.length) return { error: 'No indicaste nada para cambiar.' };
+
+      const updated = await prisma.accommodations.update({ where: { id: booking.id }, data });
+      let commission = agent && plan ? await recordCommission(updated, agent, plan, scope) : null;
+      // Price or people changed: a commission not yet paid follows the new values.
+      if (!agent && plan && updated.commission_agent_id && (data.adults !== undefined || data.agreed_price !== undefined || data.plan_id)) {
+        commission = await refreshPendingCommission(updated, plan);
+      }
+      const [summary] = await describeBookings([updated]);
+      return {
+        ok: true,
+        changed,
+        booking: summary,
+        commission,
+        ...(data.commission_agent_id === null && { note: 'Se quitó el comisionista; si tenía una comisión registrada, revísala en la pestaña Comisiones del alquiler.' })
+      };
     },
 
     async record_payment(args, scope) {
@@ -808,6 +926,77 @@ function createAgentTools(deps) {
     }
   };
 
+  /** An active commission agent of the venue (or its organization) by id or name. */
+  async function findCommissionAgent(value, venue) {
+    const agents = await prisma.commission_agents.findMany({
+      where: {
+        is_active: true,
+        OR: [{ venue_id: venue.id }, { venue_id: null, organization_id: venue.organization || undefined }]
+      },
+      select: { id: true, name: true }
+    });
+    const text = String(value || '').trim();
+    const byId = agents.find(a => a.id === text);
+    if (byId) return byId;
+    // Word by word, without accents: "Víctor Traveleando" finds "Traveleando con Victor".
+    const words = plain(text).split(/\s+/).filter(w => w.length >= 3);
+    const matches = words.length ? agents.filter(a => words.every(w => plain(a.name).includes(w))) : [];
+    if (matches.length === 1) return matches[0];
+    const names = agents.map(a => a.name).join(', ') || 'ninguno';
+    return {
+      error: matches.length
+        ? `Hay varios comisionistas que coinciden (${matches.map(a => a.name).join(', ')}): usa el id.`
+        : `No encontré ese comisionista. Los de esta cabaña son: ${names}.`
+    };
+  }
+
+  /** The agent's pending commission for the booking, from their rules (once per booking). */
+  async function recordCommission(booking, agent, plan, scope) {
+    if (!computeCommission) return null;
+    const existing = await prisma.commission_payments.findFirst({
+      where: { agent_id: agent.id, accommodation_id: booking.id, status: { not: 'cancelled' } }
+    });
+    if (existing) return { agent: agent.name, amount: money(existing.calculated_amount), note: 'Ya tenía la comisión registrada.' };
+    const adults = booking.adults || 0;
+    const agreedPrice = Number(booking.agreed_price ?? booking.calculated_price ?? 0);
+    const calc = await computeCommission({ agentId: agent.id, planType: plan.plan_type, adults, agreedPrice });
+    if (calc.no_rules) return { agent: agent.name, amount: null, note: 'El comisionista no tiene reglas para este tipo de plan: calcula la comisión en la app.' };
+    const venue = await prisma.venues.findUnique({ where: { id: booking.venue }, select: { organization: true } });
+    await prisma.commission_payments.create({
+      data: {
+        agent_id: agent.id,
+        accommodation_id: booking.id,
+        organization_id: venue?.organization || null,
+        venue_id: booking.venue,
+        adults,
+        agreed_price: agreedPrice,
+        calculated_amount: calc.total,
+        breakdown: calc.breakdown,
+        status: 'pending',
+        notes: agentNote(scope, 'Comisión registrada al crear el alquiler.'),
+        created_by: scope.userId
+      }
+    });
+    return { agent: agent.name, amount: money(calc.total), status: 'pendiente' };
+  }
+
+  async function refreshPendingCommission(booking, plan) {
+    const pending = await prisma.commission_payments.findFirst({
+      where: { agent_id: booking.commission_agent_id, accommodation_id: booking.id, status: 'pending' },
+      include: { agent: { select: { name: true } } }
+    });
+    if (!pending || !computeCommission) return null;
+    const adults = booking.adults || 0;
+    const agreedPrice = Number(booking.agreed_price ?? booking.calculated_price ?? 0);
+    const calc = await computeCommission({ agentId: pending.agent_id, planType: plan.plan_type, adults, agreedPrice });
+    if (calc.no_rules) return null;
+    await prisma.commission_payments.update({
+      where: { id: pending.id },
+      data: { adults, agreed_price: agreedPrice, calculated_amount: calc.total, breakdown: calc.breakdown, updated_at: new Date() }
+    });
+    return { agent: pending.agent.name, amount: money(calc.total), status: 'pendiente (recalculada)' };
+  }
+
   /** A booking the user may see, or null. */
   async function findBooking(id, scope) {
     if (!/^[0-9a-f-]{36}$/i.test(id || '')) return null;
@@ -868,6 +1057,48 @@ const people = (args) => ({
   adults: Math.max(0, Math.min(500, parseInt(args.adults, 10) || 0)),
   children: Math.max(0, Math.min(500, parseInt(args.children, 10) || 0))
 });
+const plain = (text) => String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+// "19:30", "7:30 pm", "7pm", "12 am" -> "HH:MM"
+const validTime = (v) => {
+  const m = String(v || '').trim().toLowerCase().replace(/\./g, '').match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|a m|p m)?$/);
+  if (!m) return null;
+  let hours = Number(m[1]);
+  const minutes = Number(m[2] || 0);
+  const suffix = (m[3] || '').replace(' ', '');
+  if (suffix) {
+    if (hours < 1 || hours > 12) return null;
+    hours = (hours % 12) + (suffix === 'pm' ? 12 : 0);
+  } else if (m[2] === undefined) {
+    return null;
+  }
+  return hours < 24 && minutes < 60 ? `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}` : null;
+};
+/**
+ * Booking time and duration as the app stores them: time on 1970-01-01 (UTC)
+ * and duration in seconds. An end at or before the start is on the next day.
+ */
+function scheduleFrom(start, end) {
+  if (!start && !end) return { data: {} };
+  const from = validTime(start);
+  if (!from) return { error: 'start_time debe ser HH:MM en 24 h (ej: 19:30).' };
+  const to = end ? validTime(end) : null;
+  if (end && !to) return { error: 'end_time debe ser HH:MM en 24 h (ej: 00:00).' };
+  const minutes = (t) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+  let span = to ? minutes(to) - minutes(from) : 12 * 60;
+  if (span <= 0) span += 24 * 60;
+  return { data: { time: new Date(`1970-01-01T${from}:00.000Z`), duration: span * 60 } };
+}
+function currentSchedule(booking) {
+  if (!booking.time) return { start: null, end: null };
+  const start = new Date(booking.time).toISOString().slice(11, 16);
+  const endMinutes = (Number(start.slice(0, 2)) * 60 + Number(start.slice(3)) + Math.round((Number(booking.duration) || 43200) / 60)) % (24 * 60);
+  const end = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+  return { start, end };
+}
+const hoursLabel = (booking) => {
+  const { start, end } = currentSchedule(booking);
+  return start ? `${start} a ${end}` : null;
+};
 const checkCapacity = (plan, total) => {
   if (plan.min_guests && total < plan.min_guests) return `El plan ${plan.name} es para mínimo ${plan.min_guests} personas.`;
   if (plan.max_capacity && total > plan.max_capacity) return `El plan ${plan.name} es para máximo ${plan.max_capacity} personas.`;
