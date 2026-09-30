@@ -6,6 +6,7 @@ import { useColorModes } from '@coreui/vue'
 import AppBreadcrumb from '@/components/AppBreadcrumb.vue'
 import AppHeaderDropdownAccnt from '@/components/AppHeaderDropdownAccnt.vue'
 import AppHeaderDropdownNotifications from '@/components/AppHeaderDropdownNotifications.vue'
+import AppAssistant from '@/components/AppAssistant.vue'
 import { useSidebarStore } from '@/stores/sidebar.js'
 import { useSettingsStore } from '@/stores/settings.js'
 
@@ -62,6 +63,7 @@ onMounted(() => {
         </CNavItem>
       </CHeaderNav>
       <CHeaderNav>
+        <AppAssistant />
         <AppHeaderDropdownNotifications />
       </CHeaderNav>
       <CHeaderNav v-if="settings.developmentMode">
