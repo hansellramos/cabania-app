@@ -179,6 +179,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
+import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton,
   CTable, CTableHead, CTableRow, CTableHeaderCell, CTableBody, CTableDataCell, CTableFoot,
@@ -386,6 +387,14 @@ const deletePayment = async () => {
     deleting.value = false
   }
 }
+
+// Filters live in the URL: linkable, and kept on reload and back.
+useUrlState([
+  urlField(filters.value, 'venue_id'),
+  urlField(filters.value, 'status'),
+  urlField(filters.value, 'agent_id'),
+  urlRef(searchQuery, 'q'),
+], { onRouteChange: () => loadPayments() })
 
 onMounted(() => {
   loadPayments()

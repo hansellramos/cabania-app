@@ -34,9 +34,11 @@
 
 <script setup>
 import { ref } from 'vue'
+import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { CIcon } from '@coreui/icons-vue'
 import AccommodationTable from '@/components/accommodations/AccommodationTable.vue'
 import AccommodationCalendar from '@/components/accommodations/AccommodationCalendar.vue'
 
 const viewMode = ref('calendar')
+useUrlState([urlRef(viewMode, 'view')])
 </script>

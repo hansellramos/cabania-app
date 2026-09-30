@@ -175,6 +175,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, inject } from 'vue'
+import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { CIcon } from '@coreui/icons-vue'
 import { cilZoom, cilPlus, cilCheckCircle, cilXCircle } from '@coreui/icons'
 
@@ -384,6 +385,13 @@ const unverifyDeposit = async (deposit) => {
     console.error('Error unverifying deposit:', error)
   }
 }
+
+// Filters live in the URL: linkable, and kept on reload and back.
+useUrlState([
+  urlField(filters.value, 'status'),
+  urlField(filters.value, 'venue_id'),
+  urlRef(searchQuery, 'q'),
+], { onRouteChange: () => loadDeposits() })
 
 onMounted(() => {
   loadVenues()

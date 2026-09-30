@@ -172,6 +172,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
+import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { RouterLink, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import { cilZoom, cilPencil, cilCheckCircle, cilPhone, cilUser } from '@coreui/icons'
@@ -372,6 +373,13 @@ const getPaymentStatusLabel = (status) => {
     default: return status
   }
 }
+
+// Filters live in the URL: linkable, and kept on reload and back.
+useUrlState([
+  urlField(filters.value, 'status'),
+  urlField(filters.value, 'venue_id'),
+  urlRef(searchQuery, 'q'),
+])
 
 onMounted(() => {
   loadVenues()

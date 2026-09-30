@@ -807,6 +807,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import { CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
@@ -891,6 +892,8 @@ const selectedPayment = ref(null)
 const receiptLoadError = ref(false)
 const verifying = ref(false)
 const activeTab = ref(0)
+// The open tab lives in the URL (?tab=pagos), so it can be linked and survives a reload.
+useUrlState([urlTab(activeTab, ['resumen', 'pagos', 'deposito', 'contrato', 'comisiones', 'mensajes'])])
 
 const expenses = ref([])
 const deposit = ref(null)

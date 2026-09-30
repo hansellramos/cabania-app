@@ -169,6 +169,7 @@
 
 <script setup>
 import { ref, onMounted, watch, nextTick, computed } from 'vue'
+import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { useRoute, useRouter } from 'vue-router'
 import { CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CSpinner, CBadge, CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
@@ -186,6 +187,8 @@ const venueImages = ref([])
 const mapContainer = ref(null)
 const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN
 const activeTab = ref(0)
+// The open tab lives in the URL (?tab=ubicacion), so it can be linked and survives a reload.
+useUrlState([urlTab(activeTab, ['informacion', 'ubicacion', 'galeria'])])
 const mapInitialized = ref(false)
 
 const instagramUrl = computed(() => {
