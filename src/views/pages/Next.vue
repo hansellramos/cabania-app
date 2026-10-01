@@ -128,6 +128,7 @@
 </template>
 
 <script setup>
+import { todayIso } from '@/utils/dates'
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { CCard, CCardBody, CInputGroup, CFormInput, CButton, useColorModes } from '@coreui/vue'
@@ -164,7 +165,7 @@ const fetchVenues = async () => {
 
 const fetchAccommodations = async () => {
   try {
-    const today = new Date().toISOString().split('T')[0]
+    const today = todayIso()
     const viewAll = user.value?.is_super_admin ? settingsStore.godModeViewAll : false
     let url = `/api/accommodations?from_date=${today}&viewAll=${viewAll}`
     

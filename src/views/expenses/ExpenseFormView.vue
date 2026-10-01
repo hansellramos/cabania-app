@@ -575,6 +575,7 @@
 </template>
 
 <script setup>
+import { todayIso } from '@/utils/dates'
 import { ref, computed, onMounted, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
@@ -620,7 +621,7 @@ const form = ref({
   subcategory: '',
   provider_id: '',
   amount: '',
-  expense_date: new Date().toISOString().split('T')[0],
+  expense_date: todayIso(),
   description: '',
   reference: '',
   receipt_url: '',

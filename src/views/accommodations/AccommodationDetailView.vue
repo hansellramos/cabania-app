@@ -1015,7 +1015,7 @@ const claimFiles = ref([])
 
 const refundForm = ref({
   refund_amount: '',
-  refund_date: new Date().toISOString().split('T')[0],
+  refund_date: todayIso,
   refund_reference: ''
 })
 
@@ -1357,7 +1357,7 @@ const depositPendingBalance = computed(() => {
 function openRefundModal() {
   refundForm.value = {
     refund_amount: deposit.value?.amount || '',
-    refund_date: new Date().toISOString().split('T')[0],
+    refund_date: todayIso,
     refund_reference: ''
   }
   refundFile.value = null
@@ -1367,7 +1367,7 @@ function openRefundModal() {
 function openRefundBalanceModal() {
   refundForm.value = {
     refund_amount: depositPendingBalance.value,
-    refund_date: new Date().toISOString().split('T')[0],
+    refund_date: todayIso,
     refund_reference: ''
   }
   refundFile.value = null

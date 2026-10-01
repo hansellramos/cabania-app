@@ -313,6 +313,7 @@
 </template>
 
 <script setup>
+import { todayIso } from '@/utils/dates'
 import { ref, onMounted } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
@@ -346,7 +347,7 @@ const uploading = ref(false)
 const uploadError = ref('')
 
 const paymentForm = ref({
-  payment_date: new Date().toISOString().split('T')[0],
+  payment_date: todayIso(),
   payment_method: '',
   reference: '',
   receipt_url: '',
@@ -403,7 +404,7 @@ const calculateCommission = async () => {
 const openPaymentModal = () => {
   saveError.value = ''
   paymentForm.value = {
-    payment_date: new Date().toISOString().split('T')[0],
+    payment_date: todayIso(),
     payment_method: '',
     reference: '',
     receipt_url: '',
