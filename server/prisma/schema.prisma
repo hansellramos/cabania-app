@@ -266,6 +266,15 @@ model venues {
   notify_booking_whatsapp_phone String?   @db.VarChar(50)
   notify_booking_email          Boolean   @default(false)
   notify_booking_emails         String?   @db.VarChar(500)
+  // Daily summary of Instagram activity (how many people wrote, messages, etc.),
+  // sent at ig_summary_time (Bogotá, "HH:MM"). The in-app notification always goes
+  // to the organization's users; WhatsApp/email are optional per venue.
+  ig_summary_enabled            Boolean   @default(false)
+  ig_summary_time               String    @default("08:00") @db.VarChar(5)
+  ig_summary_whatsapp           Boolean   @default(false)
+  ig_summary_email              Boolean   @default(false)
+  ig_summary_emails             String?   @db.VarChar(500)
+  ig_summary_last_sent_at       DateTime? @db.Timestamptz(6)
   // Follow-up for chats the guest left without booking: from followup_time
   // (Bogotá, "HH:MM") on, once the chat has been idle followup_min_idle_hours,
   // within Meta's 24-hour window.
