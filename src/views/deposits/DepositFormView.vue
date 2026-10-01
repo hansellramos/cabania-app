@@ -265,6 +265,7 @@
 </template>
 
 <script setup>
+import { todayIso } from '@/utils/dates'
 import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
@@ -300,7 +301,7 @@ const form = ref({
   accommodation_id: '',
   amount: '',
   payment_method: '',
-  payment_date: new Date().toISOString().split('T')[0],
+  payment_date: todayIso(),
   reference: '',
   notes: '',
   receipt_url: '',

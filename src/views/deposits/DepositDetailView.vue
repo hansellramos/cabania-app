@@ -375,6 +375,7 @@
 </template>
 
 <script setup>
+import { todayIso } from '@/utils/dates'
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
@@ -407,14 +408,14 @@ const pendingBalance = computed(() => {
 
 const openRefundBalanceModal = () => {
   refundForm.value.refund_amount = pendingBalance.value
-  refundForm.value.refund_date = new Date().toISOString().split('T')[0]
+  refundForm.value.refund_date = todayIso()
   refundForm.value.refund_reference = ''
   showRefundModal.value = true
 }
 
 const refundForm = ref({
   refund_amount: '',
-  refund_date: new Date().toISOString().split('T')[0],
+  refund_date: todayIso(),
   refund_reference: ''
 })
 

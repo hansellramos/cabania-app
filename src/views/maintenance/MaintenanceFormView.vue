@@ -380,6 +380,7 @@
 </template>
 
 <script setup>
+import { todayIso } from '@/utils/dates'
 import { ref, computed, onMounted, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import {
@@ -406,7 +407,7 @@ const form = ref({
   zone_id: '',
   provider_id: '',
   priority: 'medium',
-  maintenance_date: new Date().toISOString().split('T')[0],
+  maintenance_date: todayIso(),
   entry_time: '',
   exit_time: '',
   status: 'pending',
