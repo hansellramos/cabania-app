@@ -221,6 +221,26 @@
       </CAlert>
     </div>
     <div class="mb-4 p-3 border rounded">
+      <h6>Resumen diario de Instagram</h6>
+      <CFormSwitch id="igSummaryEnabled" v-model="form.ig_summary_enabled" label="Enviar un resumen diario de la actividad en Instagram" />
+      <template v-if="form.ig_summary_enabled">
+        <div class="form-text mb-2">
+          Cuántas personas escribieron, mensajes respondidos, cotizaciones y reservas generadas ese día.
+          En la campana de notificaciones de la app siempre aparece.
+        </div>
+        <CFormLabel for="igSummaryTime" class="small">A qué hora</CFormLabel>
+        <CFormInput id="igSummaryTime" v-model="form.ig_summary_time" type="time" style="max-width: 160px" class="mb-2" />
+        <CFormCheck id="igSummaryWhatsapp" v-model="form.ig_summary_whatsapp" label="También por WhatsApp" />
+        <CFormCheck id="igSummaryEmail" v-model="form.ig_summary_email" label="También por correo" />
+        <CFormInput
+          v-if="form.ig_summary_email"
+          v-model="form.ig_summary_emails"
+          class="mt-1 mb-2 ms-4"
+          placeholder="correo@ejemplo.com, otro@ejemplo.com"
+        />
+      </template>
+    </div>
+    <div class="mb-4 p-3 border rounded">
       <h6 class="d-flex align-items-center gap-2">
         Mensaje de seguimiento
         <CButton color="link" size="sm" class="p-0" title="¿Cómo funciona?" @click="showFollowupHelp = true">
