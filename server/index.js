@@ -9536,6 +9536,187 @@ REGLAS:
   }
 
   /**
+   * Instagram activity metrics for a venue between two dates: how many distinct
+   * people wrote (new chats and returning ones), the messages exchanged (by
+   * CabanIA and by the team), how many chats got escalated to a human, how many
+   * quotes came from Instagram, and how many turned into a paid booking (with the
+   * revenue that represents).
+   */
+  async function getInstagramDailySummary(venueId, since, until) {
+    const window = { gte: since, lt: until };
+    // Everything said in the window, whatever day the chat started.
+    const messages = await prisma.chat_messages.findMany({
+      where: { created_at: window, conversation: { venue_id: venueId, source: 'instagram' } },
+      select: { conversation_id: true, role: true, provider: true }
+    });
+    const people = new Set(messages.filter(m => m.role === 'user').map(m => m.conversation_id));
+    const newChats = await prisma.chat_conversations.count({
+      where: { venue_id: venueId, source: 'instagram', created_at: window }
+    });
+    const escalatedCount = await prisma.chat_conversations.count({
+      where: { venue_id: venueId, source: 'instagram', escalated_at: window }
+    });
+
+    const estimatesCount = await prisma.estimates.count({
+      where: { venue_id: venueId, contact_type: 'instagram', created_at: window }
+    });
+
+    // Bookings closed in this window that came from an Instagram quote, regardless
+    // of when the quote itself was created (a guest may take a few days to pay).
+    const convertedEstimates = await prisma.estimates.findMany({
+      where: { venue_id: venueId, contact_type: 'instagram', converted_at: window },
+      select: { calculated_price: true, agreed_price: true }
+    });
+    const revenue = convertedEstimates.reduce(
+      (sum, e) => sum + Number(e.agreed_price ?? e.calculated_price ?? 0), 0
+    );
+
+    const replies = messages.filter(m => m.role === 'assistant');
+    return {
+      peopleCount: people.size,
+      newPeopleCount: Math.min(newChats, people.size),
+      messagesCount: messages.filter(m => m.role === 'user' || m.role === 'assistant').length,
+      aiMessagesCount: replies.filter(m => m.provider !== 'human').length,
+      teamMessagesCount: replies.filter(m => m.provider === 'human').length,
+      escalatedCount,
+      estimatesCount,
+      bookingsCount: convertedEstimates.length,
+      revenue
+    };
+  }
+
+  /**
+   * Turn the Instagram metrics into the title/body used for the in-app
+   * notification, WhatsApp and the email. `period` names the window ("ayer",
+   * "hoy" or "desde el último resumen"). Says explicitly when nobody wrote.
+   */
+  function buildInstagramSummaryMessage(venue, metrics, period) {
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    if (metrics.peopleCount === 0) {
+      return {
+        title: `Instagram sin actividad: ${venue.name}`,
+        body: `${period.charAt(0).toUpperCase()}${period.slice(1)} no te escribió nadie por Instagram.`
+      };
+    }
+
+    const returning = metrics.peopleCount - metrics.newPeopleCount;
+    const lines = [
+      `${period.charAt(0).toUpperCase()}${period.slice(1)} te ${metrics.peopleCount === 1 ? 'escribió' : 'escribieron'} ${plural(metrics.peopleCount, 'persona', 'personas')} por Instagram`
+        + (returning > 0 && metrics.newPeopleCount > 0 ? ` (${metrics.newPeopleCount} ${metrics.newPeopleCount === 1 ? 'nueva' : 'nuevas'}).` : '.'),
+      `${plural(metrics.messagesCount, 'mensaje', 'mensajes')} (${metrics.aiMessagesCount} de CabanIA`
+        + (metrics.teamMessagesCount ? `, ${metrics.teamMessagesCount} del equipo).` : ').'),
+      `${plural(metrics.estimatesCount, 'cotización', 'cotizaciones')}.`
+    ];
+    if (metrics.escalatedCount > 0) {
+      lines.push(`${plural(metrics.escalatedCount, 'chat escalado', 'chats escalados')} a una persona del equipo.`);
+    }
+    if (metrics.bookingsCount > 0) {
+      lines.push(`${plural(metrics.bookingsCount, 'reserva', 'reservas')} por ${money(metrics.revenue)}.`);
+    }
+
+    return {
+      title: `Resumen de Instagram: ${venue.name}`,
+      body: lines.join(' ')
+    };
+  }
+
+  /** How to name the window of a summary sent now, in Bogotá days. */
+  function summaryPeriod(since, until) {
+    const day = (d) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(d);
+    const today = day(until);
+    const yesterday = day(new Date(until.getTime() - 24 * 60 * 60 * 1000));
+    if (day(since) === today) return 'hoy';
+    // Sent in the morning: what happened is mostly yesterday's.
+    if (day(since) === yesterday && Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Bogota', hour: '2-digit', hour12: false }).format(until)) < 12) return 'ayer';
+    if (until - since <= 25 * 60 * 60 * 1000) return 'en las últimas 24 horas';
+    return 'desde el último resumen';
+  }
+
+  /**
+   * Compute and deliver a venue's daily Instagram summary: in-app to everyone in
+   * the organization, plus WhatsApp and/or email when the venue turned them on.
+   * `since`/`until` define the window the metrics cover.
+   */
+  async function sendInstagramDailySummary(venue, since, until) {
+    const metrics = await getInstagramDailySummary(venue.id, since, until);
+    const { title, body } = buildInstagramSummaryMessage(venue, metrics, summaryPeriod(since, until));
+    const link = `/business/venues/${venue.id}/instagram`;
+
+    if (venue.organization) {
+      const members = await prisma.user_organizations.findMany({
+        where: { organization_id: venue.organization },
+        select: { user_id: true }
+      });
+      if (members.length) {
+        await prisma.notifications.createMany({
+          data: members.map(m => ({
+            user_id: m.user_id,
+            organization_id: venue.organization,
+            venue_id: venue.id,
+            type: 'ig_daily_summary',
+            title,
+            body,
+            link
+          }))
+        });
+      }
+    }
+
+    if (venue.ig_summary_whatsapp) {
+      const phone = cleanPhone(venue.whatsapp ? String(venue.whatsapp) : null);
+      if (!phone) {
+        console.warn('[ig-summary] WhatsApp on but no phone', { venue: venue.id });
+      } else if (!whatsappClient.isAvailable()) {
+        console.warn('[ig-summary] System WhatsApp unavailable', { venue: venue.id });
+      } else {
+        const appUrl = `${appBaseUrl()}/#${link}`;
+        await whatsappClient.sendSystemMessage(phone, `📊 *${title}*\n\n${body}\n\nVer conversaciones: ${appUrl}`)
+          .catch(err => console.error('[ig-summary] WhatsApp failed', { venue: venue.id, error: err.message }));
+      }
+    }
+
+    if (venue.ig_summary_email) {
+      const to = String(venue.ig_summary_emails || '').split(/[,;\s]+/).map(e => e.trim()).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+      if (to.length) {
+        const escape = (v) => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const appUrl = `${appBaseUrl()}/#${link}`;
+        const html = `<p>${escape(body)}</p><p><a href="${escape(appUrl)}">Ver conversaciones en CabanIA</a></p>`;
+        const result = await require('./services/email').getEmailProvider()
+          .send({ to: to.join(', '), subject: title, html });
+        if (!result?.success) console.error('[ig-summary] Email failed', { venue: venue.id, error: result?.error });
+      } else {
+        console.warn('[ig-summary] Email on but no valid address', { venue: venue.id });
+      }
+    }
+
+    await prisma.venues.update({ where: { id: venue.id }, data: { ig_summary_last_sent_at: new Date() } });
+    console.log('[ig-summary] Sent', { venue: venue.id, ...metrics });
+  }
+
+  /**
+   * Once a day from each venue's configured time, send its Instagram summary.
+   * The window covered is "since the last summary" (or the last 24h the first
+   * time), so it never double-counts or skips activity between runs.
+   */
+  async function sendInstagramDailySummaries() {
+    const venues = await prisma.venues.findMany({ where: { ig_summary_enabled: true } });
+    if (!venues.length) return;
+    const local = bogotaNow();
+    for (const venue of venues) {
+      if (local.time < (venue.ig_summary_time || '08:00')) continue;
+      const lastSent = venue.ig_summary_last_sent_at ? new Date(venue.ig_summary_last_sent_at) : null;
+      // Already sent today (Bogotá date), skip until tomorrow.
+      if (lastSent && new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(lastSent) === local.date) continue;
+      const since = lastSent || new Date(Date.now() - 24 * 60 * 60 * 1000);
+      try {
+        await sendInstagramDailySummary(venue, since, new Date());
+      } catch (err) {
+        console.error('[ig-summary] Failed', { venue: venue.id, error: err.message });
+      }
+    }
+  }
+
+  /**
    * Record a paid Bold link: convert the estimate into a booking, register the
    * payment as verified with its income, and confirm to the guest. Idempotent: the
    * first caller claims the link, so webhook retries and the reconciler are no-ops.
@@ -14781,6 +14962,10 @@ Responde con JSON EXACTAMENTE en este formato:
     // Follow-up messages to chats left without booking (per venue settings).
     setInterval(() => sendChatFollowups().catch(err =>
       console.error('[followup] Error:', err.message)), 5 * 60 * 1000);
+
+    // Daily Instagram activity summary (per venue settings).
+    setInterval(() => sendInstagramDailySummaries().catch(err =>
+      console.error('[ig-summary] Error:', err.message)), 5 * 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });
