@@ -10468,12 +10468,42 @@ REGLAS:
           detail: { amount, accommodation_id: acc.id, balance, expires_at: expiresAt }
         });
       }
+      // QR Bre-B (Bold's QR API): scanned from any bank app, valid for 10 minutes.
+      if (req.body?.format === 'qr') {
+        if (!bold.isQrConfigured()) return res.status(400).json({ error: 'El QR Bre-B de Bold no está activo' });
+        if (link.qr_reference && link.qr_status === 'running'
+          && await syncBoldLink(link, { checkLink: false }) === 'PAID') {
+          return res.status(409).json({ error: 'Este cobro ya se pagó' });
+        }
+        const qrStillValid = link.qr_image_url && link.qr_status === 'running'
+          && link.qr_expires_at && link.qr_expires_at > new Date(Date.now() + 2 * 60 * 1000);
+        if (!qrStillValid) {
+          const customer = acc.customer
+            ? await prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true, email: true, whatsapp: true } })
+            : null;
+          const venue = await prisma.venues.findUnique({ where: { id: acc.venue }, select: { whatsapp: true } });
+          const phone = cleanPhone(customer?.whatsapp ? String(customer.whatsapp) : null) || cleanPhone(venue?.whatsapp ? String(venue.whatsapp) : null);
+          link = await refreshBoldQr(link, {
+            total: amount,
+            description: link.description || 'Saldo alquiler',
+            payer: {
+              name: customer?.fullname || 'Cliente',
+              email: customer?.email || process.env.BOLD_PAYER_EMAIL || 'hola@cabania.co',
+              phone: (phone && phone.slice(-10)) || process.env.BOLD_PAYER_PHONE || '3000000000'
+            }
+          });
+        }
+      }
+
       res.json({
         id: link.id,
         url: link.bold_url,
         amount: Number(link.amount),
         balance,
-        expires_at: link.expiration_date
+        expires_at: link.expiration_date,
+        qr_available: bold.isQrConfigured(),
+        qr_image_url: req.body?.format === 'qr' ? link.qr_image_url : null,
+        qr_expires_at: req.body?.format === 'qr' ? link.qr_expires_at : null
       });
     } catch (error) {
       console.error('[bold] Balance link failed', error);

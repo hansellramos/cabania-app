@@ -34,7 +34,7 @@
               Se crea un link de pago de Bold por {{ money(amount) }} (QR Bre-B, Nequi, PSE, tarjeta).
               Cuando el cliente paga, el pago queda registrado solo en este alquiler.
             </p>
-            <CButton color="primary" :disabled="creating || !validAmount" @click="createLink">
+            <CButton color="primary" :disabled="creating || !validAmount" @click="createLink()">
               <CSpinner v-if="creating" size="sm" class="me-1" />Generar link y QR
             </CButton>
           </div>
@@ -42,10 +42,23 @@
 
           <CRow v-if="ready" class="g-3">
             <CCol md="5" class="text-center">
+              <CButtonGroup v-if="isBold && link?.qr_available" size="sm" class="mb-2" role="group" aria-label="Tipo de QR">
+                <CButton color="primary" :variant="boldMode === 'link' ? undefined : 'outline'" @click="setBoldMode('link')">Link de pago</CButton>
+                <CButton color="primary" :variant="boldMode === 'qr' ? undefined : 'outline'" :disabled="creating" @click="setBoldMode('qr')">
+                  <CSpinner v-if="creating && boldMode === 'qr'" size="sm" class="me-1" />QR Bre-B
+                </CButton>
+              </CButtonGroup>
+              <small v-if="isBold && boldMode === 'qr' && breBQr" class="d-block mb-2" :class="qrSecondsLeft > 0 ? 'text-body-secondary' : 'text-danger'">
+                <template v-if="qrSecondsLeft > 0">Vence en {{ countdown }}: se escanea desde la app de cualquier banco.</template>
+                <template v-else>
+                  Este QR venció.
+                  <CButton color="link" size="sm" class="p-0 align-baseline" @click="createLink('qr')">Generar otro</CButton>
+                </template>
+              </small>
               <template v-if="imageSrc">
                 <img :src="imageSrc" alt="Código QR de pago" class="collect-qr img-thumbnail" />
                 <div class="d-flex justify-content-center gap-2 mt-2">
-                  <CButton color="primary" variant="outline" size="sm" @click="copyImage">
+                  <CButton color="primary" variant="outline" size="sm" @click="copyQr">
                     {{ copied === 'image' ? '¡Copiada!' : 'Copiar imagen' }}
                   </CButton>
                   <CButton color="secondary" variant="ghost" size="sm" :href="imageSrc" :download="imageFileName" target="_blank">
@@ -94,10 +107,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import QRCode from 'qrcode'
 import { CIcon } from '@coreui/icons-vue'
 import { whatsappUrl } from '@/utils/contactLinks'
+import { copyImage } from '@/utils/clipboardImage'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -117,13 +131,25 @@ const error = ref('')
 const imageError = ref('')
 const message = ref('')
 const copied = ref('')
+// Bold: 'link' is a QR of the checkout page; 'qr' is Bold's QR Bre-B (10 minutes).
+const boldMode = ref('link')
+const breBQr = ref(null)
+const now = ref(Date.now())
+let timer = null
 
 const venueId = computed(() => props.accommodation?.venue_data?.id || props.accommodation?.venue || null)
 const method = computed(() => methods.value.find(m => m.id === methodId.value) || null)
 const isBold = computed(() => method.value?.method_type === 'bold')
 const validAmount = computed(() => amount.value >= 1000 && amount.value <= props.balance)
 const ready = computed(() => !!method.value && (isBold.value ? !!link.value : validAmount.value))
-const imageSrc = computed(() => isBold.value ? qrDataUrl.value : method.value?.qr_image_url || '')
+const imageSrc = computed(() => {
+  if (!isBold.value) return method.value?.qr_image_url || ''
+  return boldMode.value === 'qr' ? breBQr.value?.qr_image_url || '' : qrDataUrl.value
+})
+const qrSecondsLeft = computed(() => breBQr.value
+  ? Math.max(0, Math.floor((new Date(breBQr.value.qr_expires_at).getTime() - now.value) / 1000))
+  : 0)
+const countdown = computed(() => `${Math.floor(qrSecondsLeft.value / 60)}:${String(qrSecondsLeft.value % 60).padStart(2, '0')}`)
 const imageFileName = computed(() => `qr-pago-${(props.accommodation?.venue_data?.name || 'cabania').toLowerCase().replace(/\s+/g, '-')}.png`)
 const whatsappLink = computed(() => whatsappUrl(props.accommodation?.customer_data?.whatsapp, message.value))
 
@@ -147,6 +173,12 @@ function buildMessage() {
   const date = bookingDate()
   const what = amount.value < props.balance ? 'un abono al saldo' : 'el saldo'
   const intro = `¡Hola${name ? `, ${name}` : ''}! 👋 Te comparto cómo pagar ${what} de tu alquiler en ${venue}${date ? ` del ${date}` : ''}: *${money(amount.value)}*.`
+  if (m.method_type === 'bold' && boldMode.value === 'qr' && breBQr.value) {
+    const until = new Date(breBQr.value.qr_expires_at)
+      .toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
+    return `${intro}\n\n📲 Escanea el código QR desde la app de tu banco (Bre-B). Vence a las ${until}.`
+      + `\n\nSi se te pasa la hora, también puedes pagar aquí: ${link.value.url}\n\n¡Gracias!`
+  }
   if (m.method_type === 'bold') {
     return `${intro}\n\n👉 Paga aquí: ${link.value.url}\n\nPuedes pagar con QR Bre-B, Nequi, PSE, Botón Bancolombia o tarjeta. `
       + 'Si estás en un computador, escanea el código QR con tu celular. ¡Gracias!'
@@ -167,6 +199,8 @@ function buildMessage() {
 function resetResult() {
   link.value = null
   qrDataUrl.value = ''
+  breBQr.value = null
+  boldMode.value = 'link'
   error.value = ''
   imageError.value = ''
   message.value = ready.value ? buildMessage() : ''
@@ -191,7 +225,7 @@ async function load() {
   }
 }
 
-async function createLink() {
+async function createLink(format) {
   creating.value = true
   error.value = ''
   try {
@@ -199,11 +233,16 @@ async function createLink() {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: amount.value })
+      body: JSON.stringify({ amount: amount.value, format })
     })
     const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.error || 'No se pudo crear el link de pago')
-    qrDataUrl.value = await QRCode.toDataURL(data.url, { width: 480, margin: 2, errorCorrectionLevel: 'M' })
+    if (!res.ok) throw new Error(data.error || 'No se pudo crear el cobro')
+    if (format === 'qr') {
+      breBQr.value = data
+      boldMode.value = 'qr'
+    } else {
+      qrDataUrl.value = await QRCode.toDataURL(data.url, { width: 480, margin: 2, errorCorrectionLevel: 'M' })
+    }
     link.value = data
     message.value = buildMessage()
   } catch (err) {
@@ -211,6 +250,15 @@ async function createLink() {
   } finally {
     creating.value = false
   }
+}
+
+function setBoldMode(mode) {
+  if (mode === 'qr' && (!breBQr.value || qrSecondsLeft.value <= 0)) {
+    createLink('qr')
+    return
+  }
+  boldMode.value = mode
+  message.value = buildMessage()
 }
 
 function flash(what) {
@@ -227,31 +275,16 @@ async function copyMessage() {
   }
 }
 
-/** The image as PNG, the only image type browsers can put on the clipboard. */
-async function pngBlob(src) {
-  const blob = await (await fetch(src)).blob()
-  if (blob.type === 'image/png') return blob
-  const bitmap = await createImageBitmap(blob)
-  const canvas = document.createElement('canvas')
-  canvas.width = bitmap.width
-  canvas.height = bitmap.height
-  canvas.getContext('2d').drawImage(bitmap, 0, 0)
-  return new Promise((resolve, reject) => canvas.toBlob(b => (b ? resolve(b) : reject(new Error('png'))), 'image/png'))
-}
-
-async function copyImage() {
+async function copyQr() {
   imageError.value = ''
-  try {
-    // The promise goes straight into the ClipboardItem so Safari keeps the click gesture.
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': pngBlob(imageSrc.value) })])
-    flash('image')
-  } catch {
-    imageError.value = 'Tu navegador no deja copiar la imagen: usa Descargar.'
-  }
+  if (await copyImage(imageSrc.value)) flash('image')
+  else imageError.value = 'Tu navegador no deja copiar la imagen: usa Descargar.'
 }
 
 watch(() => props.visible, (open) => {
+  clearInterval(timer)
   if (!open) return
+  timer = setInterval(() => { now.value = Date.now() }, 1000)
   amount.value = Math.max(0, Math.round(props.balance))
   link.value = null
   qrDataUrl.value = ''
@@ -259,6 +292,7 @@ watch(() => props.visible, (open) => {
   load().then(resetResult)
 })
 watch(methodId, resetResult)
+onBeforeUnmount(() => clearInterval(timer))
 </script>
 
 <style scoped>
