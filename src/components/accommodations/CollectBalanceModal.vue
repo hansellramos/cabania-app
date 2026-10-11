@@ -13,19 +13,31 @@
         </div>
         <template v-else>
           <CRow class="g-2 mb-3">
-            <CCol sm="7">
+            <CCol sm="6">
               <CFormLabel for="collect-method" class="small mb-1">Cómo te paga</CFormLabel>
-              <CFormSelect id="collect-method" v-model="methodId" @change="resetResult">
+              <CFormSelect id="collect-method" v-model="methodId">
                 <option v-for="m in methods" :key="m.id" :value="m.id">{{ methodName(m) }}</option>
               </CFormSelect>
             </CCol>
-            <CCol sm="5">
-              <CFormLabel for="collect-amount" class="small mb-1">Monto</CFormLabel>
-              <CInputGroup>
+            <CCol sm="6">
+              <CFormLabel for="collect-choice" class="small mb-1">Del alquiler</CFormLabel>
+              <CFormSelect id="collect-choice" v-model="choice">
+                <option value="balance">El saldo: {{ money(balance) }}</option>
+                <option value="other">Otro valor</option>
+              </CFormSelect>
+              <CInputGroup v-if="choice === 'other'" size="sm" class="mt-1">
                 <CInputGroupText>$</CInputGroupText>
-                <CFormInput id="collect-amount" v-model.number="amount" type="number" min="1000" :max="balance" step="1000" @input="resetResult" />
+                <CFormInput id="collect-amount" v-model.number="otherAmount" type="number" min="0" :max="balance" step="1000" aria-label="Monto del alquiler" />
               </CInputGroup>
-              <small v-if="amount !== balance" class="text-body-secondary">Saldo pendiente: {{ money(balance) }}</small>
+              <small v-if="choice === 'other' && otherAmount > balance" class="text-danger">Supera el saldo ({{ money(balance) }})</small>
+              <CFormCheck
+                v-if="depositAvailable"
+                id="collect-include-deposit"
+                v-model="includeDeposit"
+                class="mt-2"
+                :label="`Incluir depósito de garantía (${money(depositAmount)})`"
+              />
+              <div v-if="depositPart" class="small mt-1">Total a cobrar: <strong>{{ money(amount) }}</strong></div>
             </CCol>
           </CRow>
 
@@ -93,8 +105,11 @@
               <small class="d-block text-body-secondary mt-2">
                 Copia la imagen, pégala en el chat y envía el mensaje.
                 <template v-if="link"> El link vence el {{ formatDateTime(link.expires_at) }}.</template>
-                <template v-else> Cuando te llegue el pago, regístralo en "Registrar Pago".</template>
+                <template v-else> Cuando te llegue el pago, regístralo{{ depositPart ? ' (el depósito queda separado)' : '' }}:</template>
               </small>
+              <CButton v-if="!link" color="primary" variant="ghost" size="sm" class="px-0" @click="registerPayment">
+                Registrar el pago recibido
+              </CButton>
             </CCol>
           </CRow>
         </template>
@@ -108,6 +123,7 @@
 
 <script setup>
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import { CIcon } from '@coreui/icons-vue'
 import { whatsappUrl } from '@/utils/contactLinks'
@@ -116,14 +132,21 @@ import { copyImage } from '@/utils/clipboardImage'
 const props = defineProps({
   visible: { type: Boolean, default: false },
   accommodation: { type: Object, default: null },
-  balance: { type: Number, default: 0 }
+  balance: { type: Number, default: 0 },
+  // The booking already has its security deposit registered.
+  hasDeposit: { type: Boolean, default: false }
 })
-defineEmits(['close'])
+const emit = defineEmits(['close'])
+const router = useRouter()
 
 const loading = ref(false)
 const methods = ref([])
 const methodId = ref('')
-const amount = ref(0)
+// What is collected: the balance (or another amount) plus, usually, the security deposit.
+const choice = ref('balance')
+const otherAmount = ref(0)
+const includeDeposit = ref(false)
+const depositAmount = ref(0)
 const link = ref(null)
 const qrDataUrl = ref('')
 const creating = ref(false)
@@ -140,7 +163,11 @@ let timer = null
 const venueId = computed(() => props.accommodation?.venue_data?.id || props.accommodation?.venue || null)
 const method = computed(() => methods.value.find(m => m.id === methodId.value) || null)
 const isBold = computed(() => method.value?.method_type === 'bold')
-const validAmount = computed(() => amount.value >= 1000 && amount.value <= props.balance)
+const depositAvailable = computed(() => !props.hasDeposit && depositAmount.value > 0)
+const depositPart = computed(() => (depositAvailable.value && includeDeposit.value ? depositAmount.value : 0))
+const rentalPart = computed(() => (choice.value === 'balance' ? props.balance : Math.round(Number(otherAmount.value) || 0)))
+const amount = computed(() => rentalPart.value + depositPart.value)
+const validAmount = computed(() => amount.value >= 1000 && rentalPart.value >= 0 && rentalPart.value <= props.balance)
 const ready = computed(() => !!method.value && (isBold.value ? !!link.value : validAmount.value))
 const imageSrc = computed(() => {
   if (!isBold.value) return method.value?.qr_image_url || ''
@@ -171,8 +198,20 @@ function buildMessage() {
   const name = String(props.accommodation?.customer_data?.fullname || '').trim().split(/\s+/)[0]
   const venue = props.accommodation?.venue_data?.name || 'la cabaña'
   const date = bookingDate()
-  const what = amount.value < props.balance ? 'un abono al saldo' : 'el saldo'
-  const intro = `¡Hola${name ? `, ${name}` : ''}! 👋 Te comparto cómo pagar ${what} de tu alquiler en ${venue}${date ? ` del ${date}` : ''}: *${money(amount.value)}*.`
+  const balancePart = amount.value - depositPart.value
+  const where = `tu alquiler en ${venue}${date ? ` del ${date}` : ''}`
+  const hello = `¡Hola${name ? `, ${name}` : ''}! 👋`
+  let intro
+  if (depositPart.value && balancePart > 0) {
+    intro = `${hello} Te comparto cómo pagar ${where}:\n`
+      + `• ${balancePart < props.balance ? 'Abono al saldo' : 'Saldo'}: ${money(balancePart)}\n`
+      + `• Depósito de garantía (se devuelve después de tu estadía): ${money(depositPart.value)}\n`
+      + `Total: *${money(amount.value)}*`
+  } else if (depositPart.value) {
+    intro = `${hello} Te comparto cómo pagar el depósito de garantía de ${where} (se devuelve después de tu estadía): *${money(amount.value)}*.`
+  } else {
+    intro = `${hello} Te comparto cómo pagar ${balancePart < props.balance ? 'un abono al saldo' : 'el saldo'} de ${where}: *${money(amount.value)}*.`
+  }
   if (m.method_type === 'bold' && boldMode.value === 'qr' && breBQr.value) {
     const until = new Date(breBQr.value.qr_expires_at)
       .toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })
@@ -218,6 +257,10 @@ async function load() {
     const order = (m) => (m.method_type === 'breb' ? 0 : m.method_type === 'bold' ? 1 : 2)
     methods.value = all.sort((a, b) => order(a) - order(b))
     methodId.value = methods.value[0]?.id || ''
+    if (!props.hasDeposit) {
+      const calc = await fetch(`/api/accommodations/${props.accommodation.id}/deposit-calculation`, { credentials: 'include' })
+      depositAmount.value = calc.ok ? Math.round(Number((await calc.json()).calculated_amount) || 0) : 0
+    }
   } catch (err) {
     error.value = err.message
   } finally {
@@ -233,7 +276,12 @@ async function createLink(format) {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: amount.value, format })
+      body: JSON.stringify({
+        amount: amount.value,
+        include_deposit: depositPart.value > 0,
+        deposit_amount: depositPart.value || undefined,
+        format
+      })
     })
     const data = await res.json().catch(() => ({}))
     if (!res.ok) throw new Error(data.error || 'No se pudo crear el cobro')
@@ -285,13 +333,30 @@ watch(() => props.visible, (open) => {
   clearInterval(timer)
   if (!open) return
   timer = setInterval(() => { now.value = Date.now() }, 1000)
-  amount.value = Math.max(0, Math.round(props.balance))
+  depositAmount.value = 0
   link.value = null
   qrDataUrl.value = ''
   message.value = ''
-  load().then(resetResult)
+  load().then(() => {
+    choice.value = 'balance'
+    otherAmount.value = props.balance
+    includeDeposit.value = depositAvailable.value
+    resetResult()
+  })
 })
-watch(methodId, resetResult)
+watch([methodId, choice, otherAmount, includeDeposit], resetResult)
+
+/** Open the payment form with this collection already filled in. */
+function registerPayment() {
+  const m = method.value
+  const query = { accommodation_id: props.accommodation.id, amount: String(amount.value) }
+  if (depositPart.value) query.deposit = String(depositPart.value)
+  // The payment form's method list.
+  const FORM_METHOD = { breb: 'Bre-B', nequi: 'Nequi', daviplata: 'Daviplata', bancolombia: 'Transferencia bancaria', davivienda: 'Transferencia bancaria', pse: 'PSE' }
+  if (m) query.method = FORM_METHOD[m.method_type] || 'Otro'
+  emit('close')
+  router.push({ path: '/business/payments/new', query })
+}
 onBeforeUnmount(() => clearInterval(timer))
 </script>
 

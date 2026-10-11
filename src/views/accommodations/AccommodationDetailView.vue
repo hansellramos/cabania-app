@@ -244,7 +244,7 @@
                 <h5 class="mb-0">Pagos</h5>
                 <div class="d-flex gap-2">
                   <CButton
-                    v-if="accommodation && !accommodation.cancelled_at && pendingBalance >= 1000"
+                    v-if="accommodation && !accommodation.cancelled_at && (pendingBalance >= 1000 || !deposit)"
                     color="success"
                     size="sm"
                     @click="showCollect = true"
@@ -554,7 +554,8 @@
   <CollectBalanceModal
     :visible="showCollect"
     :accommodation="accommodation"
-    :balance="pendingBalance"
+    :balance="Math.max(0, pendingBalance)"
+    :has-deposit="!!deposit"
     @close="showCollect = false"
   />
 
