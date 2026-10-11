@@ -971,6 +971,8 @@ model bold_payment_links {
   qr_expires_at       DateTime? @db.Timestamptz(6)
   qr_status           String?   @db.VarChar(30)
   amount              Decimal   @db.Decimal
+  // Part of amount that is the security deposit (recorded in deposits, not as a payment).
+  deposit_amount      Decimal?  @db.Decimal
   description         String?   @db.Text
   status              String    @default("ACTIVE") @db.VarChar(30)
   bold_transaction_id String?   @db.VarChar(255)

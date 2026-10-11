@@ -2186,6 +2186,39 @@ async function startServer() {
       if (payment_date && typeof payment_date === 'string') {
         data.payment_date = new Date(payment_date + 'T00:00:00.000Z');
       }
+
+      // The same transfer can carry the security deposit: amount is the total
+      // received; the deposit part is registered as the booking's deposit.
+      const depositAmount = Math.round(Number(req.body.deposit_amount) || 0);
+      if (depositAmount > 0) {
+        const acc = accommodation ? await prisma.accommodations.findUnique({ where: { id: accommodation } }) : null;
+        if (!acc) return res.status(400).json({ error: 'El depósito necesita un hospedaje' });
+        const deposit = await pendingDepositFor(acc, depositAmount);
+        if (!deposit) return res.status(400).json({ error: 'Este hospedaje ya tiene un depósito registrado' });
+        const rest = (data.amount || 0) - depositAmount;
+        if (rest < 0) return res.status(400).json({ error: 'El depósito no puede ser mayor que el monto recibido' });
+        const result = await prisma.$transaction(async (tx) => {
+          const payment = rest > 0 ? await tx.payments.create({ data: { ...data, amount: rest } }) : null;
+          const createdDeposit = await tx.deposits.create({
+            data: {
+              accommodation_id: acc.id,
+              venue_id: deposit.venueId,
+              organization_id: deposit.organizationId,
+              amount: depositAmount,
+              calculated_amount: deposit.calculated,
+              status: 'pending',
+              payment_method: data.payment_method,
+              payment_date: data.payment_date || new Date(),
+              reference: data.reference,
+              receipt_url: data.receipt_url,
+              notes: rest > 0 ? 'Recibido en la misma transferencia del pago del alquiler.' : null,
+              created_by: userId
+            }
+          });
+          return { payment, deposit: createdDeposit };
+        });
+        return res.json({ ...(result.payment || {}), deposit: result.deposit });
+      }
       
       const payment = await prisma.payments.create({ data });
       res.json(payment);
@@ -4959,6 +4992,33 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       res.status(500).json({ error: error.message });
     }
   });
+
+  /**
+   * Security deposit a booking should pay by the venue's rules (base amount plus
+   * extra adults), or null when the venue has no deposit rules.
+   */
+  function calculateDeposit(accommodation, venue) {
+    if (!venue || venue.deposit_base_amount == null) return null;
+    const base = parseFloat(venue.deposit_base_amount) || 0;
+    const maxIncluded = venue.deposit_max_people_included || 0;
+    const perExtra = parseFloat(venue.deposit_per_extra_person) || 0;
+    const extraPeople = Math.max(0, (accommodation.adults || 0) - maxIncluded);
+    return base + extraPeople * perExtra;
+  }
+
+  /**
+   * The deposit still to collect for a booking: { amount, calculated } when it has
+   * no deposit registered yet, or null. An explicit amount overrides the rules.
+   */
+  async function pendingDepositFor(accommodation, requested) {
+    const existing = await prisma.deposits.findFirst({ where: { accommodation_id: accommodation.id }, select: { id: true } });
+    if (existing) return null;
+    const venue = accommodation.venue ? await prisma.venues.findUnique({ where: { id: accommodation.venue } }) : null;
+    const calculated = calculateDeposit(accommodation, venue);
+    const amount = requested != null ? Math.round(Number(requested)) : calculated;
+    if (!(amount > 0)) return null;
+    return { amount, calculated, venueId: venue?.id || accommodation.venue || null, organizationId: venue?.organization || null };
+  }
 
   // Deposit calculation endpoint
   app.get('/api/accommodations/:id/deposit-calculation', isAuthenticated, async (req, res) => {
@@ -9426,6 +9486,37 @@ REGLAS:
    * so someone follows up in person: an in-app notification for every user of the
    * organization, plus WhatsApp and email when the venue turned them on.
    */
+  /** In-app notice to the venue's organization: a balance paid through Bold. */
+  async function notifyBalancePaid(accommodationId, { paidAmount, balance, depositPart = 0 }) {
+    const acc = await prisma.accommodations.findUnique({ where: { id: accommodationId } });
+    if (!acc?.venue) return;
+    const [venue, customer] = await Promise.all([
+      prisma.venues.findUnique({ where: { id: acc.venue }, select: { id: true, name: true, organization: true } }),
+      acc.customer ? prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true } }) : null
+    ]);
+    if (!venue?.organization) return;
+    const members = await prisma.user_organizations.findMany({
+      where: { organization_id: venue.organization },
+      select: { user_id: true }
+    });
+    if (!members.length) return;
+    const date = formatBookingDate(acc.date);
+    const who = customer?.fullname || 'El cliente';
+    await prisma.notifications.createMany({
+      data: members.map(m => ({
+        user_id: m.user_id,
+        organization_id: venue.organization,
+        venue_id: venue.id,
+        type: 'payment_received',
+        title: `Pago recibido: ${date}`,
+        body: `${who} pagó ${money(paidAmount)} por Bold del alquiler del ${date} en ${venue.name}`
+          + (depositPart > 0 ? `, incluido el depósito de ${money(depositPart)}. ` : '. ')
+          + (balance > 0 ? `Saldo pendiente: ${money(balance)}.` : 'El alquiler quedó pagado por completo.'),
+        link: `/business/accommodations/${acc.id}`
+      }))
+    });
+  }
+
   async function notifyBookingConfirmed(accommodationId, { paidAmount, balance, contractUrl, manual = false } = {}) {
     const acc = await prisma.accommodations.findUnique({ where: { id: accommodationId } });
     if (!acc?.venue) return;
@@ -9758,10 +9849,36 @@ REGLAS:
           : null;
 
         const now = new Date();
+        // A link can carry the security deposit: that part becomes the booking's
+        // deposit (unless one was registered meanwhile) and the rest the payment.
+        let depositPart = Number(link.deposit_amount || 0);
+        if (depositPart > 0 && accommodationId
+          && !(await tx.deposits.findFirst({ where: { accommodation_id: accommodationId }, select: { id: true } }))) {
+          await tx.deposits.create({
+            data: {
+              accommodation_id: accommodationId,
+              venue_id: venueId,
+              organization_id: venue?.organization || null,
+              amount: depositPart,
+              status: 'pending',
+              payment_method: state.paymentMethod ? `Bold - ${state.paymentMethod}` : 'Bold',
+              payment_date: now,
+              reference: state.transactionId || link.bold_link_id,
+              notes: `Recibido por Bold junto con el pago del alquiler. Link: ${link.bold_link_id}`,
+              verified: true,
+              verified_at: now,
+              verified_by: state.actor || 'system:bold',
+              created_by: state.actor || 'system:bold'
+            }
+          });
+        } else {
+          depositPart = 0;
+        }
+        const paymentAmount = Number(link.amount) - depositPart;
         const payment = await tx.payments.create({
           data: {
             accommodation: accommodationId,
-            amount: link.amount,
+            amount: paymentAmount,
             payment_method: state.paymentMethod ? `Bold - ${state.paymentMethod}` : 'Bold',
             payment_date: now,
             reference: state.transactionId || link.bold_link_id,
@@ -9780,7 +9897,7 @@ REGLAS:
           const incomeData = {
             organization_id: venue?.organization || null,
             venue_id: venueId,
-            amount: link.amount,
+            amount: paymentAmount,
             type: 'accommodation',
             date: now,
             accrual_date: accommodation?.date || null
@@ -9879,6 +9996,7 @@ REGLAS:
           paymentId: payment.id,
           balance,
           commission,
+          depositPart,
           forAgent: !!estimate?.commission_agent_id,
           clientName: estimate?.customer_name || null,
           date: accommodation?.date || null
@@ -9896,6 +10014,14 @@ REGLAS:
       source,
       detail: { accommodation_id: result.accommodationId, payment_id: result.paymentId, balance: result.balance, commission: result.commission }
     });
+
+    // A link the team created to collect the balance of an existing booking: the
+    // booking was already confirmed, so the team only hears about the payment.
+    if (!link.estimate_id && link.accommodation_id && link.created_by && !String(link.created_by).startsWith('system')) {
+      notifyBalancePaid(result.accommodationId, { paidAmount: Number(link.amount), balance: result.balance, depositPart: result.depositPart })
+        .catch(err => console.error('[booking-notify] Balance notice failed', { accommodation: result.accommodationId, error: err.message }));
+      return;
+    }
 
     // The contract is generated outside the payment transaction: a missing or
     // broken template must not undo a payment the guest already made.
@@ -10371,6 +10497,119 @@ REGLAS:
       res.json({ success: true, payment_id: updated.payment_id, accommodation_id: updated.accommodation_id });
     } catch (error) {
       console.error('[bold] Manual reconciliation failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/accommodations/:id/payment-link — Bold link to collect the balance of
+  // a booking, created by the team to share by hand (WhatsApp, Instagram...). When
+  // it is paid, the payment is recorded on the booking like any Bold payment.
+  app.post('/api/accommodations/:id/payment-link', isAuthenticated, async (req, res) => {
+    try {
+      const acc = await findEditableAccommodation(req);
+      if (!acc) return res.status(404).json({ error: 'Alquiler no encontrado o sin permiso' });
+      if (acc.cancelled_at) return res.status(400).json({ error: 'Este alquiler está cancelado' });
+      if (!bold.isConfigured()) return res.status(400).json({ error: 'El pago en línea con Bold no está configurado' });
+      const method = await prisma.venue_payment_methods.findFirst({
+        where: { venue_id: acc.venue, method_type: 'bold', is_active: true }
+      });
+      if (!method) return res.status(400).json({ error: 'Esta cabaña no tiene activo el pago en línea con Bold' });
+
+      const paid = await prisma.payments.aggregate({ where: { accommodation: acc.id }, _sum: { amount: true } });
+      const balance = Math.round(Number(acc.agreed_price ?? acc.calculated_price ?? 0) - Number(paid._sum.amount || 0));
+      // Usually the balance and the security deposit go in the same payment.
+      const deposit = req.body?.include_deposit ? await pendingDepositFor(acc, req.body.deposit_amount) : null;
+      if (req.body?.include_deposit && !deposit) {
+        return res.status(400).json({ error: 'Este alquiler ya tiene depósito registrado o la cabaña no tiene reglas de depósito' });
+      }
+      const depositAmount = deposit?.amount || 0;
+      const amount = req.body?.amount != null ? Math.round(Number(req.body.amount)) : balance + depositAmount;
+      if (!(amount >= 1000)) return res.status(400).json({ error: 'El monto a cobrar debe ser de al menos $1.000' });
+      if (amount > balance + depositAmount) {
+        return res.status(400).json({ error: `El monto supera lo pendiente (${money(balance + depositAmount)})` });
+      }
+      if (depositAmount && amount <= depositAmount) {
+        return res.status(400).json({ error: 'Con Bold, el cobro con depósito debe incluir también parte del saldo' });
+      }
+
+      // Reuse an open link for the same booking and amount instead of creating duplicates.
+      let link = await prisma.bold_payment_links.findFirst({
+        where: {
+          accommodation_id: acc.id,
+          estimate_id: null,
+          amount,
+          deposit_amount: depositAmount || null,
+          status: { in: BOLD_OPEN_STATUSES },
+          expiration_date: { gt: new Date(Date.now() + 60 * 60 * 1000) }
+        },
+        orderBy: { created_at: 'desc' }
+      });
+      if (!link) {
+        const venue = await prisma.venues.findUnique({ where: { id: acc.venue }, select: { name: true } });
+        const hours = Number(process.env.BOLD_LINK_EXPIRATION_HOURS) || 48;
+        const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
+        const what = amount - depositAmount < balance ? 'Abono' : 'Saldo';
+        const description = `${what}${depositAmount ? ' y depósito' : ''} alquiler ${venue?.name || ''} ${formatBookingDate(acc.date)}`.trim();
+        const created = await bold.createPaymentLink({ amount, description, expiresAt });
+        link = await prisma.bold_payment_links.create({
+          data: {
+            bold_link_id: created.linkId,
+            bold_url: created.url,
+            amount,
+            deposit_amount: depositAmount || null,
+            description,
+            status: 'ACTIVE',
+            expiration_date: expiresAt,
+            accommodation_id: acc.id,
+            venue_id: acc.venue,
+            created_by: String(req.user.claims?.sub)
+          }
+        });
+        await logBoldEvent(link.id, 'created', {
+          source: 'app', toStatus: 'ACTIVE', actor: String(req.user.claims?.sub),
+          detail: { amount, deposit_amount: depositAmount, accommodation_id: acc.id, balance, expires_at: expiresAt }
+        });
+      }
+      // QR Bre-B (Bold's QR API): scanned from any bank app, valid for 10 minutes.
+      if (req.body?.format === 'qr') {
+        if (!bold.isQrConfigured()) return res.status(400).json({ error: 'El QR Bre-B de Bold no está activo' });
+        if (link.qr_reference && link.qr_status === 'running'
+          && await syncBoldLink(link, { checkLink: false }) === 'PAID') {
+          return res.status(409).json({ error: 'Este cobro ya se pagó' });
+        }
+        const qrStillValid = link.qr_image_url && link.qr_status === 'running'
+          && link.qr_expires_at && link.qr_expires_at > new Date(Date.now() + 2 * 60 * 1000);
+        if (!qrStillValid) {
+          const customer = acc.customer
+            ? await prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true, email: true, whatsapp: true } })
+            : null;
+          const venue = await prisma.venues.findUnique({ where: { id: acc.venue }, select: { whatsapp: true } });
+          const phone = cleanPhone(customer?.whatsapp ? String(customer.whatsapp) : null) || cleanPhone(venue?.whatsapp ? String(venue.whatsapp) : null);
+          link = await refreshBoldQr(link, {
+            total: amount,
+            description: link.description || 'Saldo alquiler',
+            payer: {
+              name: customer?.fullname || 'Cliente',
+              email: customer?.email || process.env.BOLD_PAYER_EMAIL || 'hola@cabania.co',
+              phone: (phone && phone.slice(-10)) || process.env.BOLD_PAYER_PHONE || '3000000000'
+            }
+          });
+        }
+      }
+
+      res.json({
+        id: link.id,
+        url: link.bold_url,
+        amount: Number(link.amount),
+        deposit_amount: Number(link.deposit_amount || 0),
+        balance,
+        expires_at: link.expiration_date,
+        qr_available: bold.isQrConfigured(),
+        qr_image_url: req.body?.format === 'qr' ? link.qr_image_url : null,
+        qr_expires_at: req.body?.format === 'qr' ? link.qr_expires_at : null
+      });
+    } catch (error) {
+      console.error('[bold] Balance link failed', error);
       res.status(500).json({ error: error.message });
     }
   });

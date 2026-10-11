@@ -53,6 +53,9 @@
                   </small>
                 </div>
                 <div class="d-flex gap-1">
+                  <CButton v-if="method.qr_image_url" color="secondary" size="sm" variant="ghost" @click="copyQr(method.qr_image_url)" title="Copiar QR" aria-label="Copiar QR">
+                    <CIcon icon="cil-copy" />
+                  </CButton>
                   <CButton color="primary" size="sm" variant="ghost" @click="openForm(method)" title="Editar">
                     <CIcon icon="cil-pencil" />
                   </CButton>
@@ -143,6 +146,10 @@
     <CModalBody class="text-center p-0">
       <img v-if="previewImage" :src="previewImage" class="img-fluid" alt="QR" />
     </CModalBody>
+    <CModalFooter>
+      <CButton color="primary" @click="copyQr(previewImage)">Copiar QR</CButton>
+      <CButton color="secondary" variant="outline" :href="previewImage" target="_blank" download>Descargar</CButton>
+    </CModalFooter>
   </CModal>
 
   <CToaster placement="top-end">
@@ -154,6 +161,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { copyImage } from '@/utils/clipboardImage'
 import { useRoute } from 'vue-router'
 import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CSpinner, CBadge,
@@ -192,6 +200,11 @@ const form = ref({
 const toast = ref({ visible: false, message: '', color: 'success' })
 const showToast = (message, color = 'success') => {
   toast.value = { visible: true, message, color }
+}
+
+async function copyQr(src) {
+  if (await copyImage(src)) showToast('QR copiado: pégalo en el chat')
+  else showToast('Tu navegador no deja copiar la imagen: ábrela y descárgala', 'warning')
 }
 
 const getTypeLabel = (type) => {
