@@ -9426,6 +9426,36 @@ REGLAS:
    * so someone follows up in person: an in-app notification for every user of the
    * organization, plus WhatsApp and email when the venue turned them on.
    */
+  /** In-app notice to the venue's organization: a balance paid through Bold. */
+  async function notifyBalancePaid(accommodationId, { paidAmount, balance }) {
+    const acc = await prisma.accommodations.findUnique({ where: { id: accommodationId } });
+    if (!acc?.venue) return;
+    const [venue, customer] = await Promise.all([
+      prisma.venues.findUnique({ where: { id: acc.venue }, select: { id: true, name: true, organization: true } }),
+      acc.customer ? prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true } }) : null
+    ]);
+    if (!venue?.organization) return;
+    const members = await prisma.user_organizations.findMany({
+      where: { organization_id: venue.organization },
+      select: { user_id: true }
+    });
+    if (!members.length) return;
+    const date = formatBookingDate(acc.date);
+    const who = customer?.fullname || 'El cliente';
+    await prisma.notifications.createMany({
+      data: members.map(m => ({
+        user_id: m.user_id,
+        organization_id: venue.organization,
+        venue_id: venue.id,
+        type: 'payment_received',
+        title: `Pago recibido: ${date}`,
+        body: `${who} pagó ${money(paidAmount)} por Bold del alquiler del ${date} en ${venue.name}. `
+          + (balance > 0 ? `Saldo pendiente: ${money(balance)}.` : 'El alquiler quedó pagado por completo.'),
+        link: `/business/accommodations/${acc.id}`
+      }))
+    });
+  }
+
   async function notifyBookingConfirmed(accommodationId, { paidAmount, balance, contractUrl, manual = false } = {}) {
     const acc = await prisma.accommodations.findUnique({ where: { id: accommodationId } });
     if (!acc?.venue) return;
@@ -9896,6 +9926,14 @@ REGLAS:
       source,
       detail: { accommodation_id: result.accommodationId, payment_id: result.paymentId, balance: result.balance, commission: result.commission }
     });
+
+    // A link the team created to collect the balance of an existing booking: the
+    // booking was already confirmed, so the team only hears about the payment.
+    if (!link.estimate_id && link.accommodation_id && link.created_by && !String(link.created_by).startsWith('system')) {
+      notifyBalancePaid(result.accommodationId, { paidAmount: Number(link.amount), balance: result.balance })
+        .catch(err => console.error('[booking-notify] Balance notice failed', { accommodation: result.accommodationId, error: err.message }));
+      return;
+    }
 
     // The contract is generated outside the payment transaction: a missing or
     // broken template must not undo a payment the guest already made.
@@ -10371,6 +10409,74 @@ REGLAS:
       res.json({ success: true, payment_id: updated.payment_id, accommodation_id: updated.accommodation_id });
     } catch (error) {
       console.error('[bold] Manual reconciliation failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/accommodations/:id/payment-link — Bold link to collect the balance of
+  // a booking, created by the team to share by hand (WhatsApp, Instagram...). When
+  // it is paid, the payment is recorded on the booking like any Bold payment.
+  app.post('/api/accommodations/:id/payment-link', isAuthenticated, async (req, res) => {
+    try {
+      const acc = await findEditableAccommodation(req);
+      if (!acc) return res.status(404).json({ error: 'Alquiler no encontrado o sin permiso' });
+      if (acc.cancelled_at) return res.status(400).json({ error: 'Este alquiler está cancelado' });
+      if (!bold.isConfigured()) return res.status(400).json({ error: 'El pago en línea con Bold no está configurado' });
+      const method = await prisma.venue_payment_methods.findFirst({
+        where: { venue_id: acc.venue, method_type: 'bold', is_active: true }
+      });
+      if (!method) return res.status(400).json({ error: 'Esta cabaña no tiene activo el pago en línea con Bold' });
+
+      const paid = await prisma.payments.aggregate({ where: { accommodation: acc.id }, _sum: { amount: true } });
+      const balance = Math.round(Number(acc.agreed_price ?? acc.calculated_price ?? 0) - Number(paid._sum.amount || 0));
+      const amount = req.body?.amount != null ? Math.round(Number(req.body.amount)) : balance;
+      if (!(amount >= 1000)) return res.status(400).json({ error: 'El monto a cobrar debe ser de al menos $1.000' });
+      if (amount > balance) return res.status(400).json({ error: `El monto supera el saldo pendiente (${money(balance)})` });
+
+      // Reuse an open link for the same booking and amount instead of creating duplicates.
+      let link = await prisma.bold_payment_links.findFirst({
+        where: {
+          accommodation_id: acc.id,
+          estimate_id: null,
+          amount,
+          status: { in: BOLD_OPEN_STATUSES },
+          expiration_date: { gt: new Date(Date.now() + 60 * 60 * 1000) }
+        },
+        orderBy: { created_at: 'desc' }
+      });
+      if (!link) {
+        const venue = await prisma.venues.findUnique({ where: { id: acc.venue }, select: { name: true } });
+        const hours = Number(process.env.BOLD_LINK_EXPIRATION_HOURS) || 48;
+        const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
+        const description = `${amount < balance ? 'Abono' : 'Saldo'} alquiler ${venue?.name || ''} ${formatBookingDate(acc.date)}`.trim();
+        const created = await bold.createPaymentLink({ amount, description, expiresAt });
+        link = await prisma.bold_payment_links.create({
+          data: {
+            bold_link_id: created.linkId,
+            bold_url: created.url,
+            amount,
+            description,
+            status: 'ACTIVE',
+            expiration_date: expiresAt,
+            accommodation_id: acc.id,
+            venue_id: acc.venue,
+            created_by: String(req.user.claims?.sub)
+          }
+        });
+        await logBoldEvent(link.id, 'created', {
+          source: 'app', toStatus: 'ACTIVE', actor: String(req.user.claims?.sub),
+          detail: { amount, accommodation_id: acc.id, balance, expires_at: expiresAt }
+        });
+      }
+      res.json({
+        id: link.id,
+        url: link.bold_url,
+        amount: Number(link.amount),
+        balance,
+        expires_at: link.expiration_date
+      });
+    } catch (error) {
+      console.error('[bold] Balance link failed', error);
       res.status(500).json({ error: error.message });
     }
   });

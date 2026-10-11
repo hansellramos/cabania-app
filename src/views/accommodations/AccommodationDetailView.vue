@@ -242,9 +242,19 @@
             <CTabPane :visible="activeTab === 1">
               <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0">Pagos</h5>
-                <CButton color="primary" size="sm" @click="$router.push(`/business/payments/new?accommodation_id=${route.params.id}`)">
-                  Registrar Pago
-                </CButton>
+                <div class="d-flex gap-2">
+                  <CButton
+                    v-if="accommodation && !accommodation.cancelled_at && pendingBalance >= 1000"
+                    color="success"
+                    size="sm"
+                    @click="showCollect = true"
+                  >
+                    Cobrar saldo
+                  </CButton>
+                  <CButton color="primary" size="sm" @click="$router.push(`/business/payments/new?accommodation_id=${route.params.id}`)">
+                    Registrar Pago
+                  </CButton>
+                </div>
               </div>
               <CTable hover responsive v-if="payments.length > 0">
                 <CTableHead>
@@ -540,6 +550,13 @@
       </CCard>
     </CCol>
   </CRow>
+
+  <CollectBalanceModal
+    :visible="showCollect"
+    :accommodation="accommodation"
+    :balance="pendingBalance"
+    @close="showCollect = false"
+  />
 
   <CModal teleport
     :visible="showRefundModal"
@@ -886,6 +903,7 @@ import MessageSuggestions from '@/components/accommodations/MessageSuggestions.v
 import { whatsappUrl, instagramDmUrl } from '@/utils/contactLinks'
 import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
 import AccommodationContractTab from '@/components/accommodations/AccommodationContractTab.vue'
+import CollectBalanceModal from '@/components/accommodations/CollectBalanceModal.vue'
 import { deleteAccommodation } from '@/services/accommodationService'
 
 const route = useRoute()
@@ -993,6 +1011,7 @@ function formatDateTimeShort(value) {
   return new Date(value).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' })
 }
 const payments = ref([])
+const showCollect = ref(false)
 const showReceiptModal = ref(false)
 const selectedReceiptUrl = ref('')
 const selectedPayment = ref(null)
