@@ -8,6 +8,8 @@
  * offered to agent keys that allow changes.
  */
 
+const analytics = require('./lib/analytics');
+
 const TIMEZONE = 'America/Bogota';
 const MAX_TOOL_ROUNDS = 6;
 
@@ -706,6 +708,11 @@ function createAgentTools(deps) {
           created_by: scope.userId
         }
       });
+      analytics.track('quote_created', {
+        userId: scope.userId,
+        venueId: venue.id,
+        properties: { source: toolSource(scope), channel: contactType, total_bucket: analytics.amountBucket(quote.agreed_price) },
+      });
       return {
         ok: true,
         quote_id: quote.id,
@@ -766,6 +773,17 @@ function createAgentTools(deps) {
           created_by: scope.userId,
           ...(agent && { commission_agent_id: agent.id })
         }
+      });
+      analytics.track('booking_created', {
+        userId: scope.userId,
+        venueId: venue.id,
+        properties: {
+          source: toolSource(scope),
+          plan_type: plan.plan_type || null,
+          adults_bucket: analytics.countBucket(adults + children),
+          total_bucket: analytics.amountBucket(booking.agreed_price),
+          has_agent: !!agent,
+        },
       });
       const commission = agent ? await recordCommission(booking, agent, plan, scope) : null;
       const [summary] = await describeBookings([booking]);
@@ -1111,6 +1129,9 @@ const validEmail = (v) => {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text) && text.length <= 255 ? text : null;
 };
 // Changes made by an external agent are marked, so the team knows where they came from.
+// Who called the tool, for analytics: an external agent's API key or the in-app assistant.
+const toolSource = (scope) => (scope.agentKeyName ? 'api' : 'assistant');
+
 const agentNote = (scope, note) => {
   const text = String(note || '').trim().slice(0, 1000);
   if (!scope.agentKeyName) return text || null;

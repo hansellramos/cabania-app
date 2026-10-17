@@ -414,13 +414,17 @@
         <CInputGroupText class="text-muted" style="font-size: 0.85rem;">{{ publicHost }}/#/p/</CInputGroupText>
         <CFormInput
           id="venueSlug"
-          v-model="form.slug"
+          :model-value="form.slug"
+          @update:model-value="v => (form.slug = normalizeSlug(v))"
           type="text"
           placeholder="mi-cabana"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
           :pattern="'^[a-z0-9-]+$'"
         />
       </CInputGroup>
-      <div class="form-text">Identificador URL-friendly. Déjalo vacío para generarlo automáticamente desde el nombre.</div>
+      <div class="form-text">Solo minúsculas, números y guiones; las mayúsculas, tildes y espacios se convierten solos. Déjalo vacío para generarlo automáticamente desde el nombre.</div>
       <div v-if="form.slug" class="form-text">
         <a :href="publicVenueUrl" target="_blank">
           Ver página pública ↗
@@ -434,6 +438,15 @@
 
 <script setup>
 import { ref, watch, onMounted, computed } from 'vue'
+
+// Keeps the slug valid while typing (the input's pattern used to block the submit silently).
+function normalizeSlug(value) {
+  return String(value || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+}
 import { CIcon } from '@coreui/icons-vue'
 import mapboxgl from 'mapbox-gl'
 import MapboxGeocoder from '@mapbox/mapbox-gl-geocoder'

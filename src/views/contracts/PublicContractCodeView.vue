@@ -8,6 +8,8 @@
         <CFormInput
           v-model="code"
           type="text"
+          inputmode="numeric"
+          autocomplete="one-time-code"
           maxlength="6"
           placeholder="000000"
           class="text-center fs-3 mb-3"

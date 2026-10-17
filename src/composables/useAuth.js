@@ -1,5 +1,6 @@
 import { ref, computed, onMounted } from 'vue';
 import { resetAuthState } from '@/router';
+import { resetAnalytics } from '@/lib/analytics';
 import {
   startRegistration,
   startAuthentication,
@@ -87,10 +88,17 @@ async function logout() {
   }
   user.value = null;
   resetAuthState();
+  resetAnalytics();
   window.location.href = '/#/pages/login';
 }
 
+let passkeyInFlight = false;
+
 async function loginWithPasskey(email) {
+  // A second click while the browser prompt is open would abort the first ceremony
+  // ("Authentication ceremony was sent an abort signal"); ignore it instead.
+  if (passkeyInFlight) return false;
+  passkeyInFlight = true;
   try {
     error.value = null;
 
@@ -134,13 +142,15 @@ async function loginWithPasskey(email) {
     await fetchUser();
     return true;
   } catch (err) {
-    // User cancelled the WebAuthn prompt
-    if (err.name === 'NotAllowedError') {
-      error.value = 'Autenticación cancelada';
+    // User cancelled the WebAuthn prompt, it timed out, or the ceremony was aborted
+    if (err.name === 'NotAllowedError' || err.name === 'AbortError') {
+      error.value = 'No se completó el inicio con Passkey. Intenta de nuevo o entra con tu contraseña o con un código al correo.';
     } else {
       error.value = err.message;
     }
     return false;
+  } finally {
+    passkeyInFlight = false;
   }
 }
 

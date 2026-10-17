@@ -41,7 +41,7 @@
     </div>
 
     <!-- Contract -->
-    <article v-else-if="contract" class="cabania-contract__doc">
+    <article v-else-if="contract" class="cabania-contract__doc ph-no-capture">
       <!-- Header -->
       <header class="cabania-contract__card cabania-contract__header">
         <img
@@ -161,7 +161,7 @@
 
     <!-- Signing modal -->
     <div v-if="showSignModal" class="cabania-modal-backdrop" @click.self="closeSignModal">
-      <div class="cabania-modal">
+      <div class="cabania-modal ph-no-capture">
         <header class="cabania-modal__header">
           <h3>{{ modalTitle }}</h3>
           <button class="cabania-modal__close" @click="closeSignModal" aria-label="Cerrar">&times;</button>
@@ -189,12 +189,22 @@
             <button class="cabania-btn cabania-btn--ghost cabania-btn--sm" @click="clearSignature">Limpiar</button>
           </div>
 
+          <p v-if="signError" class="cabania-sign-error">{{ signError }}</p>
+
           <!-- Step 2: person photo -->
           <div v-if="signStep === 2">
             <p class="cabania-muted">Toma una foto para verificar tu identidad:</p>
             <div v-if="!capturedPhoto" class="cabania-photo-stage">
-              <video ref="videoEl" autoplay playsinline></video>
-              <button class="cabania-btn cabania-btn--gradient" @click="capturePhoto">Tomar foto</button>
+              <video v-show="!cameraError" ref="videoEl" autoplay playsinline></video>
+              <button v-if="!cameraError" class="cabania-btn cabania-btn--gradient" @click="capturePhoto">Tomar foto</button>
+              <template v-else>
+                <p class="cabania-sign-error">{{ cameraError }}</p>
+                <button class="cabania-btn cabania-btn--ghost cabania-btn--sm" @click="startCamera">Reintentar cámara</button>
+              </template>
+              <label class="cabania-btn cabania-btn--ghost cabania-btn--sm">
+                Subir una foto
+                <input type="file" accept="image/*" capture="user" hidden @change="e => onPhotoFile(e, 'photo')" />
+              </label>
             </div>
             <div v-else class="cabania-photo-stage">
               <img :src="capturedPhoto" alt="Foto capturada" />
@@ -206,8 +216,16 @@
           <div v-if="signStep === 3">
             <p class="cabania-muted">Toma una foto clara de tu documento de identidad:</p>
             <div v-if="!capturedDoc" class="cabania-photo-stage">
-              <video ref="videoEl" autoplay playsinline></video>
-              <button class="cabania-btn cabania-btn--gradient" @click="captureDoc">Tomar foto</button>
+              <video v-show="!cameraError" ref="videoEl" autoplay playsinline></video>
+              <button v-if="!cameraError" class="cabania-btn cabania-btn--gradient" @click="captureDoc">Tomar foto</button>
+              <template v-else>
+                <p class="cabania-sign-error">{{ cameraError }}</p>
+                <button class="cabania-btn cabania-btn--ghost cabania-btn--sm" @click="startCamera">Reintentar cámara</button>
+              </template>
+              <label class="cabania-btn cabania-btn--ghost cabania-btn--sm">
+                Subir una foto
+                <input type="file" accept="image/*" capture="environment" hidden @change="e => onPhotoFile(e, 'doc')" />
+              </label>
             </div>
             <div v-else class="cabania-photo-stage">
               <img :src="capturedDoc" alt="Documento capturado" />
@@ -269,6 +287,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { renderMarkdown } from '@/utils/contractMarkdown'
 import { protectedContractImageUrl } from '@/utils/contractImage'
+import { track } from '@/lib/analytics'
 
 const THEME_KEY = 'coreui-free-vue-admin-template-theme'
 
@@ -294,6 +313,8 @@ const capturedPhoto = ref(null)
 const capturedDoc = ref(null)
 const signatureCanvas = ref(null)
 const videoEl = ref(null)
+const cameraError = ref('')
+const signError = ref('')
 let signaturePad = null
 let videoStream = null
 
@@ -355,7 +376,11 @@ async function loadContract() {
       error.value = 'Contrato no encontrado'
       return
     }
+    const firstLoad = !contract.value
     contract.value = await res.json()
+    if (firstLoad) {
+      track('contract_opened', { kind: isAmendment.value ? 'amendment' : 'contract', status: contract.value.status })
+    }
     if (contract.value.snapshot_html) {
       try {
         sections.value = JSON.parse(contract.value.snapshot_html)
@@ -393,11 +418,14 @@ function printContract() {
 
 // --- Signing ---
 function startSigning() {
+  signError.value = ''
+  cameraError.value = ''
   signStep.value = 0
   hasSignature.value = false
   capturedPhoto.value = null
   capturedDoc.value = null
   showSignModal.value = true
+  track('contract_sign_started', { kind: isAmendment.value ? 'amendment' : 'contract' })
   // An otrosí only needs the signature (photo and ID were taken with the contract).
   if (isAmendment.value) beginSignature()
 }
@@ -416,10 +444,14 @@ function initSignaturePad() {
   const canvas = signatureCanvas.value
   if (!canvas) return
   const rect = canvas.parentElement.getBoundingClientRect()
-  canvas.width = rect.width
-  canvas.height = 200
+  // Draw at device resolution (sharp on phones) but cap it so the canvas stays small.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  const cssWidth = Math.min(rect.width || 320, 800)
+  canvas.width = Math.round(cssWidth * dpr)
+  canvas.height = Math.round(200 * dpr)
 
   const ctx = canvas.getContext('2d')
+  ctx.scale(dpr, dpr)
   ctx.strokeStyle = '#0f172a'
   ctx.lineWidth = 2.5
   ctx.lineCap = 'round'
@@ -463,7 +495,10 @@ function initSignaturePad() {
 function clearSignature() {
   if (!signaturePad) return
   const { canvas, ctx } = signaturePad
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
   ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.restore()
   hasSignature.value = false
 }
 
@@ -480,6 +515,7 @@ async function goToDocStep() {
 }
 
 async function startCamera() {
+  cameraError.value = ''
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: 'user', width: 640, height: 480 }
@@ -488,18 +524,59 @@ async function startCamera() {
     if (videoEl.value) videoEl.value.srcObject = stream
   } catch (err) {
     console.error('Camera error:', err)
-    alert('No se pudo acceder a la cámara. Otorga permisos e intenta de nuevo.')
+    cameraError.value = 'No se pudo abrir la cámara. Dale permiso en el navegador y reintenta, o sube una foto.'
+  }
+}
+
+// Longest side of captured photos. Bigger canvases fail on phones ("canvas exceeds max size")
+// and make heavier uploads without helping verification.
+const MAX_PHOTO_SIDE = 1600
+
+function imageToDataUrl(source, width, height) {
+  const scale = Math.min(1, MAX_PHOTO_SIDE / Math.max(width, height))
+  const canvas = document.createElement('canvas')
+  canvas.width = Math.max(1, Math.round(width * scale))
+  canvas.height = Math.max(1, Math.round(height * scale))
+  canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height)
+  return canvas.toDataURL('image/jpeg', 0.85)
+}
+
+// Returns a frame of the live camera, or null while the video has no frame yet.
+function grabFrame() {
+  const video = videoEl.value
+  if (!video || !video.videoWidth) {
+    signError.value = 'La cámara todavía está cargando. Espera un momento y vuelve a tocar "Tomar foto".'
+    return null
+  }
+  signError.value = ''
+  return imageToDataUrl(video, video.videoWidth, video.videoHeight)
+}
+
+async function onPhotoFile(event, target) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  try {
+    const bitmap = await createImageBitmap(file)
+    const dataUrl = imageToDataUrl(bitmap, bitmap.width, bitmap.height)
+    bitmap.close?.()
+    if (target === 'doc') capturedDoc.value = dataUrl
+    else capturedPhoto.value = dataUrl
+    track('contract_photo_taken', { target: target === 'doc' ? 'document' : 'selfie', source: 'file' })
+    cameraError.value = ''
+    signError.value = ''
+    stopCamera()
+  } catch (err) {
+    console.error('Photo file error:', err)
+    cameraError.value = 'No se pudo leer esa imagen. Intenta con otra foto.'
   }
 }
 
 function capturePhoto() {
-  const video = videoEl.value
-  const canvas = document.createElement('canvas')
-  canvas.width = video.videoWidth || 640
-  canvas.height = video.videoHeight || 480
-  const ctx = canvas.getContext('2d')
-  ctx.drawImage(video, 0, 0)
-  capturedPhoto.value = canvas.toDataURL('image/jpeg', 0.85)
+  const frame = grabFrame()
+  if (!frame) return
+  capturedPhoto.value = frame
+  track('contract_photo_taken', { target: 'selfie', source: 'camera' })
   stopCamera()
 }
 
@@ -509,13 +586,10 @@ function retakePhoto() {
 }
 
 function captureDoc() {
-  const video = videoEl.value
-  const canvas = document.createElement('canvas')
-  canvas.width = video.videoWidth || 640
-  canvas.height = video.videoHeight || 480
-  const ctx = canvas.getContext('2d')
-  ctx.drawImage(video, 0, 0)
-  capturedDoc.value = canvas.toDataURL('image/jpeg', 0.85)
+  const frame = grabFrame()
+  if (!frame) return
+  capturedDoc.value = frame
+  track('contract_photo_taken', { target: 'document', source: 'camera' })
   stopCamera()
 }
 
@@ -548,7 +622,9 @@ async function uploadContractAsset(blob, filename) {
 }
 
 async function submitSignature() {
+  if (signing.value) return
   signing.value = true
+  signError.value = ''
   try {
     const sigBlob = await new Promise(resolve => signaturePad.canvas.toBlob(resolve, 'image/png'))
     const signatureUrl = await uploadContractAsset(sigBlob, 'signature.png')
@@ -587,15 +663,16 @@ async function submitSignature() {
     })
 
     if (signRes.ok) {
+      track('contract_sign_submitted', { kind: isAmendment.value ? 'amendment' : 'contract' })
       showSignModal.value = false
       await loadContract()
     } else {
       const err = await signRes.json().catch(() => ({}))
-      alert(err.error || 'Error al firmar')
+      signError.value = err.error || 'No se pudo firmar. Intenta de nuevo.'
     }
   } catch (err) {
     console.error('Error signing:', err)
-    alert('Error al firmar el contrato')
+    signError.value = 'No se pudo firmar el contrato. Revisa tu conexión e intenta de nuevo.'
   } finally {
     signing.value = false
   }
@@ -1068,6 +1145,7 @@ onUnmounted(() => {
 }
 
 /* --- Signature canvas + photo stage --- */
+.cabania-sign-error { color: #dc2626; font-size: 0.875rem; margin: 0.5rem 0; }
 .cabania-signature-area {
   width: 100%;
   background: var(--cc-signature-bg);

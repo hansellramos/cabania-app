@@ -289,6 +289,7 @@
 
           <!-- Zona para pegar / subir -->
           <div
+            ref="attachArea"
             class="attachment-upload-area"
             :class="{ 'is-dragging': dragging, 'is-uploading': uploadingAttachment }"
             tabindex="0"
@@ -306,7 +307,7 @@
               </div>
               <div class="d-flex gap-2 justify-content-center">
                 <CButton size="sm" color="primary" variant="outline" @click="attachInput?.click()">Seleccionar</CButton>
-                <CButton size="sm" color="secondary" variant="outline" @click="pasteAttachmentFromClipboard">Pegar imagen</CButton>
+                <CButton v-if="canReadClipboard" size="sm" color="secondary" variant="outline" @click="pasteAttachmentFromClipboard">Pegar imagen</CButton>
               </div>
             </template>
             <input ref="attachInput" type="file" accept="image/*" class="d-none" @change="handleFileAttachment" />
@@ -717,7 +718,13 @@ function handlePasteAttachment(e) {
   }
 }
 
+// Firefox and some mobile browsers can't read images from the clipboard with a button;
+// there only Ctrl/Cmd+V on the area works, so the button is hidden.
+const canReadClipboard = typeof navigator !== 'undefined' && !!navigator.clipboard?.read
+const attachArea = ref(null)
+
 async function pasteAttachmentFromClipboard() {
+  attachError.value = ''
   try {
     const items = await navigator.clipboard.read()
     for (const item of items) {
@@ -728,9 +735,10 @@ async function pasteAttachmentFromClipboard() {
         return
       }
     }
-    attachError.value = 'No hay imagen en el portapapeles'
+    attachError.value = 'No hay una imagen copiada. Copia la imagen primero (no el archivo) y vuelve a intentar.'
   } catch {
-    attachError.value = 'No se pudo leer el portapapeles. Haz clic en el área y usa Ctrl/Cmd+V.'
+    attachError.value = 'El navegador no dejó leer el portapapeles. Usa Ctrl/Cmd+V aquí mismo (el área ya está seleccionada).'
+    attachArea.value?.focus()
   }
 }
 
