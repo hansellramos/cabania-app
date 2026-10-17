@@ -5,7 +5,8 @@
   "type": "commonjs",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "demo": "node scripts/demo-account.js"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
