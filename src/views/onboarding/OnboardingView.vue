@@ -130,6 +130,7 @@ import AmenitiesStep from './steps/AmenitiesStep.vue'
 import CreatePlanStep from './steps/CreatePlanStep.vue'
 import AvailabilityStep from './steps/AvailabilityStep.vue'
 import TourStep from './steps/TourStep.vue'
+import { track } from '@/lib/analytics'
 
 const route = useRoute()
 const router = useRouter()
@@ -281,6 +282,7 @@ onMounted(async () => {
       invitationData.value = data
       currentStep.value = 1
       initialLoading.value = false
+      track('signup_started', { via: 'invitation' })
     } catch (e) {
       tokenError.value = 'Error validando invitación'
       initialLoading.value = false

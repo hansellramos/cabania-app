@@ -77,8 +77,9 @@
             id="agreed_price"
             v-model.number="form.agreed_price"
             type="number"
+            inputmode="numeric"
             min="0"
-            step="1000"
+            step="1"
             placeholder="Igual al calculado si está vacío"
           />
           <div v-if="discountPercentage !== 0" class="small mt-1">

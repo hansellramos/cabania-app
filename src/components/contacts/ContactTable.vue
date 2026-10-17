@@ -49,7 +49,7 @@
             <CTableHeaderCell scope="col">Actions</CTableHeaderCell>
           </CTableRow>
         </CTableHead>
-        <CTableBody>
+        <CTableBody class="ph-no-capture">
           <CTableRow v-for="contact in paginatedContacts" :key="contact.id">
             <CTableDataCell>
               <RouterLink :to="`/business/contacts/${contact.id}/read`" class="text-decoration-none">

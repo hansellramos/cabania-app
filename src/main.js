@@ -9,6 +9,7 @@ import HighchartsVue from 'highcharts-vue'
 
 import App from './App.vue'
 import router from './router'
+import { captureException, routePattern, routeModule } from '@/lib/analytics'
 
 import '@/styles/style.scss'
 
@@ -31,7 +32,26 @@ if (typeof init3D === 'function') {
   init3D(Highcharts)
 }
 
+// A deploy replaced the chunk this tab was about to preload: reload once.
+window.addEventListener('vite:preloadError', (event) => {
+  try {
+    if (sessionStorage.getItem('cabania-chunk-reload')) return
+    sessionStorage.setItem('cabania-chunk-reload', '1')
+  } catch (_) {
+    return
+  }
+  event.preventDefault()
+  window.location.reload()
+})
+
 const app = createApp(App)
+// Vue catches component errors before window.onerror sees them, so PostHog's
+// automatic exception capture would miss them.
+app.config.errorHandler = (err, instance, info) => {
+  const route = router.currentRoute.value
+  captureException(err, { route_pattern: routePattern(route), module: routeModule(route), vue_info: info })
+  console.error(err)
+}
 app.use(createPinia())
 app.use(router)
 app.use(CoreuiVue)

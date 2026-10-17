@@ -88,12 +88,14 @@
             <CCollapse :visible="showPlaceholders">
               <CCard class="mb-3 border-info">
                 <CCardBody class="py-2">
+                  <div class="small text-muted mb-2">Toca un placeholder para insertarlo donde está el cursor (o copiarlo si no has elegido una sección).</div>
                   <div class="row">
                     <div v-for="(group, cat) in groupedPlaceholders" :key="cat" class="col-md-4 col-sm-6 mb-2">
                       <strong class="small">{{ cat }}</strong>
                       <div v-for="p in group" :key="p.key" class="small">
                         <code class="text-primary cursor-pointer" @click="copyPlaceholder(p.key)" v-text="placeholderTag(p.key)"></code>
                         <span class="text-muted ms-1">{{ p.label }}</span>
+                        <span v-if="placeholderFeedback.key === p.key" class="text-success ms-1">{{ placeholderFeedback.text }}</span>
                       </div>
                     </div>
                   </div>
@@ -125,7 +127,7 @@
                 </div>
               </div>
               <div class="p-3">
-                <CFormTextarea v-model="section.content" rows="6" placeholder="Contenido con {{placeholders}}..." style="font-family: monospace; font-size: 0.85rem;" />
+                <CFormTextarea v-model="section.content" @focus="lastField = { section, el: $event.target }" rows="6" placeholder="Contenido con {{placeholders}}..." style="font-family: monospace; font-size: 0.85rem;" />
                 <CFormCheck
                   v-model="section.print_hidden"
                   class="mt-2"
@@ -148,7 +150,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { renderMarkdown } from '@/utils/contractMarkdown'
 
@@ -239,8 +241,38 @@ function placeholderTag(key) {
   return `{{${key}}}`
 }
 
-function copyPlaceholder(key) {
-  navigator.clipboard.writeText(`{{${key}}}`)
+// Last section textarea the user focused, so a placeholder click inserts it there.
+const lastField = ref(null)
+const placeholderFeedback = ref({ key: null, text: '' })
+let feedbackTimer = null
+
+function showPlaceholderFeedback(key, text) {
+  placeholderFeedback.value = { key, text }
+  clearTimeout(feedbackTimer)
+  feedbackTimer = setTimeout(() => { placeholderFeedback.value = { key: null, text: '' } }, 1800)
+}
+
+async function copyPlaceholder(key) {
+  const tag = placeholderTag(key)
+  const field = lastField.value
+  if (field && form.value.sections.includes(field.section)) {
+    const { section, el } = field
+    const content = section.content || ''
+    const start = el.selectionStart ?? content.length
+    const end = el.selectionEnd ?? start
+    section.content = content.slice(0, start) + tag + content.slice(end)
+    await nextTick()
+    el.focus()
+    el.setSelectionRange(start + tag.length, start + tag.length)
+    showPlaceholderFeedback(key, 'Insertado')
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(tag)
+    showPlaceholderFeedback(key, 'Copiado')
+  } catch {
+    showPlaceholderFeedback(key, 'No se pudo copiar; escríbelo a mano')
+  }
 }
 
 function parseSSEChunk(chunk) {

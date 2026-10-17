@@ -61,6 +61,7 @@
             </svg>
           </div>
           <input
+            ref="emailInput"
             v-model="email"
             type="email"
             class="cabania-input"
@@ -122,6 +123,9 @@
             </svg>
             Iniciar con Passkey
           </button>
+          <p v-if="passkeyFailed" class="cabania-passkey-blocked">
+            <router-link to="/pages/code-login">Recibir un código en mi correo</router-link>
+          </p>
           <p v-if="passkeyBlocked" class="cabania-passkey-blocked">
             Passkeys no es compatible con Firefox en macOS. Usa Chrome o Safari.
           </p>
@@ -146,6 +150,8 @@ const email = ref(savedEmail);
 const password = ref('');
 const submitting = ref(false);
 const hasRememberedEmail = ref(!!savedEmail);
+const emailInput = ref(null);
+const passkeyFailed = ref(false);
 
 // Theme management (syncs with CoreUI's color mode in the main app)
 const theme = ref(localStorage.getItem(THEME_KEY) || 'auto');
@@ -210,9 +216,17 @@ const handleLogin = async () => {
 };
 
 const handlePasskeyLogin = async () => {
+  if (submitting.value) return;
+  // Passkey login needs the email first: point the user at the field instead of failing.
+  if (!email.value || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.value)) {
+    error.value = 'Escribe tu correo y luego toca "Iniciar con Passkey".';
+    emailInput.value?.focus();
+    return;
+  }
   submitting.value = true;
-  const success = await loginWithPasskey(email.value || undefined);
+  const success = await loginWithPasskey(email.value);
   submitting.value = false;
+  passkeyFailed.value = !success;
   if (success) {
     rememberEmail(email.value);
     router.push('/');
