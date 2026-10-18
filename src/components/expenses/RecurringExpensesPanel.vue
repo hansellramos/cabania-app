@@ -36,7 +36,7 @@
           <CTableDataCell>
             <div class="fw-semibold">{{ item.name }}</div>
             <div class="d-flex flex-wrap gap-1 mt-1">
-              <CBadge v-if="item.category" :color="item.category.color || 'primary'">
+              <CBadge v-if="item.category" color="primary" :style="item.category.color ? { backgroundColor: item.category.color } : null">
                 <CIcon v-if="item.category.icon" :name="item.category.icon" class="me-1" />
                 {{ item.category.name }}
               </CBadge>

@@ -41,7 +41,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 import { CCard, CCardHeader, CCardBody, CBadge } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
@@ -69,8 +69,11 @@ const formatCurrency = (amount) => {
   return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(amount)
 }
 
-onMounted(async () => {
-  if (!canSeeExpenses()) return
+// The signed-in user may still be loading when this mounts.
+let loaded = false
+const load = async () => {
+  if (loaded || !user.value || !canSeeExpenses()) return
+  loaded = true
   try {
     const viewAll = user.value?.is_super_admin ? settingsStore.godModeViewAll : false
     const response = await fetch(`/api/recurring-expenses?pending=true&viewAll=${viewAll}`, { credentials: 'include' })
@@ -78,7 +81,9 @@ onMounted(async () => {
   } catch (error) {
     console.error('Error loading pending recurring expenses:', error)
   }
-})
+}
+
+watch(user, load, { immediate: true })
 </script>
 
 <style scoped>
