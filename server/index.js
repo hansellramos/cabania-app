@@ -15,6 +15,7 @@ const whatsappClient = require('./services/whatsappClient');
 const metaWhatsApp = require('./services/metaWhatsApp');
 const metaInstagram = require('./services/metaInstagram');
 const bold = require('./services/bold');
+const recurringSchedule = require('./services/recurringExpenses');
 
 /**
  * Calculate the next resume time at given hour in America/Bogota timezone.
@@ -4493,11 +4494,13 @@ async function startServer() {
       
       const data = { ...req.body };
       // Convert empty strings to null for optional fields
-      for (const key of ['accommodation_id', 'subcategory', 'notes', 'provider_id', 'receipt_url', 'reference']) {
+      for (const key of ['accommodation_id', 'subcategory', 'notes', 'provider_id', 'receipt_url', 'reference', 'recurring_expense_id', 'recurring_period']) {
         if (data[key] === '') data[key] = null;
       }
       data.expense_date = new Date(data.expense_date);
       data.created_by = userId;
+      const recurringError = await applyRecurringLink(data);
+      if (recurringError) return res.status(400).json({ error: recurringError });
 
       const expense = await prisma.expenses.create({ data });
       res.json(expense);
@@ -4526,11 +4529,15 @@ async function startServer() {
       
       const updateData = { ...req.body, updated_at: new Date(), updated_by: userId };
       // Convert empty strings to null for optional fields
-      for (const key of ['accommodation_id', 'subcategory', 'notes', 'provider_id', 'receipt_url', 'reference']) {
+      for (const key of ['accommodation_id', 'subcategory', 'notes', 'provider_id', 'receipt_url', 'reference', 'recurring_expense_id', 'recurring_period']) {
         if (updateData[key] === '') updateData[key] = null;
       }
       if (req.body.expense_date) {
         updateData.expense_date = new Date(req.body.expense_date);
+      }
+      if ('recurring_expense_id' in updateData) {
+        const recurringError = await applyRecurringLink(updateData, existing);
+        if (recurringError) return res.status(400).json({ error: recurringError });
       }
       const expense = await prisma.expenses.update({
         where: { id: req.params.id },
@@ -4562,6 +4569,294 @@ async function startServer() {
       
       await prisma.expenses.delete({
         where: { id: req.params.id }
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== Recurring expenses ====================
+  // Expenses that repeat (caretaker payroll, utilities, internet...). The schedule
+  // math lives in services/recurringExpenses.js; an occurrence is covered by an
+  // expense linked to it or by skipping it (recurring_expense_periods).
+
+  /**
+   * Validate an expense's link to a recurring expense and fill recurring_period
+   * when missing (the due date closest to the expense date). Returns an error
+   * message, or null.
+   */
+  async function applyRecurringLink(data, existing = null) {
+    if (!data.recurring_expense_id) {
+      data.recurring_expense_id = null;
+      data.recurring_period = null;
+      return null;
+    }
+    const def = await prisma.recurring_expenses.findUnique({ where: { id: data.recurring_expense_id } });
+    if (!def) return 'Gasto recurrente no encontrado';
+    const orgId = data.organization_id || existing?.organization_id;
+    if (def.organization_id && orgId && def.organization_id !== orgId) {
+      return 'El gasto recurrente es de otra organización';
+    }
+    const expenseDate = recurringSchedule.isoDate(data.expense_date || existing?.expense_date) || bogotaNow().date;
+    const period = data.recurring_period
+      ? recurringSchedule.isoDate(data.recurring_period)
+      : recurringSchedule.closestOccurrence(def, expenseDate);
+    data.recurring_period = period ? new Date(period) : null;
+    return null;
+  }
+
+  /** Organizations whose recurring expenses the user can see (null = all), as in GET /api/expenses. */
+  async function recurringExpenseOrgIds(req) {
+    const userId = String(req.user.claims?.sub);
+    const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+    if (currentUser?.is_super_admin) {
+      if (req.query.viewAll === 'true') return null;
+      const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+      return userOrgs.map(uo => uo.organization_id);
+    }
+    // Users who only see expenses of their own bookings don't manage recurring ones.
+    if (hasOwnOnly(req.userPermissions, 'deposits:view')) return [];
+    return await getAccessibleOrganizationIds(req.userPermissions);
+  }
+
+  /** Whether the user can manage records of this organization, as in PUT /api/expenses/:id. */
+  async function canManageRecurringOrg(req, organizationId) {
+    const userId = String(req.user.claims?.sub);
+    const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+    if (currentUser?.is_super_admin) return true;
+    if (hasOwnOnly(req.userPermissions, 'deposits:view')) return false;
+    const accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+    return accessibleOrgIds === null || !organizationId || accessibleOrgIds.includes(organizationId);
+  }
+
+  /** Clean and validate a recurring expense from the request body. Returns { data } or { error }. */
+  async function recurringExpenseData(body, { partial = false } = {}) {
+    const data = {};
+    const has = (key) => body[key] !== undefined;
+    const text = (v) => (v === null || v === undefined || String(v).trim() === '') ? null : String(v).trim();
+
+    if (!partial || has('venue_id')) {
+      const venue = body.venue_id ? await prisma.venues.findUnique({ where: { id: body.venue_id }, select: { id: true, organization: true } }) : null;
+      if (!venue) return { error: 'Seleccione una sede' };
+      data.venue_id = venue.id;
+      data.organization_id = venue.organization || null;
+    }
+    if (!partial || has('name')) {
+      data.name = text(body.name);
+      if (!data.name) return { error: 'El nombre es obligatorio' };
+    }
+    if (!partial || has('frequency')) {
+      if (!recurringSchedule.FREQUENCIES.includes(body.frequency)) return { error: 'Frecuencia inválida' };
+      data.frequency = body.frequency;
+    }
+    if (!partial || has('start_date')) {
+      if (!/^\d{4}-\d{2}-\d{2}/.test(String(body.start_date || ''))) return { error: 'La fecha de inicio es obligatoria' };
+      data.start_date = new Date(String(body.start_date).slice(0, 10));
+    }
+    if (has('end_date')) {
+      data.end_date = body.end_date ? new Date(String(body.end_date).slice(0, 10)) : null;
+    }
+    if (data.start_date && data.end_date && data.end_date < data.start_date) {
+      return { error: 'La fecha de fin no puede ser anterior a la de inicio' };
+    }
+    if (has('due_day')) {
+      const day = body.due_day === '' || body.due_day === null ? null : parseInt(body.due_day, 10);
+      const max = (data.frequency || body.frequency) === 'weekly' ? 7 : 31;
+      if (day !== null && (!Number.isInteger(day) || day < 1 || day > max)) return { error: 'Día de pago inválido' };
+      data.due_day = day;
+    }
+    if (has('expected_amount')) {
+      const amount = body.expected_amount === '' || body.expected_amount === null ? null : Number(body.expected_amount);
+      if (amount !== null && (!Number.isFinite(amount) || amount < 0)) return { error: 'Monto inválido' };
+      data.expected_amount = amount;
+    }
+    for (const key of ['description', 'subcategory', 'payment_method', 'category_id', 'provider_id']) {
+      if (has(key)) data[key] = text(body[key]);
+    }
+    if (has('is_active')) data.is_active = Boolean(body.is_active);
+    return { data };
+  }
+
+  /** Add schedule status (next due date, overdue periods...) and venue to recurring expenses. */
+  async function withRecurringStatus(defs, today) {
+    const ids = defs.map(d => d.id);
+    const venueIds = [...new Set(defs.map(d => d.venue_id).filter(Boolean))];
+    const [expenses, skips, venues] = ids.length ? await Promise.all([
+      prisma.expenses.findMany({
+        where: { recurring_expense_id: { in: ids } },
+        select: { id: true, recurring_expense_id: true, recurring_period: true, amount: true, expense_date: true },
+        orderBy: { expense_date: 'desc' }
+      }),
+      prisma.recurring_expense_periods.findMany({
+        where: { recurring_expense_id: { in: ids }, skipped_at: { not: null } },
+        select: { recurring_expense_id: true, due_date: true }
+      }),
+      prisma.venues.findMany({ where: { id: { in: venueIds } }, select: { id: true, name: true } })
+    ]) : [[], [], []];
+    const venuesMap = Object.fromEntries(venues.map(v => [v.id, v]));
+
+    return defs.map(def => {
+      const own = expenses.filter(e => e.recurring_expense_id === def.id);
+      const paid = new Set(own.map(e => recurringSchedule.isoDate(e.recurring_period)).filter(Boolean));
+      const skipped = new Set(skips.filter(s => s.recurring_expense_id === def.id).map(s => recurringSchedule.isoDate(s.due_date)));
+      return {
+        ...def,
+        ...recurringSchedule.periodStatus(def, today, paid, skipped),
+        skipped_periods: [...skipped].sort(),
+        last_expense: own[0] || null,
+        venue_data: venuesMap[def.venue_id] || null
+      };
+    });
+  }
+
+  const RECURRING_STATUS_ORDER = { vencido: 0, pendiente: 1, programado: 2, registrado: 3, omitido: 3, finalizado: 4, inactivo: 5 };
+
+  // GET /api/recurring-expenses — recurring expenses with the status of their current period.
+  // ?pending=true returns only those overdue or due soon (for the "pendientes" card).
+  app.get('/api/recurring-expenses', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, pending } = req.query;
+      const orgIds = await recurringExpenseOrgIds(req);
+      if (orgIds !== null && orgIds.length === 0) return res.json([]);
+
+      const where = {};
+      if (orgIds !== null) where.organization_id = { in: orgIds };
+      if (venue_id) where.venue_id = venue_id;
+      if (pending === 'true') where.is_active = true;
+
+      const defs = await prisma.recurring_expenses.findMany({
+        where,
+        include: { category: true, provider: true },
+        orderBy: { name: 'asc' }
+      });
+      let result = await withRecurringStatus(defs, bogotaNow().date);
+      if (pending === 'true') result = result.filter(r => r.status === 'vencido' || r.status === 'pendiente');
+      result.sort((a, b) => (RECURRING_STATUS_ORDER[a.status] ?? 9) - (RECURRING_STATUS_ORDER[b.status] ?? 9)
+        || String(a.current_period || a.next_due || '9').localeCompare(String(b.current_period || b.next_due || '9')));
+      res.json(result);
+    } catch (error) {
+      console.error('[recurring-expenses] List error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/recurring-expenses/:id', isAuthenticated, async (req, res) => {
+    try {
+      const def = await prisma.recurring_expenses.findUnique({
+        where: { id: req.params.id },
+        include: { category: true, provider: true }
+      });
+      if (!def) return res.status(404).json({ error: 'Gasto recurrente no encontrado' });
+      if (!await canManageRecurringOrg(req, def.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a este gasto recurrente' });
+      }
+      const [withStatus] = await withRecurringStatus([def], bogotaNow().date);
+      res.json(withStatus);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/recurring-expenses', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { data, error } = await recurringExpenseData(req.body);
+      if (error) return res.status(400).json({ error });
+      if (!await canManageRecurringOrg(req, data.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a esta organización' });
+      }
+      const def = await prisma.recurring_expenses.create({ data: { ...data, created_by: userId } });
+      res.json(def);
+    } catch (error) {
+      console.error('[recurring-expenses] Create error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/recurring-expenses/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const existing = await prisma.recurring_expenses.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Gasto recurrente no encontrado' });
+      if (!await canManageRecurringOrg(req, existing.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a este gasto recurrente' });
+      }
+      const { data, error } = await recurringExpenseData(req.body, { partial: true });
+      if (error) return res.status(400).json({ error });
+      if (data.organization_id !== undefined && data.organization_id !== existing.organization_id
+        && !await canManageRecurringOrg(req, data.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a esta organización' });
+      }
+      const startDate = data.start_date || existing.start_date;
+      const endDate = data.end_date !== undefined ? data.end_date : existing.end_date;
+      if (endDate && endDate < startDate) {
+        return res.status(400).json({ error: 'La fecha de fin no puede ser anterior a la de inicio' });
+      }
+      const def = await prisma.recurring_expenses.update({
+        where: { id: req.params.id },
+        data: { ...data, updated_at: new Date(), updated_by: userId }
+      });
+      res.json(def);
+    } catch (error) {
+      console.error('[recurring-expenses] Update error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Deleting keeps the expenses already registered; they just lose the link.
+  app.delete('/api/recurring-expenses/:id', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.recurring_expenses.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Gasto recurrente no encontrado' });
+      if (!await canManageRecurringOrg(req, existing.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a este gasto recurrente' });
+      }
+      await prisma.recurring_expenses.delete({ where: { id: req.params.id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/recurring-expenses/:id/skip { period } — mark an occurrence as not needed.
+  app.post('/api/recurring-expenses/:id/skip', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const def = await prisma.recurring_expenses.findUnique({ where: { id: req.params.id } });
+      if (!def) return res.status(404).json({ error: 'Gasto recurrente no encontrado' });
+      if (!await canManageRecurringOrg(req, def.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a este gasto recurrente' });
+      }
+      const period = recurringSchedule.isoDate(req.body?.period);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(period || '') || !recurringSchedule.occurrencesBetween(def, period, period).length) {
+        return res.status(400).json({ error: 'Periodo inválido' });
+      }
+      const dueDate = new Date(period);
+      await prisma.recurring_expense_periods.upsert({
+        where: { recurring_expense_id_due_date: { recurring_expense_id: def.id, due_date: dueDate } },
+        create: { recurring_expense_id: def.id, due_date: dueDate, skipped_at: new Date(), skipped_by: userId },
+        update: { skipped_at: new Date(), skipped_by: userId }
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // DELETE /api/recurring-expenses/:id/skip/:period — undo a skip.
+  app.delete('/api/recurring-expenses/:id/skip/:period', isAuthenticated, async (req, res) => {
+    try {
+      const def = await prisma.recurring_expenses.findUnique({ where: { id: req.params.id } });
+      if (!def) return res.status(404).json({ error: 'Gasto recurrente no encontrado' });
+      if (!await canManageRecurringOrg(req, def.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a este gasto recurrente' });
+      }
+      const period = recurringSchedule.isoDate(req.params.period);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) return res.status(400).json({ error: 'Periodo inválido' });
+      await prisma.recurring_expense_periods.updateMany({
+        where: { recurring_expense_id: def.id, due_date: new Date(period) },
+        data: { skipped_at: null, skipped_by: null }
       });
       res.json({ success: true });
     } catch (error) {
@@ -9712,6 +10007,108 @@ REGLAS:
         await sendInstagramDailySummary(venue, since, new Date());
       } catch (err) {
         console.error('[ig-summary] Failed', { venue: venue.id, error: err.message });
+      }
+    }
+  }
+
+  // ==================== Overdue recurring expenses ====================
+
+  // A period still unpaid gets a reminder every few days, up to a few notices.
+  const RECURRING_REMINDER_DAYS = 3;
+  const RECURRING_MAX_NOTICES = 3;
+
+  /**
+   * In-app notice to the organization's admins (members who can see expenses)
+   * that a recurring expense's period is overdue. Kept as one small function so
+   * the notifications center can take it over. Returns how many were notified.
+   */
+  async function notifyRecurringExpenseOverdue(def, dueDate, { reminder = false, overdueCount = 1 } = {}) {
+    const venue = def.venue_id
+      ? await prisma.venues.findUnique({ where: { id: def.venue_id }, select: { id: true, name: true, organization: true } })
+      : null;
+    const organizationId = def.organization_id || venue?.organization;
+    if (!organizationId) return 0;
+
+    const members = await prisma.user_organizations.findMany({
+      where: { organization_id: organizationId },
+      select: { user_id: true }
+    });
+    const users = members.length ? await prisma.users.findMany({
+      where: { id: { in: members.map(m => m.user_id) } },
+      select: { id: true, is_super_admin: true, profile_id: true }
+    }) : [];
+    const profileIds = [...new Set(users.map(u => u.profile_id).filter(Boolean))];
+    const profiles = profileIds.length ? await prisma.profiles.findMany({
+      where: { id: { in: profileIds } },
+      select: { id: true, permissions: true }
+    }) : [];
+    const canSeeExpenses = new Set(profiles
+      .filter(p => Array.isArray(p.permissions) && p.permissions.some(perm => perm === 'expenses:view' || String(perm).startsWith('expenses:view:')))
+      .map(p => p.id));
+    const recipients = users.filter(u => u.is_super_admin || canSeeExpenses.has(u.profile_id));
+    if (!recipients.length) return 0;
+
+    const date = new Date(dueDate).toLocaleDateString('es-CO', { timeZone: 'UTC', day: 'numeric', month: 'long' });
+    const where = venue?.name ? ` en ${venue.name}` : '';
+    const body = `${def.name}${where} venció el ${date} y no tiene gasto registrado.`
+      + (def.expected_amount ? ` Monto aproximado: ${money(def.expected_amount)}.` : '')
+      + (overdueCount > 1 ? ` Hay ${overdueCount} periodos sin registrar.` : '')
+      + ' Regístralo u omite el periodo si no aplica.';
+
+    await prisma.notifications.createMany({
+      data: recipients.map(u => ({
+        user_id: u.id,
+        organization_id: organizationId,
+        venue_id: venue?.id || null,
+        type: 'recurring_expense_overdue',
+        title: `${reminder ? 'Recordatorio: g' : 'G'}asto recurrente vencido: ${def.name}`.slice(0, 255),
+        body,
+        link: `/business/expenses?tab=recurrentes${venue ? `&venue_id=${venue.id}` : ''}`
+      }))
+    });
+    return recipients.length;
+  }
+
+  /**
+   * From 8 a.m. Bogotá, notify recurring expenses whose latest overdue period has
+   * no expense and was not skipped. Idempotent per period: the period row is
+   * claimed before notifying, so reruns (and other instances) only send the
+   * reminders that are due.
+   */
+  async function checkOverdueRecurringExpenses() {
+    const local = bogotaNow();
+    if (local.time < '08:00') return;
+    const defs = await prisma.recurring_expenses.findMany({ where: { is_active: true } });
+    if (!defs.length) return;
+
+    const reminderBefore = new Date(Date.now() - RECURRING_REMINDER_DAYS * 24 * 60 * 60 * 1000);
+    for (const def of await withRecurringStatus(defs, local.date)) {
+      const period = def.overdue_periods[def.overdue_periods.length - 1];
+      if (!period) continue;
+      const dueDate = new Date(period);
+      try {
+        const row = await prisma.recurring_expense_periods.upsert({
+          where: { recurring_expense_id_due_date: { recurring_expense_id: def.id, due_date: dueDate } },
+          create: { recurring_expense_id: def.id, due_date: dueDate },
+          update: {}
+        });
+        const claimed = await prisma.recurring_expense_periods.updateMany({
+          where: {
+            id: row.id,
+            skipped_at: null,
+            notified_count: { lt: RECURRING_MAX_NOTICES },
+            OR: [{ last_notified_at: null }, { last_notified_at: { lt: reminderBefore } }]
+          },
+          data: { last_notified_at: new Date(), notified_count: { increment: 1 } }
+        });
+        if (claimed.count === 0) continue;
+        const sent = await notifyRecurringExpenseOverdue(def, period, {
+          reminder: row.notified_count > 0,
+          overdueCount: def.overdue_periods.length
+        });
+        console.log('[recurring-expenses] Overdue notice', { recurring_expense: def.id, period, recipients: sent });
+      } catch (err) {
+        console.error('[recurring-expenses] Notify failed', { recurring_expense: def.id, period, error: err.message });
       }
     }
   }
@@ -14966,6 +15363,12 @@ Responde con JSON EXACTAMENTE en este formato:
     // Daily Instagram activity summary (per venue settings).
     setInterval(() => sendInstagramDailySummaries().catch(err =>
       console.error('[ig-summary] Error:', err.message)), 5 * 60 * 1000);
+
+    // Overdue recurring expenses (caretaker, utilities...): notify the admins.
+    const runRecurringCheck = () => checkOverdueRecurringExpenses().catch(err =>
+      console.error('[recurring-expenses] Error:', err.message));
+    setTimeout(runRecurringCheck, 60 * 1000);
+    setInterval(runRecurringCheck, 30 * 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });
