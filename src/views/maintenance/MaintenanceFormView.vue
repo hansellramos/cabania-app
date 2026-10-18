@@ -210,8 +210,8 @@
     </CCol>
   </CRow>
 
-  <!-- Supplies Section (edit mode only) -->
-  <CRow v-if="isEditing">
+  <!-- Supplies Section (edit mode only; los insumos salen del módulo Inventario) -->
+  <CRow v-if="isEditing && inventoryOn">
     <CCol :xs="12" :lg="8">
       <CCard class="mb-4">
         <CCardHeader class="d-flex justify-content-between align-items-center">
@@ -391,8 +391,11 @@ import {
   CBadge, CSpinner
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
+import { useModules } from '@/composables/useModules'
 
 const route = useRoute()
+const { isEnabled } = useModules()
+const inventoryOn = computed(() => isEnabled('inventory'))
 const router = useRouter()
 
 const isEditing = computed(() => route.params.id && route.params.id !== 'new')
@@ -595,7 +598,7 @@ const loadZones = async () => {
 }
 
 const loadInventoryItems = async () => {
-  if (!form.value.venue_id) {
+  if (!form.value.venue_id || !inventoryOn.value) {
     inventoryItems.value = []
     return
   }

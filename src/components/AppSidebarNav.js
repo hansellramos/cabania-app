@@ -6,6 +6,7 @@ import { CBadge, CSidebarNav, CNavItem, CNavGroup, CNavTitle } from '@coreui/vue
 import nav from '@/_nav.js'
 import { useSettingsStore } from '@/stores/settings.js'
 import { useAuth } from '@/composables/useAuth'
+import { isModuleEnabled } from '@/utils/modules'
 
 import simplebar from 'simplebar-vue'
 import 'simplebar-vue/dist/simplebar.min.css'
@@ -96,6 +97,11 @@ const AppSidebarNav = defineComponent({
           skip = false
         }
         if (skip) return false
+
+        // Módulos opcionales apagados por la organización
+        if (item.module && !isModuleEnabled(user.value, item.module)) {
+          return false
+        }
 
         // Permission check (only when user has a restricted profile)
         if (checkPerms && item.permission) {

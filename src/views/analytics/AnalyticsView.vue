@@ -64,7 +64,7 @@
           </CCardBody>
         </CCard>
       </CCol>
-      <CCol :sm="6" :lg="3">
+      <CCol v-if="isEnabled('deposits')" :sm="6" :lg="3">
         <CCard class="cabania-glass-banner cabania-glass-banner--warning h-100">
           <CCardBody class="pb-3 text-end">
             <div class="fs-4 fw-semibold">
@@ -233,6 +233,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
+import { useModules } from '@/composables/useModules'
 import { useAnimatedNumber } from '@/composables/useAnimatedNumber'
 import ToggleButtonGroup from '@/components/ToggleButtonGroup.vue'
 
@@ -243,6 +244,7 @@ const basisOptions = [
   { value: 'accrual', label: 'Devengo' },
 ]
 const { user } = useAuth()
+const { isEnabled } = useModules()
 
 const periodOptions = [
   { value: 'last_12_months', label: 'Últimos 12 meses' },

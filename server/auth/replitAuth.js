@@ -20,6 +20,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const session = require('express-session');
 const { prisma } = require('../db');
+const { modulesStateForUser } = require('../modules');
 
 const SESSION_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
 
@@ -338,9 +339,12 @@ async function setupAuth(app) {
         impersonationInfo = { originalUser };
       }
 
+      // Módulos opcionales encendidos en las organizaciones del usuario
+      const modules = await modulesStateForUser(user);
+
       // Exclude password_hash from response
       const { password_hash, ...userData } = user;
-      res.json({ ...userData, permissionDetails, subscription, has_passkeys: passkeyCount > 0, passkey_count: passkeyCount, is_impersonating: isImpersonating, impersonation: impersonationInfo });
+      res.json({ ...userData, permissionDetails, subscription, modules, has_passkeys: passkeyCount > 0, passkey_count: passkeyCount, is_impersonating: isImpersonating, impersonation: impersonationInfo });
     } catch (error) {
       console.error('Error fetching user:', error);
       res.status(500).json({ message: 'Failed to fetch user' });
