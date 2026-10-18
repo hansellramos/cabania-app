@@ -192,7 +192,7 @@
               </CCol>
             </CRow>
             <!-- Inventory Items Section -->
-            <template v-if="isEditing || pendingInventoryItems.length > 0 || showSuggestedItems">
+            <template v-if="inventoryOn && (isEditing || pendingInventoryItems.length > 0 || showSuggestedItems)">
               <hr class="my-4" />
               <h6 class="mb-3">
                 <CIcon name="cil-clipboard" class="me-2" />
@@ -388,7 +388,7 @@
             </CRow>
 
             <!-- AI Suggested Items Panel -->
-            <CCard v-if="showSuggestedItems && suggestedItems.length > 0" class="mb-3 border-info">
+            <CCard v-if="inventoryOn && showSuggestedItems && suggestedItems.length > 0" class="mb-3 border-info">
               <CCardHeader class="d-flex justify-content-between align-items-center bg-info bg-opacity-10">
                 <span>
                   <CIcon name="cil-lightbulb" class="me-2" />
@@ -585,6 +585,7 @@ import {
   CAlert, CBadge, CSpinner, CTable, CTableHead, CTableRow, CTableHeaderCell, CTableBody, CTableDataCell
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
+import { useModules } from '@/composables/useModules'
 
 const route = useRoute()
 const router = useRouter()
@@ -760,6 +761,9 @@ const hideProviderSuggestions = () => {
 }
 
 // --- Inventory Items linked to expense ---
+// Sin el módulo de inventario el gasto no se liga a insumos.
+const { isEnabled } = useModules()
+const inventoryOn = computed(() => isEnabled('inventory'))
 const expenseInventoryItems = ref([])
 const availableInventoryItems = ref([])
 const newInventoryItemId = ref('')
@@ -771,7 +775,7 @@ const formatCurrency = (value) => {
 }
 
 const loadExpenseInventoryItems = async () => {
-  if (!isEditing.value) return
+  if (!isEditing.value || !inventoryOn.value) return
   try {
     const response = await fetch(`/api/expenses/${route.params.id}/inventory-items`, { credentials: 'include' })
     if (response.ok) {
@@ -783,6 +787,7 @@ const loadExpenseInventoryItems = async () => {
 }
 
 const loadAvailableInventory = async () => {
+  if (!inventoryOn.value) return
   try {
     const params = new URLSearchParams({ type: 'supply' })
     if (form.value.venue_id) params.append('venue_id', form.value.venue_id)

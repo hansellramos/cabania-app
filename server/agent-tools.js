@@ -8,9 +8,12 @@
  * offered to agent keys that allow changes.
  */
 
+const modules = require('./modules');
+
 const TIMEZONE = 'America/Bogota';
 const MAX_TOOL_ROUNDS = 6;
 
+const moduleOff = (key) => `El módulo ${modules.moduleName(key)} está desactivado en esta organización.`;
 const money = (value) => `$${Math.round(Number(value) || 0).toLocaleString('es-CO')}`;
 const isoDay = (d) => new Date(d).toISOString().slice(0, 10);
 const todayIso = () => new Date().toLocaleDateString('en-CA', { timeZone: TIMEZONE });
@@ -259,7 +262,10 @@ function createAgentTools(deps) {
     const can = (p) => hasPermission(perms, p) || hasPermission(perms, `${p}:own`);
     const ownBookingsOnly = hasOwnOnly(perms, 'accommodations:view');
     const agentBookingIds = ownBookingsOnly ? await getAgentAccommodationIds(userId) : new Set();
-    return { userId, perms, venueIds, orgIds, venues, can, ownBookingsOnly, agentBookingIds };
+    // Módulos opcionales: encendido si lo está en alguna de sus organizaciones.
+    const enabledModules = perms?.isSuperAdmin ? modules.MODULE_KEYS : await modules.enabledModulesFor(orgIds);
+    const moduleOn = (key) => enabledModules.includes(key);
+    return { userId, perms, venueIds, orgIds, venues, can, ownBookingsOnly, agentBookingIds, moduleOn };
   }
 
   const venueFilter = (scope, venueId) => {
@@ -441,6 +447,7 @@ function createAgentTools(deps) {
     },
 
     async commissions(args, scope) {
+      if (!scope.moduleOn('commissions')) return { error: moduleOff('commissions') };
       const canAll = hasPermission(scope.perms, 'commissions:view');
       const agents = await prisma.commission_agents.findMany({
         where: canAll
@@ -509,6 +516,7 @@ function createAgentTools(deps) {
     },
 
     async open_quotes(args, scope) {
+      if (!scope.moduleOn('estimates')) return { error: moduleOff('estimates') };
       if (!scope.can('estimates:view')) return { error: 'Sin permiso para ver cotizaciones.' };
       const quotes = await prisma.estimates.findMany({
         where: { status: 'pending', venue_id: venueFilter(scope, args.venue_id), created_at: { gte: new Date(Date.now() - 30 * 86400000) } },
@@ -536,7 +544,7 @@ function createAgentTools(deps) {
       const venue = venueFilter(scope, args.venue_id);
       const names = Object.fromEntries(scope.venues.map(v => [v.id, v.name]));
       const result = {};
-      if (scope.can('maintenance:view')) {
+      if (scope.can('maintenance:view') && scope.moduleOn('pending_tasks')) {
         const tasks = await prisma.pending_tasks.findMany({
           where: { venue_id: venue, status: { notIn: ['completed', 'done', 'cancelled'] } },
           orderBy: [{ due_date: 'asc' }],
@@ -544,7 +552,7 @@ function createAgentTools(deps) {
         });
         result.tasks = tasks.map(t => ({ title: t.title, venue: names[t.venue_id] || null, priority: t.priority, status: t.status, due: t.due_date ? isoDay(t.due_date) : null }));
       }
-      if (scope.can('deposits:view')) {
+      if (scope.can('deposits:view') && scope.moduleOn('deposits')) {
         const deposits = await prisma.deposits.findMany({ where: { venue_id: venue, status: 'pending' }, take: 50 });
         const bookings = await describeBookings(await prisma.accommodations.findMany({ where: { id: { in: deposits.map(d => d.accommodation_id).filter(Boolean) } } }));
         const bm = Object.fromEntries(bookings.map(b => [b.id, b]));
@@ -669,6 +677,7 @@ function createAgentTools(deps) {
       if (!hasPermission(scope.perms, 'accommodations:create')) return { error: 'Sin permiso para crear cotizaciones.' };
       const venue = scope.venues.find(v => v.id === args.venue_id);
       if (!venue) return { error: 'Cabaña no encontrada o sin acceso: usa un id de get_context.' };
+      if (!await modules.isModuleEnabledForOrg(venue.organization, 'estimates')) return { error: moduleOff('estimates') };
       const date = validDay(args.date);
       if (!date) return { error: 'date debe ser YYYY-MM-DD.' };
       if (date < todayIso()) return { error: 'Esa fecha ya pasó.' };
@@ -738,11 +747,13 @@ function createAgentTools(deps) {
       if (schedule.error) return schedule;
 
       // Named agent, or like the app: a user linked to an agent of the venue sells as that agent.
+      // Sin el módulo de comisiones el alquiler queda sin comisionista.
       let agent = null;
-      if (args.commission_agent) {
+      const commissionsOn = await modules.isModuleEnabledForOrg(venue.organization, 'commissions');
+      if (commissionsOn && args.commission_agent) {
         agent = await findCommissionAgent(args.commission_agent, venue);
         if (agent.error) return agent;
-      } else {
+      } else if (commissionsOn) {
         agent = await prisma.commission_agents.findFirst({
           where: { user_id: scope.userId, venue_id: venue.id, is_active: true }
         });

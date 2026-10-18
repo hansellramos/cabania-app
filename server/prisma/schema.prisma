@@ -102,6 +102,9 @@ model organizations {
   name        String?       @db.VarChar
   system      Boolean?      @default(false)
   created_at  DateTime      @default(now()) @db.Timestamptz(6)
+  /// Módulos opcionales apagados (claves de server/modules.json). Se guarda lo apagado
+  /// para que un módulo nuevo quede encendido por defecto en todas las organizaciones.
+  disabled_modules Json     @default("[]") @db.Json
   invitations invitations[]
 }
 

@@ -70,19 +70,19 @@
                 Pagos
               </CNavLink>
             </CNavItem>
-            <CNavItem>
+            <CNavItem v-if="depositsOn">
               <CNavLink href="javascript:void(0)" :active="activeTab === 2" @click="activeTab = 2">
                 Depósito
               </CNavLink>
             </CNavItem>
-            <CNavItem>
+            <CNavItem v-if="contractsOn">
               <CNavLink href="javascript:void(0)" :active="activeTab === 3" @click="activeTab = 3">
                 Contrato
               </CNavLink>
             </CNavItem>
             <CNavItem>
               <CNavLink href="javascript:void(0)" :active="activeTab === 4" @click="activeTab = 4">
-                Comisiones y Gastos
+                {{ commissionsOn ? 'Comisiones y Gastos' : 'Gastos' }}
               </CNavLink>
             </CNavItem>
             <CNavItem>
@@ -285,7 +285,7 @@
             </CTabPane>
 
             <!-- Tab Depósito -->
-            <CTabPane :visible="activeTab === 2">
+            <CTabPane v-if="depositsOn" :visible="activeTab === 2">
               <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0">Depósito de Garantía</h5>
                 <CButton
@@ -459,7 +459,7 @@
             </CTabPane>
 
             <!-- Tab Contrato -->
-            <CTabPane :visible="activeTab === 3">
+            <CTabPane v-if="contractsOn" :visible="activeTab === 3">
               <AccommodationContractTab
                 :accommodation-id="route.params.id"
                 :accommodation="accommodation"
@@ -468,11 +468,13 @@
 
             <!-- Tab Comisiones y Gastos -->
             <CTabPane :visible="activeTab === 4">
-              <CommissionCalculator
-                :accommodation-id="route.params.id"
-                :accommodation="accommodation"
-              />
-              <hr class="my-3" />
+              <template v-if="commissionsOn">
+                <CommissionCalculator
+                  :accommodation-id="route.params.id"
+                  :accommodation="accommodation"
+                />
+                <hr class="my-3" />
+              </template>
               <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0">Egresos del Evento</h5>
                 <CButton
@@ -884,7 +886,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
@@ -896,6 +898,7 @@ import AccommodationContractTab from '@/components/accommodations/AccommodationC
 import CollectBalanceModal from '@/components/accommodations/CollectBalanceModal.vue'
 import BookingProfitCard from '@/components/accommodations/BookingProfitCard.vue'
 import { deleteAccommodation } from '@/services/accommodationService'
+import { useModules } from '@/composables/useModules'
 
 const route = useRoute()
 const router = useRouter()
@@ -1011,6 +1014,19 @@ const verifying = ref(false)
 const activeTab = ref(0)
 // The open tab lives in the URL (?tab=pagos), so it can be linked and survives a reload.
 useUrlState([urlTab(activeTab, ['resumen', 'pagos', 'deposito', 'contrato', 'comisiones', 'mensajes'])])
+
+// Módulos opcionales de la organización dueña de la cabaña
+const { isEnabled } = useModules()
+const accommodationOrgId = computed(() => accommodation.value?.venue_data?.organization || null)
+const depositsOn = computed(() => isEnabled('deposits', accommodationOrgId.value))
+const contractsOn = computed(() => isEnabled('contracts', accommodationOrgId.value))
+const commissionsOn = computed(() => isEnabled('commissions', accommodationOrgId.value))
+// Un enlace viejo (?tab=contrato) a un módulo apagado abre el resumen.
+watch([activeTab, depositsOn, contractsOn], () => {
+  if ((activeTab.value === 2 && !depositsOn.value) || (activeTab.value === 3 && !contractsOn.value)) {
+    activeTab.value = 0
+  }
+}, { immediate: true })
 
 const expenses = ref([])
 const deposit = ref(null)
@@ -1315,6 +1331,7 @@ async function loadExpenses() {
 }
 
 async function loadDeposit() {
+  if (!isEnabled('deposits')) return
   try {
     const res = await fetch(`/api/deposits?accommodation_id=${route.params.id}`, { credentials: 'include' })
     if (res.ok) {

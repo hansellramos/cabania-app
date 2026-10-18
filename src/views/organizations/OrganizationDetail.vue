@@ -19,6 +19,11 @@
                   <CBadge v-if="users.length" color="info" class="ms-1" size="sm">{{ users.length }}</CBadge>
                 </CNavLink>
               </CNavItem>
+              <CNavItem>
+                <CNavLink href="javascript:void(0)" :active="activeTab === 2" @click="activeTab = 2">
+                  Módulos
+                </CNavLink>
+              </CNavItem>
             </CNav>
 
             <CTabContent>
@@ -171,6 +176,45 @@
                 </CListGroup>
                 <div v-else class="text-body-secondary">No hay invitaciones pendientes.</div>
               </CTabPane>
+
+              <!-- Tab Módulos -->
+              <CTabPane :visible="activeTab === 2">
+                <p class="text-body-secondary small mb-3">
+                  Apaga lo que esta organización no usa: desaparece del menú y de las demás pantallas.
+                  Los datos no se borran; si lo vuelves a activar, todo sigue ahí.
+                  Alquileres, pagos, calendario, contactos, cabañas, egresos y análisis siempre están activos.
+                </p>
+                <CAlert v-if="modulesToast.show" :color="modulesToast.color" class="mb-3 py-2">
+                  {{ modulesToast.text }}
+                </CAlert>
+                <div v-if="loadingModules" class="text-center py-2">
+                  <CSpinner size="sm" />
+                </div>
+                <template v-else-if="orgModules">
+                  <CAlert v-if="!orgModules.can_edit" color="info" class="py-2 small">
+                    Solo un administrador de la organización puede activar o desactivar módulos.
+                  </CAlert>
+                  <CListGroup flush>
+                    <CListGroupItem v-for="m in orgModules.modules" :key="m.key" class="d-flex align-items-start justify-content-between gap-3 px-0">
+                      <div>
+                        <div class="fw-semibold">{{ m.name }}</div>
+                        <small class="text-body-secondary">{{ m.description }}</small>
+                      </div>
+                      <div class="d-flex align-items-center gap-2 flex-shrink-0">
+                        <CSpinner v-if="savingModule === m.key" size="sm" />
+                        <CFormSwitch
+                          :id="`module-${m.key}`"
+                          size="lg"
+                          :model-value="m.enabled"
+                          :disabled="!orgModules.can_edit || savingModule !== null"
+                          :aria-label="`${m.enabled ? 'Desactivar' : 'Activar'} ${m.name}`"
+                          @update:model-value="toggleModule(m, $event)"
+                        />
+                      </div>
+                    </CListGroupItem>
+                  </CListGroup>
+                </template>
+              </CTabPane>
             </CTabContent>
           </template>
           <template v-else>
@@ -187,6 +231,8 @@ import { ref, onMounted, reactive } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getOrganizationById, deleteOrganization } from '@/services/organizationService'
 import { fetchUsersByOrganization, removeUserFromOrganization } from '@/services/userOrganizationService'
+import { useAuth } from '@/composables/useAuth'
+import { resetAuthState } from '@/router'
 
 const route = useRoute()
 const router = useRouter()
@@ -217,6 +263,55 @@ const removingUserId = ref(null)
 
 // Toast
 const toast = reactive({ show: false, text: '', color: 'success' })
+
+// Módulos
+const { fetchUser } = useAuth()
+const orgModules = ref(null)
+const loadingModules = ref(false)
+const savingModule = ref(null)
+const modulesToast = reactive({ show: false, text: '', color: 'success' })
+
+function showModulesToast(text, color = 'success') {
+  modulesToast.text = text
+  modulesToast.color = color
+  modulesToast.show = true
+  setTimeout(() => { modulesToast.show = false }, 4000)
+}
+
+async function loadModules() {
+  loadingModules.value = true
+  try {
+    const res = await fetch(`/api/organizations/${route.params.id}/modules`, { credentials: 'include' })
+    if (res.ok) orgModules.value = await res.json()
+  } catch { /* ignore */ }
+  finally { loadingModules.value = false }
+}
+
+async function toggleModule(m, enabled) {
+  savingModule.value = m.key
+  try {
+    const res = await fetch(`/api/organizations/${route.params.id}/modules`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ modules: { [m.key]: enabled } }),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      showModulesToast(data.error || 'Error al guardar', 'danger')
+      return
+    }
+    orgModules.value = data
+    showModulesToast(`${m.name} ${enabled ? 'activado' : 'desactivado'}`)
+    // El menú y las rutas leen los módulos del usuario: se recargan.
+    resetAuthState()
+    await fetchUser()
+  } catch {
+    showModulesToast('Error de conexión', 'danger')
+  } finally {
+    savingModule.value = null
+  }
+}
 
 function showToast(text, color = 'success') {
   toast.text = text
@@ -355,6 +450,6 @@ async function removeUser(u) {
 
 onMounted(async () => {
   organization.value = await getOrganizationById(route.params.id)
-  await Promise.all([loadUsers(), loadInvitations()])
+  await Promise.all([loadUsers(), loadInvitations(), loadModules()])
 })
 </script>

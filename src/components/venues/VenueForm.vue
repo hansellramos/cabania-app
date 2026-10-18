@@ -315,7 +315,7 @@
         </CModalFooter>
       </CModal>
     </div>
-    <div class="mb-4">
+    <div v-if="isEnabled('deposits', form.organization)" class="mb-4">
       <div
         class="d-flex align-items-center justify-content-between p-2 border rounded cursor-pointer"
         style="cursor: pointer;"
@@ -442,9 +442,11 @@ import '@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css'
 import { fetchOrganizations } from '@/services/organizationService'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
+import { useModules } from '@/composables/useModules'
 
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
+const { isEnabled } = useModules()
 
 const props = defineProps({
   modelValue: {

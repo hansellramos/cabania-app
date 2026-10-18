@@ -8,6 +8,7 @@ const { uploadImage, deleteImage, extractPublicId } = require('./upload-service'
 const { prisma } = require('./db');
 const { setupAuth, isAuthenticated } = require('./auth/replitAuth');
 const { getUserPermissions, loadUserPermissions, hasPermission, hasOwnOnly, hasAnyPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
+const modules = require('./modules');
 const llmService = require('./llm-service');
 
 // WhatsApp service — proxied to external Baileys microservice via HTTP
@@ -343,6 +344,8 @@ async function startServer() {
   await setupAuth(app);
   
   app.use(loadUserPermissions);
+  // Endpoints de módulos opcionales apagados por la organización → 403
+  app.use(modules.moduleGuard());
 
   // ==================== Health Check (no auth — for external monitors) ====================
   app.get('/api/health', async (req, res) => {
@@ -484,9 +487,11 @@ async function startServer() {
   app.post('/api/organizations', isAuthenticated, async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
+      // Los módulos se cambian solo por /api/organizations/:id/modules
+      const { disabled_modules, ...data } = req.body || {};
       
       const organization = await prisma.organizations.create({
-        data: req.body
+        data
       });
       
       // Associate the creating user with the new organization
@@ -505,13 +510,90 @@ async function startServer() {
 
   app.put('/api/organizations/:id', isAuthenticated, async (req, res) => {
     try {
+      // Los módulos se cambian solo por /api/organizations/:id/modules
+      const { disabled_modules, ...data } = req.body || {};
       const organization = await prisma.organizations.update({
         where: { id: req.params.id },
-        data: req.body
+        data
       });
       res.json(organization);
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== Módulos por organización ====================
+
+  // Pueden ver los módulos quienes tienen acceso a la organización; cambiarlos,
+  // solo un super admin o un administrador de esa organización.
+  async function moduleAccess(req, orgId) {
+    const perms = req.userPermissions;
+    if (perms?.isSuperAdmin) return { canView: true, canEdit: true };
+    const accessible = await getAccessibleOrganizationIds(perms);
+    const member = (perms?.organizationIds || []).includes(orgId);
+    const canView = accessible === null || accessible.includes(orgId);
+    if (!canView) return { canView: false, canEdit: false };
+    const user = await prisma.users.findUnique({
+      where: { id: String(req.user.claims?.sub) },
+      select: { profile: { select: { code: true } } }
+    });
+    const isOrgAdmin = user?.profile?.code === 'organization:admin' || hasPermission(perms, 'organizations:edit');
+    return { canView: true, canEdit: member && isOrgAdmin };
+  }
+
+  function modulesPayload(org, canEdit) {
+    const disabled = modules.normalizeDisabled(org.disabled_modules);
+    return {
+      organization_id: org.id,
+      can_edit: canEdit,
+      modules: modules.MODULES.map(m => ({ ...m, enabled: !disabled.includes(m.key) }))
+    };
+  }
+
+  app.get('/api/organizations/:id/modules', isAuthenticated, async (req, res) => {
+    try {
+      const org = await prisma.organizations.findUnique({ where: { id: req.params.id }, select: { id: true, disabled_modules: true } });
+      if (!org) return res.status(404).json({ error: 'Organización no encontrada' });
+      const access = await moduleAccess(req, org.id);
+      if (!access.canView) return res.status(403).json({ error: 'No tiene acceso a esta organización' });
+      res.json(modulesPayload(org, access.canEdit));
+    } catch (error) {
+      console.error('Error fetching organization modules:', error);
+      res.status(500).json({ error: 'Error al obtener los módulos' });
+    }
+  });
+
+  // Body: { modules: { inventory: false, ... } } — solo las claves que cambian.
+  app.put('/api/organizations/:id/modules', isAuthenticated, async (req, res) => {
+    try {
+      const org = await prisma.organizations.findUnique({ where: { id: req.params.id }, select: { id: true, disabled_modules: true } });
+      if (!org) return res.status(404).json({ error: 'Organización no encontrada' });
+      const access = await moduleAccess(req, org.id);
+      if (!access.canEdit) {
+        return res.status(403).json({ error: 'Solo un administrador de la organización puede activar o desactivar módulos' });
+      }
+      const changes = req.body?.modules;
+      if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+        return res.status(400).json({ error: 'Envía { modules: { clave: true|false } }' });
+      }
+      const unknown = Object.keys(changes).filter(k => !modules.MODULE_KEYS.includes(k));
+      if (unknown.length) return res.status(400).json({ error: `Módulo desconocido: ${unknown.join(', ')}` });
+
+      const disabled = new Set(modules.normalizeDisabled(org.disabled_modules));
+      for (const [key, on] of Object.entries(changes)) {
+        if (on) disabled.delete(key);
+        else disabled.add(key);
+      }
+      const updated = await prisma.organizations.update({
+        where: { id: org.id },
+        data: { disabled_modules: [...disabled] },
+        select: { id: true, disabled_modules: true }
+      });
+      modules.invalidateModulesCache(org.id);
+      res.json(modulesPayload(updated, true));
+    } catch (error) {
+      console.error('Error updating organization modules:', error);
+      res.status(500).json({ error: 'Error al guardar los módulos' });
     }
   });
 
@@ -10366,9 +10448,13 @@ REGLAS:
     let contractUrl = null;
     if (result.accommodationId) {
       try {
-        let contract = await prisma.contracts.findFirst({ where: { accommodation_id: result.accommodationId } });
-        if (!contract) {
-          const accommodation = await prisma.accommodations.findUnique({ where: { id: result.accommodationId } });
+        const accommodation = await prisma.accommodations.findUnique({ where: { id: result.accommodationId } });
+        // Sin el módulo de contratos no se genera ni se envía contrato.
+        const contractsOn = await modules.isModuleEnabledForVenue(accommodation?.venue, 'contracts');
+        let contract = contractsOn
+          ? await prisma.contracts.findFirst({ where: { accommodation_id: result.accommodationId } })
+          : null;
+        if (!contract && contractsOn) {
           const created = await createAccommodationContract(accommodation, 'system:bold');
           contract = created.snapshot_html ? created : null;
           if (!contract) {

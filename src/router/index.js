@@ -10,11 +10,16 @@ import inventoryRoutes from './routes/inventory'
 import maintenanceRoutes from './routes/maintenance'
 import commissionRoutes from './routes/commissions'
 import pendingTaskRoutes from './routes/pending-tasks'
+import { isModuleEnabled } from '@/utils/modules'
 
 let authChecked = false
 let isAuthenticated = false
 let hasSubscription = false
 let cachedUser = null
+
+// Marca las rutas de un módulo opcional: si la organización lo apagó, el guard
+// manda a /module-disabled en lugar de abrir la vista.
+const withModule = (module, list) => list.map(r => ({ ...r, meta: { ...r.meta, module } }))
 
 const routes = [
   {
@@ -80,6 +85,12 @@ const routes = [
         name: 'Availability',
         component: () => import('@/views/availability/AvailabilityView.vue'),
         meta: { breadcrumb: 'Disponibilidad' },
+      },
+      {
+        path: '/module-disabled',
+        name: 'ModuleDisabled',
+        component: () => import('@/views/pages/ModuleDisabled.vue'),
+        meta: { breadcrumb: 'Módulo desactivado' },
       },
       {
         path: '/no-subscription',
@@ -446,10 +457,10 @@ const routes = [
       ...accommodationsRoutes,
       ...paymentsRoutes,
       ...profilesRoutes,
-      ...inventoryRoutes,
-      ...maintenanceRoutes,
-      ...commissionRoutes,
-      ...pendingTaskRoutes,
+      ...withModule('inventory', inventoryRoutes),
+      ...withModule('maintenance', maintenanceRoutes),
+      ...withModule('commissions', commissionRoutes),
+      ...withModule('pending_tasks', pendingTaskRoutes),
       {
         path: '/invitations',
         name: 'Invitations',
@@ -472,13 +483,13 @@ const routes = [
         path: '/admin/inventory-categories',
         name: 'InventoryCategoryList',
         component: () => import('@/views/inventory-categories/InventoryCategoryListView.vue'),
-        meta: { breadcrumb: 'Categorías de Inventario', permission: 'inventory:view' },
+        meta: { module: 'inventory', breadcrumb: 'Categorías de Inventario', permission: 'inventory:view' },
       },
       {
         path: '/admin/maintenance-zones',
         name: 'MaintenanceZoneList',
         component: () => import('@/views/maintenance-zones/MaintenanceZoneListView.vue'),
-        meta: { breadcrumb: 'Zonas de Mantenimiento', permission: 'maintenance:view' },
+        meta: { module: 'maintenance', breadcrumb: 'Zonas de Mantenimiento', permission: 'maintenance:view' },
       },
       {
         path: '/admin/message-templates',
@@ -537,21 +548,21 @@ const routes = [
         name: 'ContractTemplateList',
         component: () => import('@/views/contracts/ContractTemplateListView.vue'),
         props: true,
-        meta: { breadcrumb: 'Plantillas de Contrato' },
+        meta: { module: 'contracts', breadcrumb: 'Plantillas de Contrato' },
       },
       {
         path: '/business/venues/:venueId/contract-templates/create',
         name: 'ContractTemplateCreate',
         component: () => import('@/views/contracts/ContractTemplateFormView.vue'),
         props: true,
-        meta: { breadcrumb: 'Nueva Plantilla' },
+        meta: { module: 'contracts', breadcrumb: 'Nueva Plantilla' },
       },
       {
         path: '/business/venues/:venueId/contract-templates/:templateId/edit',
         name: 'ContractTemplateEdit',
         component: () => import('@/views/contracts/ContractTemplateFormView.vue'),
         props: true,
-        meta: { breadcrumb: 'Editar Plantilla' },
+        meta: { module: 'contracts', breadcrumb: 'Editar Plantilla' },
       },
       {
         path: '/business/venues/:id/plans',
@@ -583,27 +594,27 @@ const routes = [
         path: '/business/deposits',
         name: 'DepositsList',
         component: () => import('@/views/deposits/DepositsListView.vue'),
-        meta: { breadcrumb: 'Reporte de Depósitos' },
+        meta: { module: 'deposits', breadcrumb: 'Reporte de Depósitos' },
       },
       {
         path: '/business/deposits/new',
         name: 'DepositNew',
         component: () => import('@/views/deposits/DepositFormView.vue'),
-        meta: { breadcrumb: 'Registrar Depósito' },
+        meta: { module: 'deposits', breadcrumb: 'Registrar Depósito' },
       },
       {
         path: '/business/deposits/:id/edit',
         name: 'DepositEdit',
         component: () => import('@/views/deposits/DepositFormView.vue'),
         props: true,
-        meta: { breadcrumb: 'Editar Depósito' },
+        meta: { module: 'deposits', breadcrumb: 'Editar Depósito' },
       },
       {
         path: '/business/deposits/:id',
         name: 'DepositDetail',
         component: () => import('@/views/deposits/DepositDetailView.vue'),
         props: true,
-        meta: { breadcrumb: 'Detalle de Depósito' },
+        meta: { module: 'deposits', breadcrumb: 'Detalle de Depósito' },
       },
       {
         path: '/analytics',
@@ -621,27 +632,27 @@ const routes = [
         path: '/business/estimates',
         name: 'EstimatesList',
         component: () => import('@/views/estimates/EstimatesListView.vue'),
-        meta: { breadcrumb: 'Reporte de Cotizaciones' },
+        meta: { module: 'estimates', breadcrumb: 'Reporte de Cotizaciones' },
       },
       {
         path: '/business/estimates/create',
         name: 'EstimateCreate',
         component: () => import('@/views/estimates/EstimateFormView.vue'),
-        meta: { breadcrumb: 'Crear Cotización' },
+        meta: { module: 'estimates', breadcrumb: 'Crear Cotización' },
       },
       {
         path: '/business/estimates/:id',
         name: 'EstimateDetail',
         component: () => import('@/views/estimates/EstimateDetailView.vue'),
         props: true,
-        meta: { breadcrumb: 'Detalle de Cotización' },
+        meta: { module: 'estimates', breadcrumb: 'Detalle de Cotización' },
       },
       {
         path: '/business/estimates/:id/edit',
         name: 'EstimateEdit',
         component: () => import('@/views/estimates/EstimateFormView.vue'),
         props: true,
-        meta: { breadcrumb: 'Editar Cotización' },
+        meta: { module: 'estimates', breadcrumb: 'Editar Cotización' },
       },
     ],
   },
@@ -839,6 +850,12 @@ router.beforeEach(async (to, from) => {
   // Check subscription for protected routes
   if (!authStatus.hasSubscription && !allowsNoSubscription(to.path)) {
     return { path: '/no-subscription' }
+  }
+
+  // Módulo opcional apagado en las organizaciones del usuario
+  const routeModule = to.matched.find(r => r.meta?.module)?.meta.module
+  if (routeModule && !isModuleEnabled(authStatus.user, routeModule)) {
+    return { path: '/module-disabled', query: { module: routeModule } }
   }
 
   // Permission check based on route meta

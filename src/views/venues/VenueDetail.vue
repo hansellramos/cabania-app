@@ -11,7 +11,7 @@
             <RouterLink :to="`/business/venues/${venue.id}/plans`">
               <CButton color="success" size="sm">Planes</CButton>
             </RouterLink>
-            <RouterLink :to="`/business/venues/${venue.id}/contract-templates`">
+            <RouterLink v-if="isEnabled('contracts', venue.organization)" :to="`/business/venues/${venue.id}/contract-templates`">
               <CButton color="secondary" size="sm">Plantillas de Contrato</CButton>
             </RouterLink>
             <RouterLink :to="{ path: '/business/expenses', query: { venue_id: venue.id } }">
@@ -174,6 +174,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CSpinner, CBadge, CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 import { getVenueById, deleteVenue } from '@/services/venueService'
+import { useModules } from '@/composables/useModules'
 import { useBreadcrumbStore } from '@/stores/breadcrumb.js'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
@@ -181,6 +182,7 @@ import 'mapbox-gl/dist/mapbox-gl.css'
 const route = useRoute()
 const router = useRouter()
 const breadcrumbStore = useBreadcrumbStore()
+const { isEnabled } = useModules()
 const venue = ref(null)
 const venueAmenities = ref([])
 const venueImages = ref([])
