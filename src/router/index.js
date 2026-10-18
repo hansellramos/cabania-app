@@ -93,6 +93,18 @@ const routes = [
         meta: { breadcrumb: 'Módulo desactivado' },
       },
       {
+        path: '/admin/memberships',
+        name: 'Memberships',
+        component: () => import('@/views/memberships/MembershipsView.vue'),
+        meta: { breadcrumb: 'Membresías', superAdminOnly: true },
+      },
+      {
+        path: '/reseller',
+        name: 'ResellerVenues',
+        component: () => import('@/views/reseller/ResellerVenuesView.vue'),
+        meta: { breadcrumb: 'Mis cabañas' },
+      },
+      {
         path: '/no-subscription',
         name: 'NoSubscription',
         component: () => import('@/views/subscription/NoSubscriptionView.vue'),
@@ -851,6 +863,11 @@ router.beforeEach(async (to, from) => {
   // Super admins bypass all checks
   if (authStatus.user?.is_super_admin) {
     return true
+  }
+
+  // Platform admin pages (memberships)
+  if (to.meta?.superAdminOnly) {
+    return { path: '/next' }
   }
 
   // Check subscription for protected routes

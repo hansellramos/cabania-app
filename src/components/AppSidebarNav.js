@@ -102,6 +102,9 @@ const AppSidebarNav = defineComponent({
         if (item.module && !isModuleEnabled(user.value, item.module)) {
           return false
         }
+        // Platform admin items (memberships) and the reseller view
+        if (item.superAdminOnly && !isSuperAdmin.value) return false
+        if (item.resellerOnly && !isSuperAdmin.value && user.value?.subscription?.client_type !== 'revendedor') return false
 
         // Permission check (only when user has a restricted profile)
         if (checkPerms && item.permission) {

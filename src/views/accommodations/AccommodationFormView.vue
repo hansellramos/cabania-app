@@ -50,6 +50,19 @@ function formatTimeForInput(timeStr) {
 }
 
 onMounted(async () => {
+  // Prefill from the reseller availability search (?venue=&plan_id=&date=&adults=…)
+  if (!isEdit.value && route.query.venue) {
+    const q = route.query
+    form.value = {
+      ...form.value,
+      venue: String(q.venue),
+      plan_id: q.plan_id ? String(q.plan_id) : '',
+      date: q.date ? String(q.date) : '',
+      adults: parseInt(q.adults, 10) || 0,
+      children: parseInt(q.children, 10) || 0,
+      duration: parseInt(q.duration, 10) || ''
+    }
+  }
   if (isEdit.value) {
     const accommodation = await getAccommodationById(route.params.id)
     if (accommodation) {

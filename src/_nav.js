@@ -19,6 +19,13 @@ export default [
     permission: 'accommodations:view',
   },
   {
+    component: 'CNavItem',
+    name: 'Mis cabañas',
+    to: '/reseller',
+    icon: 'cil-handshake',
+    resellerOnly: true,
+  },
+  {
     component: 'CNavTitle',
     name: 'Análisis',
     permission: 'analytics:view',
@@ -259,6 +266,13 @@ export default [
     to: '/admin/system-whatsapp',
     icon: 'cil-phone',
     permission: 'whatsapp:manage',
+  },
+  {
+    component: 'CNavItem',
+    name: 'Membresías',
+    to: '/admin/memberships',
+    icon: 'cil-star',
+    superAdminOnly: true,
   },
   {
     component: 'CNavItem',

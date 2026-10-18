@@ -18,6 +18,7 @@ webauthnUtils.originalOrigin = function(req) {
 };
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
+const { membershipStatus } = require('../services/membership');
 const session = require('express-session');
 const { prisma } = require('../db');
 const { modulesStateForUser } = require('../modules');
@@ -280,6 +281,12 @@ async function setupAuth(app) {
             if (isExpired) isActive = false;
           }
 
+          // Paid membership past its paid-until date (no date = no billing control).
+          if (membershipStatus(sub.paid_until).status === 'vencida') {
+            isExpired = true;
+            isActive = false;
+          }
+
           if (!bestSubscription) {
             bestSubscription = { su, isActive, isExpired };
           } else {
@@ -308,10 +315,15 @@ async function setupAuth(app) {
             }
           }
 
+          const membership = membershipStatus(sub.paid_until);
           subscription = {
             id: sub.id,
             name: sub.name,
             plan_type: sub.plan_type,
+            client_type: sub.client_type,
+            paid_until: membership.paid_until,
+            membership_status: membership.status,
+            membership_days_left: membership.days_left,
             is_active: bestSubscription.isActive,
             is_owner: su.is_owner,
             role: su.role,

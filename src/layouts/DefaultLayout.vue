@@ -5,6 +5,7 @@ import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import ImpersonationBanner from '@/components/ImpersonationBanner.vue'
 import TrialBanner from '@/components/TrialBanner.vue'
+import MembershipBanner from '@/components/MembershipBanner.vue'
 import PasskeyBanner from '@/components/PasskeyBanner.vue'
 import AppAssistant from '@/components/AppAssistant.vue'
 </script>
@@ -15,6 +16,7 @@ import AppAssistant from '@/components/AppAssistant.vue'
     <div class="wrapper d-flex flex-column min-vh-100">
       <ImpersonationBanner />
       <TrialBanner />
+      <MembershipBanner />
       <PasskeyBanner />
       <AppHeader />
       <div class="body flex-grow-1">

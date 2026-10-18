@@ -6,12 +6,16 @@
           <CCard class="text-center shadow-lg">
             <CCardBody class="p-5">
               <div class="mb-4">
-                <CIcon :icon="isTrialExpired ? 'cil-clock' : 'cil-lock-locked'" size="4xl" :class="isTrialExpired ? 'text-danger' : 'text-warning'" />
+                <CIcon :icon="isTrialExpired || isMembershipExpired ? 'cil-clock' : 'cil-lock-locked'" size="4xl" :class="isTrialExpired || isMembershipExpired ? 'text-danger' : 'text-warning'" />
               </div>
               
-              <h2 class="mb-3">{{ isTrialExpired ? 'Prueba Expirada' : 'Acceso Restringido' }}</h2>
+              <h2 class="mb-3">{{ isMembershipExpired ? 'Membresía Vencida' : isTrialExpired ? 'Prueba Expirada' : 'Acceso Restringido' }}</h2>
               
-              <p v-if="isTrialExpired" class="text-muted mb-4">
+              <p v-if="isMembershipExpired" class="text-muted mb-4">
+                Tu membresía estaba pagada hasta el <strong>{{ paidUntil }}</strong>.
+                Para seguir usando la aplicación, registra el pago de tu renovación con CabanIA.
+              </p>
+              <p v-else-if="isTrialExpired" class="text-muted mb-4">
                 Tu período de prueba gratuita ha finalizado.
                 Para continuar usando la aplicación, necesitas activar una suscripción.
               </p>
@@ -20,7 +24,7 @@
                 Para acceder a la aplicación, necesitas ser agregado a una suscripción por un administrador.
               </p>
               
-              <CAlert v-if="isTrialExpired" color="warning" class="text-start">
+              <CAlert v-if="isTrialExpired || isMembershipExpired" color="warning" class="text-start">
                 <h5 class="alert-heading">
                   <CIcon icon="cil-star" class="me-2" />
                   Activa tu suscripción
@@ -76,6 +80,15 @@ const { user, logout: authLogout, fetchUser } = useAuth()
 
 const isTrialExpired = computed(() => {
   return user.value?.subscription?.is_trial_expired === true
+})
+
+const isMembershipExpired = computed(() => user.value?.subscription?.membership_status === 'vencida')
+
+const paidUntil = computed(() => {
+  const value = user.value?.subscription?.paid_until
+  if (!value) return ''
+  const [y, m, d] = value.split('-')
+  return `${d}/${m}/${y}`
 })
 
 async function refreshStatus() {
