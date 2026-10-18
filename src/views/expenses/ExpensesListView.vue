@@ -9,6 +9,27 @@
           </RouterLink>
         </CCardHeader>
         <CCardBody>
+          <CNav variant="tabs" class="mb-3">
+            <CNavItem>
+              <CNavLink href="javascript:void(0)" :active="activeTab === 0" @click="activeTab = 0">
+                Gastos
+              </CNavLink>
+            </CNavItem>
+            <CNavItem>
+              <CNavLink href="javascript:void(0)" :active="activeTab === 1" @click="activeTab = 1">
+                Recurrentes
+              </CNavLink>
+            </CNavItem>
+          </CNav>
+
+          <RecurringExpensesPanel
+            v-if="activeTab === 1"
+            v-model:venue-id="filters.venue_id"
+            :venues="venues"
+            :categories="categories"
+          />
+
+          <template v-else>
           <CRow class="mb-3 g-2">
             <CCol :md="3">
               <CFormLabel class="small">Sede</CFormLabel>
@@ -79,7 +100,10 @@
             </CTableHead>
             <CTableBody>
               <CTableRow v-for="expense in paginatedExpenses" :key="expense.id">
-                <CTableDataCell>{{ formatDate(expense.expense_date) }}</CTableDataCell>
+                <CTableDataCell>
+                  {{ formatDate(expense.expense_date) }}
+                  <CIcon v-if="expense.recurring_expense_id" name="cil-reload" size="sm" class="ms-1 text-body-secondary" title="Gasto recurrente" />
+                </CTableDataCell>
                 <CTableDataCell>
                   <CBadge v-if="expense.category" :color="expense.category.color || 'primary'">
                     <CIcon v-if="expense.category.icon" :name="expense.category.icon" class="me-1" />
@@ -155,6 +179,7 @@
               <CPaginationItem :disabled="currentPage === totalPages" @click="currentPage = totalPages">&raquo;</CPaginationItem>
             </CPagination>
           </div>
+          </template>
         </CCardBody>
       </CCard>
     </CCol>
@@ -184,9 +209,10 @@ import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton,
   CTable, CTableHead, CTableRow, CTableHeaderCell, CTableBody, CTableDataCell, CTableFoot,
   CBadge, CModal, CModalHeader, CModalTitle, CModalBody, CModalFooter,
-  CFormLabel, CFormInput, CFormSelect
+  CFormLabel, CFormInput, CFormSelect, CNav, CNavItem, CNavLink
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
+import RecurringExpensesPanel from '@/components/expenses/RecurringExpensesPanel.vue'
 
 const expenses = ref([])
 const venues = ref([])
@@ -196,6 +222,7 @@ const deleting = ref(false)
 const showDeleteModal = ref(false)
 const expenseToDelete = ref(null)
 const searchQuery = ref('')
+const activeTab = ref(0)
 
 const filters = ref({
   venue_id: '',
@@ -396,6 +423,7 @@ useUrlState([
   urlField(filters.value, 'from_date', { param: 'from' }),
   urlField(filters.value, 'to_date', { param: 'to' }),
   urlRef(searchQuery, 'q'),
+  urlTab(activeTab, ['gastos', 'recurrentes']),
 ], { onRouteChange: () => loadExpenses() })
 
 onMounted(() => {

@@ -428,6 +428,7 @@ model expense_categories {
   is_active   Boolean    @default(true)
   created_at  DateTime   @default(now()) @db.Timestamptz(6)
   expenses    expenses[]
+  recurring_expenses recurring_expenses[]
 }
 
 model expenses {
@@ -448,9 +449,64 @@ model expenses {
   provider_id      String?                   @db.Uuid
   subcategory      String?                   @db.VarChar(100)
   accommodation_id String?                   @db.Uuid
+  // Recurring expense this one pays, and which occurrence (its due date).
+  recurring_expense_id String?               @db.Uuid
+  recurring_period     DateTime?             @db.Date
   inventory_items  expense_inventory_items[]
   category         expense_categories?       @relation(fields: [category_id], references: [id])
   provider         providers?                @relation(fields: [provider_id], references: [id])
+  recurring_expense recurring_expenses?      @relation(fields: [recurring_expense_id], references: [id], onDelete: SetNull)
+
+  @@index([recurring_expense_id, recurring_period])
+}
+
+// An expense that repeats (caretaker payroll, utilities, internet, pool...).
+// Each occurrence has a due date; it is satisfied by an expense linked to it
+// (recurring_expense_id + recurring_period) or by skipping it.
+model recurring_expenses {
+  id              String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String?                      @db.Uuid
+  venue_id        String                       @db.Uuid
+  name            String                       @db.VarChar(255)
+  description     String?
+  category_id     String?                      @db.Uuid
+  subcategory     String?                      @db.VarChar(100)
+  provider_id     String?                      @db.Uuid
+  expected_amount Decimal?                     @db.Decimal
+  // weekly | biweekly (days 15 and last of the month) | monthly | bimonthly | yearly
+  frequency       String                       @db.VarChar(20)
+  // Day of the month (1-31) or, for weekly, ISO weekday (1 = lunes ... 7 = domingo)
+  due_day         Int?
+  start_date      DateTime                     @db.Date
+  end_date        DateTime?                    @db.Date
+  payment_method  String?                      @db.VarChar(100)
+  is_active       Boolean                      @default(true)
+  created_by      String?                      @db.VarChar(255)
+  created_at      DateTime                     @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?                    @db.Timestamptz(6)
+  updated_by      String?                      @db.VarChar(255)
+  category        expense_categories?          @relation(fields: [category_id], references: [id])
+  provider        providers?                   @relation(fields: [provider_id], references: [id])
+  expenses        expenses[]
+  periods         recurring_expense_periods[]
+
+  @@index([organization_id])
+  @@index([venue_id])
+}
+
+// Per-occurrence state of a recurring expense: skipped, and overdue notices sent.
+model recurring_expense_periods {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recurring_expense_id String             @db.Uuid
+  due_date             DateTime           @db.Date
+  skipped_at           DateTime?          @db.Timestamptz(6)
+  skipped_by           String?            @db.VarChar(255)
+  last_notified_at     DateTime?          @db.Timestamptz(6)
+  notified_count       Int                @default(0)
+  created_at           DateTime           @default(now()) @db.Timestamptz(6)
+  recurring_expense    recurring_expenses @relation(fields: [recurring_expense_id], references: [id], onDelete: Cascade)
+
+  @@unique([recurring_expense_id, due_date])
 }
 
 model providers {
@@ -466,6 +522,7 @@ model providers {
   expenses           expenses[]
   maintenance_logs   maintenance_logs[]
   commission_agents  commission_agents[]
+  recurring_expenses recurring_expenses[]
 }
 
 model deposits {
