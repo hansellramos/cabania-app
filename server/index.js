@@ -10891,55 +10891,30 @@ REGLAS:
   const RECURRING_MAX_NOTICES = 3;
 
   /**
-   * In-app notice to the organization's admins (members who can see expenses)
-   * that a recurring expense's period is overdue. Kept as one small function so
-   * the notifications center can take it over. Returns how many were notified.
+   * A recurring expense's period is overdue: the recurring_expense_overdue notice,
+   * delivered as the organization set it up in Notificaciones. Returns the result.
    */
   async function notifyRecurringExpenseOverdue(def, dueDate, { reminder = false, overdueCount = 1 } = {}) {
     const venue = def.venue_id
-      ? await prisma.venues.findUnique({ where: { id: def.venue_id }, select: { id: true, name: true, organization: true } })
+      ? await prisma.venues.findUnique({ where: { id: def.venue_id }, select: { id: true, name: true } })
       : null;
-    const organizationId = def.organization_id || venue?.organization;
-    if (!organizationId) return 0;
-
-    const members = await prisma.user_organizations.findMany({
-      where: { organization_id: organizationId },
-      select: { user_id: true }
-    });
-    const users = members.length ? await prisma.users.findMany({
-      where: { id: { in: members.map(m => m.user_id) } },
-      select: { id: true, is_super_admin: true, profile_id: true }
-    }) : [];
-    const profileIds = [...new Set(users.map(u => u.profile_id).filter(Boolean))];
-    const profiles = profileIds.length ? await prisma.profiles.findMany({
-      where: { id: { in: profileIds } },
-      select: { id: true, permissions: true }
-    }) : [];
-    const canSeeExpenses = new Set(profiles
-      .filter(p => Array.isArray(p.permissions) && p.permissions.some(perm => perm === 'expenses:view' || String(perm).startsWith('expenses:view:')))
-      .map(p => p.id));
-    const recipients = users.filter(u => u.is_super_admin || canSeeExpenses.has(u.profile_id));
-    if (!recipients.length) return 0;
-
     const date = new Date(dueDate).toLocaleDateString('es-CO', { timeZone: 'UTC', day: 'numeric', month: 'long' });
     const where = venue?.name ? ` en ${venue.name}` : '';
     const body = `${def.name}${where} venció el ${date} y no tiene gasto registrado.`
       + (def.expected_amount ? ` Monto aproximado: ${money(def.expected_amount)}.` : '')
       + (overdueCount > 1 ? ` Hay ${overdueCount} periodos sin registrar.` : '')
       + ' Regístralo u omite el periodo si no aplica.';
-
-    await prisma.notifications.createMany({
-      data: recipients.map(u => ({
-        user_id: u.id,
-        organization_id: organizationId,
-        venue_id: venue?.id || null,
-        type: 'recurring_expense_overdue',
-        title: `${reminder ? 'Recordatorio: g' : 'G'}asto recurrente vencido: ${def.name}`.slice(0, 255),
+    return notify('recurring_expense_overdue', {
+      organizationId: def.organization_id || null,
+      venueId: venue?.id || null,
+      data: {
+        title: `${reminder ? 'Recordatorio: g' : 'G'}asto recurrente vencido: ${def.name}`,
         body,
-        link: `/business/expenses?tab=recurrentes${venue ? `&venue_id=${venue.id}` : ''}`
-      }))
+        link: `/business/expenses?tab=recurrentes${venue ? `&venue_id=${venue.id}` : ''}`,
+        details: [['Gasto', def.name], ['Venció', date], ['Monto aproximado', def.expected_amount ? money(def.expected_amount) : '—']],
+        ctaLabel: 'Ver gastos recurrentes'
+      }
     });
-    return recipients.length;
   }
 
   /**

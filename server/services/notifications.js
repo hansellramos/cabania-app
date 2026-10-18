@@ -178,16 +178,6 @@ const TYPES = {
     description: 'Un gasto recurrente (servicios, nómina…) pasó su fecha sin registrarse.',
     defaults: { in_app: true, email: false, whatsapp: false },
     recipients: 'admins',
-    pending: true,
-    build: genericBuild
-  },
-
-  membership_expiring: {
-    label: 'Membresía por vencer',
-    description: 'La suscripción de la organización a CabanIA está por vencer.',
-    defaults: { in_app: true, email: false, whatsapp: false },
-    recipients: 'admins',
-    pending: true,
     build: genericBuild
   }
 }

@@ -151,6 +151,7 @@ const AppSidebarNav = defineComponent({
               h(resolveComponent('CIcon'), {
                 customClassName: 'nav-icon',
                 name: item.icon,
+                key: item.icon,
               }),
               item.name,
             ],
@@ -173,6 +174,7 @@ const AppSidebarNav = defineComponent({
                 ? h(resolveComponent('CIcon'), {
                     customClassName: 'nav-icon',
                     name: item.icon,
+                    key: item.icon,
                   })
                 : h('span', { class: 'nav-icon' }, h('span', { class: 'nav-icon-bullet' })),
               item.name,
@@ -202,6 +204,7 @@ const AppSidebarNav = defineComponent({
         ? h(
             RouterLink,
             {
+              key: item.to,
               to: item.to,
               custom: true,
             },
@@ -221,6 +224,7 @@ const AppSidebarNav = defineComponent({
                         ? h(resolveComponent('CIcon'), {
                             customClassName: 'nav-icon',
                             name: item.icon,
+                            key: item.icon,
                           })
                         : h('span', { class: 'nav-icon' }, h('span', { class: 'nav-icon-bullet' })),
                       item.name,
