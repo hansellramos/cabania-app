@@ -53,6 +53,16 @@
                 </template>
               </CCol>
             </CRow>
+            <CAlert v-if="recurringInfo" color="info" class="d-flex align-items-center py-2">
+              <CIcon name="cil-reload" class="me-2" />
+              <div>
+                Gasto recurrente: <strong>{{ recurringInfo.name }}</strong>
+                <span v-if="form.recurring_period"> · periodo que vence el {{ formatPeriod(form.recurring_period) }}</span>
+                <div v-if="!isEditing && recurringInfo.expected_amount" class="small">
+                  Monto aproximado {{ formatCurrency(recurringInfo.expected_amount) }}; ajústalo al valor real.
+                </div>
+              </div>
+            </CAlert>
             <CAlert v-if="!form.venue_id" color="info" class="mt-3">
               <CIcon name="cil-info" class="me-2" />
               Seleccione una organización y sede para continuar registrando el gasto.
@@ -192,7 +202,7 @@
               </CCol>
             </CRow>
             <!-- Inventory Items Section -->
-            <template v-if="isEditing || pendingInventoryItems.length > 0 || showSuggestedItems">
+            <template v-if="inventoryOn && (isEditing || pendingInventoryItems.length > 0 || showSuggestedItems)">
               <hr class="my-4" />
               <h6 class="mb-3">
                 <CIcon name="cil-clipboard" class="me-2" />
@@ -388,7 +398,7 @@
             </CRow>
 
             <!-- AI Suggested Items Panel -->
-            <CCard v-if="showSuggestedItems && suggestedItems.length > 0" class="mb-3 border-info">
+            <CCard v-if="inventoryOn && showSuggestedItems && suggestedItems.length > 0" class="mb-3 border-info">
               <CCardHeader class="d-flex justify-content-between align-items-center bg-info bg-opacity-10">
                 <span>
                   <CIcon name="cil-lightbulb" class="me-2" />
@@ -585,6 +595,7 @@ import {
   CAlert, CBadge, CSpinner, CTable, CTableHead, CTableRow, CTableHeaderCell, CTableBody, CTableDataCell
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
+import { useModules } from '@/composables/useModules'
 
 const route = useRoute()
 const router = useRouter()
@@ -625,8 +636,14 @@ const form = ref({
   description: '',
   reference: '',
   receipt_url: '',
-  notes: ''
+  notes: '',
+  recurring_expense_id: '',
+  recurring_period: ''
 })
+
+// Recurring expense this one pays (from "Registrar" in Recurrentes, or when editing a linked one)
+const recurringInfo = ref(null)
+const fromRecurring = computed(() => !!route.query.recurring_expense_id)
 
 // Accommodation selector
 const accommodations = ref([])
@@ -685,7 +702,9 @@ watch(() => form.value.venue_id, (newVenueId) => {
 })
 
 const goBack = () => {
-  if (route.query.accommodation_id) {
+  if (fromRecurring.value) {
+    router.push('/business/expenses?tab=recurrentes')
+  } else if (route.query.accommodation_id) {
     router.push(`/business/accommodations/${route.query.accommodation_id}`)
   } else {
     router.push('/business/expenses')
@@ -760,6 +779,9 @@ const hideProviderSuggestions = () => {
 }
 
 // --- Inventory Items linked to expense ---
+// Sin el módulo de inventario el gasto no se liga a insumos.
+const { isEnabled } = useModules()
+const inventoryOn = computed(() => isEnabled('inventory'))
 const expenseInventoryItems = ref([])
 const availableInventoryItems = ref([])
 const newInventoryItemId = ref('')
@@ -771,7 +793,7 @@ const formatCurrency = (value) => {
 }
 
 const loadExpenseInventoryItems = async () => {
-  if (!isEditing.value) return
+  if (!isEditing.value || !inventoryOn.value) return
   try {
     const response = await fetch(`/api/expenses/${route.params.id}/inventory-items`, { credentials: 'include' })
     if (response.ok) {
@@ -783,6 +805,7 @@ const loadExpenseInventoryItems = async () => {
 }
 
 const loadAvailableInventory = async () => {
+  if (!inventoryOn.value) return
   try {
     const params = new URLSearchParams({ type: 'supply' })
     if (form.value.venue_id) params.append('venue_id', form.value.venue_id)
@@ -1040,15 +1063,56 @@ const loadExpense = async () => {
         description: expense.description || '',
         reference: expense.reference || '',
         receipt_url: expense.receipt_url || '',
-        notes: expense.notes || ''
+        notes: expense.notes || '',
+        recurring_expense_id: expense.recurring_expense_id || '',
+        recurring_period: expense.recurring_period ? expense.recurring_period.split('T')[0] : ''
       }
       if (expense.provider) {
         selectedProvider.value = expense.provider
+      }
+      if (expense.recurring_expense_id) {
+        await loadRecurringInfo(expense.recurring_expense_id)
       }
     }
   } catch (error) {
     console.error('Error loading expense:', error)
   }
+}
+
+const loadRecurringInfo = async (id) => {
+  try {
+    const response = await fetch(`/api/recurring-expenses/${id}`, { credentials: 'include' })
+    if (response.ok) recurringInfo.value = await response.json()
+  } catch (error) {
+    console.error('Error loading recurring expense:', error)
+  }
+}
+
+// Prefill from the recurring expense; the amount stays editable since bills vary.
+const prefillFromRecurring = async () => {
+  await loadRecurringInfo(route.query.recurring_expense_id)
+  const recurring = recurringInfo.value
+  if (!recurring) return
+  form.value.recurring_expense_id = recurring.id
+  form.value.recurring_period = route.query.recurring_period || recurring.current_period || ''
+  form.value.venue_id = recurring.venue_id || form.value.venue_id
+  form.value.organization_id = recurring.organization_id || form.value.organization_id
+  form.value.category_id = recurring.category_id || ''
+  form.value.subcategory = recurring.subcategory || ''
+  form.value.amount = recurring.expected_amount ?? ''
+  form.value.description = form.value.recurring_period
+    ? `${recurring.name} (vence ${formatPeriod(form.value.recurring_period)})`
+    : recurring.name
+  if (recurring.payment_method) form.value.notes = `Medio de pago: ${recurring.payment_method}`
+  if (recurring.provider) {
+    selectedProvider.value = recurring.provider
+    form.value.provider_id = recurring.provider.id
+  }
+}
+
+const formatPeriod = (date) => {
+  if (!date) return ''
+  return new Date(date).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
 }
 
 const handleImageError = () => {
@@ -1287,7 +1351,9 @@ const saveExpense = async () => {
         }
         pendingInventoryItems.value = []
       }
-      if (route.query.accommodation_id) {
+      if (fromRecurring.value) {
+        router.push('/business/expenses?tab=recurrentes')
+      } else if (route.query.accommodation_id) {
         router.push(`/business/accommodations/${route.query.accommodation_id}`)
       } else {
         router.push('/business/expenses')
@@ -1343,6 +1409,10 @@ onMounted(async () => {
     } catch (e) {
       console.error('Error loading accommodation:', e)
     }
+  }
+
+  if (route.query.recurring_expense_id && !isEditing.value) {
+    await prefillFromRecurring()
   }
 
   await loadExpense()

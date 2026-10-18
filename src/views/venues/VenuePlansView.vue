@@ -104,6 +104,17 @@
                 <CFormTextarea v-model="form.terms_conditions" rows="3" placeholder="Ej: Los invitados se hacen responsables por todos los daños a la propiedad" />
               </CCol>
             </CRow>
+            <CRow class="mb-3">
+              <CCol :md="6">
+                <CFormLabel for="reminderDays">Recordatorios al equipo (días antes de la llegada)</CFormLabel>
+                <CFormInput id="reminderDays" v-model="form.reminder_days_before" placeholder="Ej: 7, 1" />
+                <div class="form-text">
+                  Separados por coma: "7, 1" avisa una semana antes y el día anterior; 0 = el mismo día. Vacío = sin
+                  recordatorios. Quién los recibe se configura en
+                  <RouterLink to="/business/notifications">Notificaciones</RouterLink>.
+                </div>
+              </CCol>
+            </CRow>
             <CRow>
               <CCol :md="4">
                 <CFormCheck v-model="form.is_active" label="Plan Activo" />
@@ -398,7 +409,8 @@ const defaultForm = {
   food_description: '',
   includes_beverages: false,
   terms_conditions: '',
-  is_active: true
+  is_active: true,
+  reminder_days_before: '1'
 }
 
 const form = ref({ ...defaultForm })
@@ -558,7 +570,8 @@ const editPlan = (plan) => {
     food_description: plan.food_description || '',
     includes_beverages: plan.includes_beverages || false,
     terms_conditions: plan.terms_conditions || '',
-    is_active: plan.is_active !== false
+    is_active: plan.is_active !== false,
+    reminder_days_before: (plan.reminder_days_before ?? [1]).join(', ')
   }
   selectedAmenityIds.value = plan.amenities?.map(a => a.id) || []
   planImages.value = plan.images || []

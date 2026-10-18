@@ -46,6 +46,11 @@
           <th style="cursor: pointer; user-select: none;" @click="toggleSort('balance')">
             Saldo {{ sortIcon('balance') }}
           </th>
+          <th v-if="canSeeProfit" class="d-mobile-none">
+            <span v-c-tooltip="{ content: 'Pagos verificados + depósito retenido − gastos del alquiler, comisiones de pago y comisionista', placement: 'top' }" style="cursor: help">
+              Ganancia
+            </span>
+          </th>
           <th>Acciones</th>
         </tr>
       </thead>
@@ -112,6 +117,17 @@
             </template>
             <span v-else>—</span>
           </td>
+          <td v-if="canSeeProfit" class="d-mobile-none text-nowrap">
+            <template v-if="profits[item.id]">
+              <span :class="profits[item.id].profit >= 0 ? 'text-success' : 'text-danger'">${{ formatCurrency(profits[item.id].profit) }}</span>
+              <br>
+              <small class="text-body-secondary">
+                {{ profits[item.id].margin === null ? '—' : `${formatCurrency(profits[item.id].margin)}%` }}
+                <span v-if="profits[item.id].costs.commission.status === 'estimated'" title="Incluye la comisión estimada (aún no registrada)">*</span>
+              </small>
+            </template>
+            <span v-else>—</span>
+          </td>
           <td>
             <div v-if="!item._redacted" class="d-flex gap-1 flex-nowrap">
               <CButton size="sm" color="info" variant="ghost" @click="$router.push(`/business/accommodations/${item.id}`)" title="Ver">
@@ -174,6 +190,15 @@ const sortOrder = ref('desc')
 const perPage = ref(20)
 const currentPage = ref(1)
 
+// Profit column: analytics viewers or whoever sees every booking and its payments
+// (same rule as the server; partners and commission agents never see it).
+const canSeeProfit = computed(() => {
+  if (user.value?.is_super_admin) return true
+  const perms = user.value?.profile?.permissions || []
+  return perms.includes('analytics:view') || (perms.includes('accommodations:view') && perms.includes('payments:view'))
+})
+const profits = ref({})
+
 function toggleSort(key) {
   if (sortKey.value === key) {
     sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc'
@@ -191,7 +216,9 @@ function sortIcon(key) {
 async function load() {
   const viewAll = user.value?.is_super_admin ? settingsStore.godModeViewAll : false
   accommodations.value = await fetchAccommodations({ viewAll, includeCancelled: showCancelled.value })
+  profits.value = {}
   currentPage.value = 1
+  loadProfits()
 }
 
 watch(() => [settingsStore.godModeViewAll, showCancelled.value], () => {
@@ -306,6 +333,27 @@ const visiblePages = computed(() => {
 })
 
 watch(searchQuery, () => { currentPage.value = 1 })
+
+// Profits are computed per visible page, only for the rows not loaded yet.
+async function loadProfits() {
+  if (!canSeeProfit.value) return
+  const ids = paginatedAccommodations.value.filter(a => !a._redacted && !(a.id in profits.value)).map(a => a.id)
+  if (!ids.length) return
+  try {
+    const viewAll = user.value?.is_super_admin ? settingsStore.godModeViewAll : false
+    const res = await fetch('/api/accommodations/profit', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, viewAll })
+    })
+    if (res.ok) profits.value = { ...profits.value, ...(await res.json()) }
+  } catch (error) {
+    console.error('Error loading profits:', error)
+  }
+}
+
+watch(() => paginatedAccommodations.value.map(a => a.id).join(','), loadProfits)
 
 function addDate() {
   if (dateInput.value && !selectedDates.value.includes(dateInput.value)) {

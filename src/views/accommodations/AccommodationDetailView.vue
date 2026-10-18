@@ -70,19 +70,19 @@
                 Pagos
               </CNavLink>
             </CNavItem>
-            <CNavItem>
+            <CNavItem v-if="depositsOn">
               <CNavLink href="javascript:void(0)" :active="activeTab === 2" @click="activeTab = 2">
                 Depósito
               </CNavLink>
             </CNavItem>
-            <CNavItem>
+            <CNavItem v-if="contractsOn">
               <CNavLink href="javascript:void(0)" :active="activeTab === 3" @click="activeTab = 3">
                 Contrato
               </CNavLink>
             </CNavItem>
             <CNavItem>
               <CNavLink href="javascript:void(0)" :active="activeTab === 4" @click="activeTab = 4">
-                Comisiones y Gastos
+                {{ commissionsOn ? 'Comisiones y Gastos' : 'Gastos' }}
               </CNavLink>
             </CNavItem>
             <CNavItem>
@@ -196,22 +196,11 @@
                       </div>
                     </div>
                   </div>
-                  <div class="row g-3 mt-2">
-                    <div class="col-md-6">
-                      <div class="p-3 border rounded text-center">
-                        <h6 class="text-muted mb-2">Total Egresos</h6>
-                        <p class="fs-4 fw-bold text-warning mb-0">{{ formatCurrency(totalExpenses) }}</p>
-                      </div>
-                    </div>
-                    <div class="col-md-6">
-                      <div class="p-3 border rounded text-center" :class="{ 'border-success': profit >= 0, 'border-danger': profit < 0 }">
-                        <h6 class="text-muted mb-2">Ganancia</h6>
-                        <p class="fs-4 fw-bold mb-0" :class="{ 'text-success': profit >= 0, 'text-danger': profit < 0 }">
-                          {{ formatCurrency(profit) }}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                  <BookingProfitCard
+                    class="mt-3"
+                    :accommodation-id="route.params.id"
+                    :refresh-key="profitRefreshKey"
+                  />
                 </CCol>
               </CRow>
               <hr />
@@ -242,9 +231,19 @@
             <CTabPane :visible="activeTab === 1">
               <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0">Pagos</h5>
-                <CButton color="primary" size="sm" @click="$router.push(`/business/payments/new?accommodation_id=${route.params.id}`)">
-                  Registrar Pago
-                </CButton>
+                <div class="d-flex gap-2">
+                  <CButton
+                    v-if="accommodation && !accommodation.cancelled_at && (pendingBalance >= 1000 || !deposit)"
+                    color="success"
+                    size="sm"
+                    @click="showCollect = true"
+                  >
+                    Cobrar saldo
+                  </CButton>
+                  <CButton color="primary" size="sm" @click="$router.push(`/business/payments/new?accommodation_id=${route.params.id}`)">
+                    Registrar Pago
+                  </CButton>
+                </div>
               </div>
               <CTable hover responsive v-if="payments.length > 0">
                 <CTableHead>
@@ -286,7 +285,7 @@
             </CTabPane>
 
             <!-- Tab Depósito -->
-            <CTabPane :visible="activeTab === 2">
+            <CTabPane v-if="depositsOn" :visible="activeTab === 2">
               <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0">Depósito de Garantía</h5>
                 <CButton
@@ -460,7 +459,7 @@
             </CTabPane>
 
             <!-- Tab Contrato -->
-            <CTabPane :visible="activeTab === 3">
+            <CTabPane v-if="contractsOn" :visible="activeTab === 3">
               <AccommodationContractTab
                 :accommodation-id="route.params.id"
                 :accommodation="accommodation"
@@ -469,11 +468,13 @@
 
             <!-- Tab Comisiones y Gastos -->
             <CTabPane :visible="activeTab === 4">
-              <CommissionCalculator
-                :accommodation-id="route.params.id"
-                :accommodation="accommodation"
-              />
-              <hr class="my-3" />
+              <template v-if="commissionsOn">
+                <CommissionCalculator
+                  :accommodation-id="route.params.id"
+                  :accommodation="accommodation"
+                />
+                <hr class="my-3" />
+              </template>
               <div class="d-flex justify-content-between align-items-center mb-3">
                 <h5 class="mb-0">Egresos del Evento</h5>
                 <CButton
@@ -540,6 +541,14 @@
       </CCard>
     </CCol>
   </CRow>
+
+  <CollectBalanceModal
+    :visible="showCollect"
+    :accommodation="accommodation"
+    :balance="Math.max(0, pendingBalance)"
+    :has-deposit="!!deposit"
+    @close="showCollect = false"
+  />
 
   <CModal teleport
     :visible="showRefundModal"
@@ -877,7 +886,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
@@ -886,7 +895,10 @@ import MessageSuggestions from '@/components/accommodations/MessageSuggestions.v
 import { whatsappUrl, instagramDmUrl } from '@/utils/contactLinks'
 import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
 import AccommodationContractTab from '@/components/accommodations/AccommodationContractTab.vue'
+import CollectBalanceModal from '@/components/accommodations/CollectBalanceModal.vue'
+import BookingProfitCard from '@/components/accommodations/BookingProfitCard.vue'
 import { deleteAccommodation } from '@/services/accommodationService'
+import { useModules } from '@/composables/useModules'
 
 const route = useRoute()
 const router = useRouter()
@@ -993,6 +1005,7 @@ function formatDateTimeShort(value) {
   return new Date(value).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'America/Bogota' })
 }
 const payments = ref([])
+const showCollect = ref(false)
 const showReceiptModal = ref(false)
 const selectedReceiptUrl = ref('')
 const selectedPayment = ref(null)
@@ -1001,6 +1014,19 @@ const verifying = ref(false)
 const activeTab = ref(0)
 // The open tab lives in the URL (?tab=pagos), so it can be linked and survives a reload.
 useUrlState([urlTab(activeTab, ['resumen', 'pagos', 'deposito', 'contrato', 'comisiones', 'mensajes'])])
+
+// Módulos opcionales de la organización dueña de la cabaña
+const { isEnabled } = useModules()
+const accommodationOrgId = computed(() => accommodation.value?.venue_data?.organization || null)
+const depositsOn = computed(() => isEnabled('deposits', accommodationOrgId.value))
+const contractsOn = computed(() => isEnabled('contracts', accommodationOrgId.value))
+const commissionsOn = computed(() => isEnabled('commissions', accommodationOrgId.value))
+// Un enlace viejo (?tab=contrato) a un módulo apagado abre el resumen.
+watch([activeTab, depositsOn, contractsOn], () => {
+  if ((activeTab.value === 2 && !depositsOn.value) || (activeTab.value === 3 && !contractsOn.value)) {
+    activeTab.value = 0
+  }
+}, { immediate: true })
 
 const expenses = ref([])
 const deposit = ref(null)
@@ -1177,11 +1203,13 @@ const totalExpenses = computed(() => {
   return expenses.value.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
 })
 
-// A cancelled booking only earns what was kept: paid minus refund and other expenses.
-const profit = computed(() => {
-  const income = accommodation.value?.cancelled_at ? totalPaid.value : agreedPrice.value
-  return income - totalExpenses.value
-})
+// Whatever changes the booking's numbers makes the profit card recompute.
+const profitRefreshKey = computed(() => JSON.stringify([
+  payments.value.map(p => [p.id, p.verified, p.amount]),
+  expenses.value.map(e => [e.id, e.amount]),
+  deposit.value && [deposit.value.status, deposit.value.damage_amount],
+  accommodation.value && [accommodation.value.cancelled_at, accommodation.value.no_show_at, accommodation.value.agreed_price]
+]))
 
 const hasDiscount = computed(() => {
   if (!accommodation.value) return false
@@ -1303,6 +1331,7 @@ async function loadExpenses() {
 }
 
 async function loadDeposit() {
+  if (!isEnabled('deposits')) return
   try {
     const res = await fetch(`/api/deposits?accommodation_id=${route.params.id}`, { credentials: 'include' })
     if (res.ok) {

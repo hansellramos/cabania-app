@@ -19,7 +19,7 @@
                 </option>
               </CFormSelect>
             </CCol>
-            <CCol :md="2">
+            <CCol v-if="maintenanceOn" :md="2">
               <CFormLabel class="small">Zona</CFormLabel>
               <CFormSelect v-model="filters.zone_id" size="sm" @change="loadTasks" :disabled="!filters.venue_id">
                 <option value="">Todas las zonas</option>
@@ -102,7 +102,7 @@
                 </div>
                 <div class="d-flex gap-1 ms-2 flex-shrink-0">
                   <CButton
-                    v-if="task.status === 'pending'"
+                    v-if="task.status === 'pending' && maintenanceOn"
                     color="success"
                     size="sm"
                     variant="ghost"
@@ -182,7 +182,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton,
@@ -191,8 +191,12 @@ import {
   CDropdown, CDropdownToggle, CDropdownMenu, CDropdownItem
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
+import { useModules } from '@/composables/useModules'
 
 const router = useRouter()
+// Las zonas y las órdenes de mantenimiento son del módulo Mantenimiento.
+const { isEnabled } = useModules()
+const maintenanceOn = computed(() => isEnabled('maintenance'))
 
 const tasks = ref([])
 const venues = ref([])
@@ -283,7 +287,7 @@ const loadVenues = async () => {
 }
 
 const loadZones = async () => {
-  if (!filters.value.venue_id) { zones.value = []; return }
+  if (!filters.value.venue_id || !maintenanceOn.value) { zones.value = []; return }
   try {
     const response = await fetch(`/api/maintenance-zones?venue_id=${filters.value.venue_id}`, { credentials: 'include' })
     if (response.ok) zones.value = await response.json()

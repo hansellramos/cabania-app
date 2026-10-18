@@ -6,6 +6,7 @@ import { CBadge, CSidebarNav, CNavItem, CNavGroup, CNavTitle } from '@coreui/vue
 import nav from '@/_nav.js'
 import { useSettingsStore } from '@/stores/settings.js'
 import { useAuth } from '@/composables/useAuth'
+import { isModuleEnabled } from '@/utils/modules'
 
 import simplebar from 'simplebar-vue'
 import 'simplebar-vue/dist/simplebar.min.css'
@@ -97,6 +98,14 @@ const AppSidebarNav = defineComponent({
         }
         if (skip) return false
 
+        // Módulos opcionales apagados por la organización
+        if (item.module && !isModuleEnabled(user.value, item.module)) {
+          return false
+        }
+        // Platform admin items (memberships) and the reseller view
+        if (item.superAdminOnly && !isSuperAdmin.value) return false
+        if (item.resellerOnly && !isSuperAdmin.value && user.value?.subscription?.client_type !== 'revendedor') return false
+
         // Permission check (only when user has a restricted profile)
         if (checkPerms && item.permission) {
           return userHasPermission(userPermissions.value, item.permission)
@@ -142,6 +151,7 @@ const AppSidebarNav = defineComponent({
               h(resolveComponent('CIcon'), {
                 customClassName: 'nav-icon',
                 name: item.icon,
+                key: item.icon,
               }),
               item.name,
             ],
@@ -164,6 +174,7 @@ const AppSidebarNav = defineComponent({
                 ? h(resolveComponent('CIcon'), {
                     customClassName: 'nav-icon',
                     name: item.icon,
+                    key: item.icon,
                   })
                 : h('span', { class: 'nav-icon' }, h('span', { class: 'nav-icon-bullet' })),
               item.name,
@@ -193,6 +204,7 @@ const AppSidebarNav = defineComponent({
         ? h(
             RouterLink,
             {
+              key: item.to,
               to: item.to,
               custom: true,
             },
@@ -212,6 +224,7 @@ const AppSidebarNav = defineComponent({
                         ? h(resolveComponent('CIcon'), {
                             customClassName: 'nav-icon',
                             name: item.icon,
+                            key: item.icon,
                           })
                         : h('span', { class: 'nav-icon' }, h('span', { class: 'nav-icon-bullet' })),
                       item.name,

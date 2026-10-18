@@ -121,6 +121,7 @@ import { ref, watch, computed, defineProps, defineEmits } from 'vue'
 import VenueAutocomplete from './VenueAutocomplete.vue'
 import CustomerAutocomplete from './CustomerAutocomplete.vue'
 import { useAuth } from '@/composables/useAuth'
+import { useModules } from '@/composables/useModules'
 
 const props = defineProps({
   modelValue: { type: Object, required: true },
@@ -129,6 +130,7 @@ const props = defineProps({
 const emit = defineEmits(['update:modelValue', 'submit', 'cancel'])
 
 const { user } = useAuth()
+const { isEnabled } = useModules()
 const isPartner = computed(() => user.value?.profile?.code === 'organization:partner')
 
 const form = ref({ ...props.modelValue })
@@ -195,7 +197,9 @@ async function fetchPlansForVenue(venueId) {
 }
 
 async function fetchAgentsForVenue(venueId) {
-  if (!venueId || isPartner.value) {
+  // Sin el módulo de comisiones no hay selector (la API también responde 403
+  // si la organización de esa cabaña lo apagó).
+  if (!venueId || isPartner.value || !isEnabled('commissions')) {
     venueAgents.value = []
     return
   }

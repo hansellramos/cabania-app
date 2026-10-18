@@ -102,6 +102,9 @@ model organizations {
   name        String?       @db.VarChar
   system      Boolean?      @default(false)
   created_at  DateTime      @default(now()) @db.Timestamptz(6)
+  /// Módulos opcionales apagados (claves de server/modules.json). Se guarda lo apagado
+  /// para que un módulo nuevo quede encendido por defecto en todas las organizaciones.
+  disabled_modules Json     @default("[]") @db.Json
   invitations invitations[]
 }
 
@@ -225,7 +228,33 @@ model subscriptions {
   expires_at             DateTime?            @db.Timestamptz(6)
   created_at             DateTime             @default(now()) @db.Timestamptz(6)
   updated_at             DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  /// Membership billing (managed by the platform super admin). 'cabana' or 'revendedor'.
+  client_type            String               @default("cabana") @db.VarChar(20)
+  monthly_price          Decimal?             @db.Decimal
+  /// Last day covered by payments. Null = no billing control (never expires).
+  paid_until             DateTime?            @db.Date
+  /// "<paid_until>|<days>" of the last expiry notice sent, so the daily job sends each one once.
+  expiry_notice_key      String?              @db.VarChar(40)
   subscription_users     subscription_users[]
+  payments               subscription_payments[]
+}
+
+/// Payments of a membership. Each one extends paid_until by `months`.
+model subscription_payments {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscription_id   String        @db.Uuid
+  payment_date      DateTime      @db.Date
+  amount            Decimal       @db.Decimal
+  months            Int           @default(1)
+  method            String?       @db.VarChar(50)
+  note              String?       @db.Text
+  paid_until_before DateTime?     @db.Date
+  paid_until_after  DateTime      @db.Date
+  created_by        String?       @db.VarChar(255)
+  created_at        DateTime      @default(now()) @db.Timestamptz(6)
+  subscription      subscriptions @relation(fields: [subscription_id], references: [id], onDelete: Cascade)
+
+  @@index([subscription_id, payment_date])
 }
 
 model subscription_users {
@@ -374,6 +403,8 @@ model venue_plans {
   includes_beverages      Boolean  @default(false)
   terms_conditions        String?
   is_active               Boolean  @default(true)
+  // Days before check-in when the team gets a reminder of a booking (e.g. [7, 1]).
+  reminder_days_before    Int[]    @default([1])
   created_at              DateTime @default(now()) @db.Timestamptz(6)
   venue                   venues   @relation(fields: [venue_id], references: [id], onDelete: Cascade)
 }
@@ -425,6 +456,7 @@ model expense_categories {
   is_active   Boolean    @default(true)
   created_at  DateTime   @default(now()) @db.Timestamptz(6)
   expenses    expenses[]
+  recurring_expenses recurring_expenses[]
 }
 
 model expenses {
@@ -445,9 +477,64 @@ model expenses {
   provider_id      String?                   @db.Uuid
   subcategory      String?                   @db.VarChar(100)
   accommodation_id String?                   @db.Uuid
+  // Recurring expense this one pays, and which occurrence (its due date).
+  recurring_expense_id String?               @db.Uuid
+  recurring_period     DateTime?             @db.Date
   inventory_items  expense_inventory_items[]
   category         expense_categories?       @relation(fields: [category_id], references: [id])
   provider         providers?                @relation(fields: [provider_id], references: [id])
+  recurring_expense recurring_expenses?      @relation(fields: [recurring_expense_id], references: [id], onDelete: SetNull)
+
+  @@index([recurring_expense_id, recurring_period])
+}
+
+// An expense that repeats (caretaker payroll, utilities, internet, pool...).
+// Each occurrence has a due date; it is satisfied by an expense linked to it
+// (recurring_expense_id + recurring_period) or by skipping it.
+model recurring_expenses {
+  id              String                       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String?                      @db.Uuid
+  venue_id        String                       @db.Uuid
+  name            String                       @db.VarChar(255)
+  description     String?
+  category_id     String?                      @db.Uuid
+  subcategory     String?                      @db.VarChar(100)
+  provider_id     String?                      @db.Uuid
+  expected_amount Decimal?                     @db.Decimal
+  // weekly | biweekly (days 15 and last of the month) | monthly | bimonthly | yearly
+  frequency       String                       @db.VarChar(20)
+  // Day of the month (1-31) or, for weekly, ISO weekday (1 = lunes ... 7 = domingo)
+  due_day         Int?
+  start_date      DateTime                     @db.Date
+  end_date        DateTime?                    @db.Date
+  payment_method  String?                      @db.VarChar(100)
+  is_active       Boolean                      @default(true)
+  created_by      String?                      @db.VarChar(255)
+  created_at      DateTime                     @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime?                    @db.Timestamptz(6)
+  updated_by      String?                      @db.VarChar(255)
+  category        expense_categories?          @relation(fields: [category_id], references: [id])
+  provider        providers?                   @relation(fields: [provider_id], references: [id])
+  expenses        expenses[]
+  periods         recurring_expense_periods[]
+
+  @@index([organization_id])
+  @@index([venue_id])
+}
+
+// Per-occurrence state of a recurring expense: skipped, and overdue notices sent.
+model recurring_expense_periods {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  recurring_expense_id String             @db.Uuid
+  due_date             DateTime           @db.Date
+  skipped_at           DateTime?          @db.Timestamptz(6)
+  skipped_by           String?            @db.VarChar(255)
+  last_notified_at     DateTime?          @db.Timestamptz(6)
+  notified_count       Int                @default(0)
+  created_at           DateTime           @default(now()) @db.Timestamptz(6)
+  recurring_expense    recurring_expenses @relation(fields: [recurring_expense_id], references: [id], onDelete: Cascade)
+
+  @@unique([recurring_expense_id, due_date])
 }
 
 model providers {
@@ -463,6 +550,7 @@ model providers {
   expenses           expenses[]
   maintenance_logs   maintenance_logs[]
   commission_agents  commission_agents[]
+  recurring_expenses recurring_expenses[]
 }
 
 model deposits {
@@ -940,6 +1028,42 @@ model notifications {
   @@index([user_id, created_at])
 }
 
+// Who hears about each kind of event (server/services/notifications.js) and how:
+// one row per organization and type (venue_id null), optionally overridden for
+// a venue. No row = the type's defaults.
+model notification_settings {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String    @db.Uuid
+  venue_id        String?   @db.Uuid
+  type            String    @db.VarChar(40)
+  enabled         Boolean   @default(true)
+  // { in_app: true, email: false, whatsapp: false }
+  channels        Json      @default("{}") @db.Json
+  // Users of the organization; null = the type's default (the organization's admins).
+  recipient_user_ids Json?  @db.Json
+  // Email goes to the recipients' own addresses (unless email_to_users is off)
+  // plus extra_emails. WhatsApp goes from the system number to whatsapp_phones.
+  email_to_users  Boolean   @default(true)
+  extra_emails    String?   @db.VarChar(500)
+  whatsapp_phones String?   @db.VarChar(255)
+  updated_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_by      String?   @db.VarChar(255)
+
+  @@unique([organization_id, venue_id, type])
+}
+
+// Booking reminders already sent, so the job never repeats one. booking_date
+// lets a rescheduled booking get its reminders again for the new date.
+model booking_reminders_sent {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accommodation_id String   @db.Uuid
+  booking_date     DateTime @db.Date
+  days_before      Int
+  sent_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([accommodation_id, booking_date, days_before])
+}
+
 // Audit trail of a Bold payment link: every status change, webhook, check and
 // manual action, with who or what caused it.
 model bold_payment_events {
@@ -971,6 +1095,8 @@ model bold_payment_links {
   qr_expires_at       DateTime? @db.Timestamptz(6)
   qr_status           String?   @db.VarChar(30)
   amount              Decimal   @db.Decimal
+  // Part of amount that is the security deposit (recorded in deposits, not as a payment).
+  deposit_amount      Decimal?  @db.Decimal
   description         String?   @db.Text
   status              String    @default("ACTIVE") @db.VarChar(30)
   bold_transaction_id String?   @db.VarChar(255)
