@@ -1,0 +1,37 @@
+[
+  {
+    "key": "estimates",
+    "name": "Cotizaciones",
+    "description": "Cotizaciones para clientes que luego se convierten en alquileres."
+  },
+  {
+    "key": "deposits",
+    "name": "Depósitos",
+    "description": "Depósitos de garantía por alquiler: cobro, devolución y retenciones por daños."
+  },
+  {
+    "key": "contracts",
+    "name": "Contratos",
+    "description": "Plantillas de contrato por cabaña y contratos firmados en línea por el cliente."
+  },
+  {
+    "key": "commissions",
+    "name": "Comisiones",
+    "description": "Comisionistas, cálculo de comisiones por alquiler y registro de sus pagos."
+  },
+  {
+    "key": "inventory",
+    "name": "Inventario",
+    "description": "Insumos y activos de cada cabaña, con sus movimientos y categorías."
+  },
+  {
+    "key": "maintenance",
+    "name": "Mantenimiento",
+    "description": "Tablero, registros y zonas de mantenimiento de las cabañas."
+  },
+  {
+    "key": "pending_tasks",
+    "name": "Tareas pendientes",
+    "description": "Lista de pendientes del equipo, con prioridad y fecha límite."
+  }
+]

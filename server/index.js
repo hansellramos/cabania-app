@@ -8,6 +8,7 @@ const { uploadImage, deleteImage, extractPublicId } = require('./upload-service'
 const { prisma } = require('./db');
 const { setupAuth, isAuthenticated } = require('./auth/replitAuth');
 const { getUserPermissions, loadUserPermissions, hasPermission, hasOwnOnly, hasAnyPermission, getAccessibleOrganizationIds, getAccessibleVenueIds, requirePermission } = require('./auth/permissions');
+const modules = require('./modules');
 const llmService = require('./llm-service');
 
 // WhatsApp service — proxied to external Baileys microservice via HTTP
@@ -15,6 +16,9 @@ const whatsappClient = require('./services/whatsappClient');
 const metaWhatsApp = require('./services/metaWhatsApp');
 const metaInstagram = require('./services/metaInstagram');
 const bold = require('./services/bold');
+const recurringSchedule = require('./services/recurringExpenses');
+const { createNotifier, typeCatalog, TYPES: NOTIFICATION_TYPES, CHANNELS: NOTIFICATION_CHANNELS } = require('./services/notifications');
+const membership = require('./services/membership');
 
 /**
  * Calculate the next resume time at given hour in America/Bogota timezone.
@@ -343,6 +347,8 @@ async function startServer() {
   await setupAuth(app);
   
   app.use(loadUserPermissions);
+  // Endpoints de módulos opcionales apagados por la organización → 403
+  app.use(modules.moduleGuard());
 
   // ==================== Health Check (no auth — for external monitors) ====================
   app.get('/api/health', async (req, res) => {
@@ -484,9 +490,11 @@ async function startServer() {
   app.post('/api/organizations', isAuthenticated, async (req, res) => {
     try {
       const userId = String(req.user.claims?.sub);
+      // Los módulos se cambian solo por /api/organizations/:id/modules
+      const { disabled_modules, ...data } = req.body || {};
       
       const organization = await prisma.organizations.create({
-        data: req.body
+        data
       });
       
       // Associate the creating user with the new organization
@@ -505,13 +513,90 @@ async function startServer() {
 
   app.put('/api/organizations/:id', isAuthenticated, async (req, res) => {
     try {
+      // Los módulos se cambian solo por /api/organizations/:id/modules
+      const { disabled_modules, ...data } = req.body || {};
       const organization = await prisma.organizations.update({
         where: { id: req.params.id },
-        data: req.body
+        data
       });
       res.json(organization);
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== Módulos por organización ====================
+
+  // Pueden ver los módulos quienes tienen acceso a la organización; cambiarlos,
+  // solo un super admin o un administrador de esa organización.
+  async function moduleAccess(req, orgId) {
+    const perms = req.userPermissions;
+    if (perms?.isSuperAdmin) return { canView: true, canEdit: true };
+    const accessible = await getAccessibleOrganizationIds(perms);
+    const member = (perms?.organizationIds || []).includes(orgId);
+    const canView = accessible === null || accessible.includes(orgId);
+    if (!canView) return { canView: false, canEdit: false };
+    const user = await prisma.users.findUnique({
+      where: { id: String(req.user.claims?.sub) },
+      select: { profile: { select: { code: true } } }
+    });
+    const isOrgAdmin = user?.profile?.code === 'organization:admin' || hasPermission(perms, 'organizations:edit');
+    return { canView: true, canEdit: member && isOrgAdmin };
+  }
+
+  function modulesPayload(org, canEdit) {
+    const disabled = modules.normalizeDisabled(org.disabled_modules);
+    return {
+      organization_id: org.id,
+      can_edit: canEdit,
+      modules: modules.MODULES.map(m => ({ ...m, enabled: !disabled.includes(m.key) }))
+    };
+  }
+
+  app.get('/api/organizations/:id/modules', isAuthenticated, async (req, res) => {
+    try {
+      const org = await prisma.organizations.findUnique({ where: { id: req.params.id }, select: { id: true, disabled_modules: true } });
+      if (!org) return res.status(404).json({ error: 'Organización no encontrada' });
+      const access = await moduleAccess(req, org.id);
+      if (!access.canView) return res.status(403).json({ error: 'No tiene acceso a esta organización' });
+      res.json(modulesPayload(org, access.canEdit));
+    } catch (error) {
+      console.error('Error fetching organization modules:', error);
+      res.status(500).json({ error: 'Error al obtener los módulos' });
+    }
+  });
+
+  // Body: { modules: { inventory: false, ... } } — solo las claves que cambian.
+  app.put('/api/organizations/:id/modules', isAuthenticated, async (req, res) => {
+    try {
+      const org = await prisma.organizations.findUnique({ where: { id: req.params.id }, select: { id: true, disabled_modules: true } });
+      if (!org) return res.status(404).json({ error: 'Organización no encontrada' });
+      const access = await moduleAccess(req, org.id);
+      if (!access.canEdit) {
+        return res.status(403).json({ error: 'Solo un administrador de la organización puede activar o desactivar módulos' });
+      }
+      const changes = req.body?.modules;
+      if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+        return res.status(400).json({ error: 'Envía { modules: { clave: true|false } }' });
+      }
+      const unknown = Object.keys(changes).filter(k => !modules.MODULE_KEYS.includes(k));
+      if (unknown.length) return res.status(400).json({ error: `Módulo desconocido: ${unknown.join(', ')}` });
+
+      const disabled = new Set(modules.normalizeDisabled(org.disabled_modules));
+      for (const [key, on] of Object.entries(changes)) {
+        if (on) disabled.delete(key);
+        else disabled.add(key);
+      }
+      const updated = await prisma.organizations.update({
+        where: { id: org.id },
+        data: { disabled_modules: [...disabled] },
+        select: { id: true, disabled_modules: true }
+      });
+      modules.invalidateModulesCache(org.id);
+      res.json(modulesPayload(updated, true));
+    } catch (error) {
+      console.error('Error updating organization modules:', error);
+      res.status(500).json({ error: 'Error al guardar los módulos' });
     }
   });
 
@@ -2186,8 +2271,42 @@ async function startServer() {
       if (payment_date && typeof payment_date === 'string') {
         data.payment_date = new Date(payment_date + 'T00:00:00.000Z');
       }
+
+      // The same transfer can carry the security deposit: amount is the total
+      // received; the deposit part is registered as the booking's deposit.
+      const depositAmount = Math.round(Number(req.body.deposit_amount) || 0);
+      if (depositAmount > 0) {
+        const acc = accommodation ? await prisma.accommodations.findUnique({ where: { id: accommodation } }) : null;
+        if (!acc) return res.status(400).json({ error: 'El depósito necesita un hospedaje' });
+        const deposit = await pendingDepositFor(acc, depositAmount);
+        if (!deposit) return res.status(400).json({ error: 'Este hospedaje ya tiene un depósito registrado' });
+        const rest = (data.amount || 0) - depositAmount;
+        if (rest < 0) return res.status(400).json({ error: 'El depósito no puede ser mayor que el monto recibido' });
+        const result = await prisma.$transaction(async (tx) => {
+          const payment = rest > 0 ? await tx.payments.create({ data: { ...data, amount: rest } }) : null;
+          const createdDeposit = await tx.deposits.create({
+            data: {
+              accommodation_id: acc.id,
+              venue_id: deposit.venueId,
+              organization_id: deposit.organizationId,
+              amount: depositAmount,
+              calculated_amount: deposit.calculated,
+              status: 'pending',
+              payment_method: data.payment_method,
+              payment_date: data.payment_date || new Date(),
+              reference: data.reference,
+              receipt_url: data.receipt_url,
+              notes: rest > 0 ? 'Recibido en la misma transferencia del pago del alquiler.' : null,
+              created_by: userId
+            }
+          });
+          return { payment, deposit: createdDeposit };
+        });
+        return res.json({ ...(result.payment || {}), deposit: result.deposit });
+      }
       
       const payment = await prisma.payments.create({ data });
+      notifyPayment(payment, { actorUserId: replitId });
       res.json(payment);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -2324,6 +2443,11 @@ async function startServer() {
         await prisma.incomes.deleteMany({
           where: { payment_id: paymentId }
         });
+      }
+
+      // The team hears about a payment that just became verified.
+      if (verified === true && !currentPayment.verified) {
+        notifyPayment(payment, { actorUserId: replitId });
       }
 
       // Update linked estimate and notify client via WhatsApp
@@ -3534,7 +3658,7 @@ async function startServer() {
         free_children_qty, free_children_max_age, free_children_condition, child_food_price,
         min_guests, max_capacity, check_in_time, check_out_time,
         includes_overnight, includes_rooms, includes_food, food_description, includes_beverages,
-        terms_conditions, is_active, amenity_ids
+        terms_conditions, is_active, amenity_ids, reminder_days_before
       } = req.body;
       
       const parseIntOrNull = (val) => val === '' || val === null || val === undefined ? null : parseInt(val, 10);
@@ -3561,7 +3685,8 @@ async function startServer() {
           food_description: food_description || null,
           includes_beverages: includes_beverages || false,
           terms_conditions: terms_conditions || null,
-          is_active: is_active !== false
+          is_active: is_active !== false,
+          ...(reminder_days_before !== undefined && { reminder_days_before: parseReminderDays(reminder_days_before) })
         }
       });
       
@@ -3591,7 +3716,7 @@ async function startServer() {
         free_children_qty, free_children_max_age, free_children_condition, child_food_price,
         min_guests, max_capacity, check_in_time, check_out_time,
         includes_overnight, includes_rooms, includes_food, food_description, includes_beverages,
-        terms_conditions, is_active, amenity_ids
+        terms_conditions, is_active, amenity_ids, reminder_days_before
       } = req.body;
       
       const parseIntOrNull = (val) => val === '' || val === null || val === undefined ? null : parseInt(val, 10);
@@ -3619,7 +3744,8 @@ async function startServer() {
           food_description: food_description || null,
           includes_beverages: includes_beverages || false,
           terms_conditions: terms_conditions || null,
-          is_active: is_active !== false
+          is_active: is_active !== false,
+          ...(reminder_days_before !== undefined && { reminder_days_before: parseReminderDays(reminder_days_before) })
         }
       });
       
@@ -3816,169 +3942,181 @@ async function startServer() {
     }
   });
 
-  // Availability check endpoint - returns venues with plans and their availability status
-  app.get('/api/availability', async (req, res) => {
-    try {
-      const { check_in, check_out, adults, children, amenities } = req.query;
-      
-      if (!check_in) {
-        return res.status(400).json({ error: 'check_in es requerido' });
-      }
-      
-      const checkInDate = new Date(check_in);
-      // For pasadia, check_out can be same as check_in or null
-      const checkOutDate = check_out ? new Date(check_out) : checkInDate;
-      
-      // Validate date range
-      if (checkOutDate < checkInDate) {
-        return res.status(400).json({ error: 'La fecha de salida debe ser posterior a la fecha de entrada' });
-      }
-      
-      const numAdults = parseInt(adults) || 1;
-      const numChildren = parseInt(children) || 0;
-      const totalGuests = numAdults + numChildren;
-      
-      // Parse amenity filter
-      const requiredAmenityIds = amenities ? amenities.split(',').filter(Boolean) : [];
-      
-      // Get all venues that have active plans
-      const venuesWithPlans = await prisma.venues.findMany({
-        where: {
-          venue_plans: {
-            some: {
-              is_active: true
-            }
-          }
-        },
-        include: {
-          venue_plans: {
-            where: { is_active: true },
-            orderBy: { name: 'asc' }
+  /**
+   * Venues with active plans and whether they are free for the dates/guests in
+   * `query` (check_in, check_out, adults, children, amenities). `onlyVenueIds`
+   * limits the search to those venues (null = all). Throws { status: 400 } on
+   * invalid dates.
+   */
+  async function buildAvailability(query, onlyVenueIds = null) {
+    const { check_in, check_out, adults, children, amenities } = query;
+    
+    if (!check_in) {
+      throw Object.assign(new Error('check_in es requerido'), { status: 400 });
+    }
+    
+    const checkInDate = new Date(check_in);
+    // For pasadia, check_out can be same as check_in or null
+    const checkOutDate = check_out ? new Date(check_out) : checkInDate;
+    
+    // Validate date range
+    if (checkOutDate < checkInDate) {
+      throw Object.assign(new Error('La fecha de salida debe ser posterior a la fecha de entrada'), { status: 400 });
+    }
+    
+    const numAdults = parseInt(adults) || 1;
+    const numChildren = parseInt(children) || 0;
+    const totalGuests = numAdults + numChildren;
+    
+    // Parse amenity filter
+    const requiredAmenityIds = amenities ? amenities.split(',').filter(Boolean) : [];
+    
+    // Get all venues that have active plans
+    const venuesWithPlans = await prisma.venues.findMany({
+      where: {
+        ...(onlyVenueIds && { id: { in: onlyVenueIds } }),
+        venue_plans: {
+          some: {
+            is_active: true
           }
         }
-      });
-      
-      // Get organization data for each venue
-      const orgIds = [...new Set(venuesWithPlans.filter(v => v.organization).map(v => v.organization))];
-      const organizations = orgIds.length > 0 ? await prisma.organizations.findMany({
-        where: { id: { in: orgIds } }
-      }) : [];
-      const orgMap = {};
-      organizations.forEach(o => { orgMap[o.id] = o; });
-      
-      // Get venue amenities for all venues
-      const venueIds = venuesWithPlans.map(v => v.id);
-      const venueAmenities = await prisma.venue_amenities.findMany({
-        where: { venue_id: { in: venueIds } }
-      });
-      const allAmenityIds = [...new Set(venueAmenities.map(va => va.amenity_id))];
-      const amenitiesData = allAmenityIds.length > 0 ? await prisma.amenities.findMany({
-        where: { id: { in: allAmenityIds } }
-      }) : [];
-      const amenityMap = {};
-      amenitiesData.forEach(a => { amenityMap[a.id] = a; });
-      
-      // Build venue amenities map
-      const venueAmenitiesMap = {};
-      venueAmenities.forEach(va => {
-        if (!venueAmenitiesMap[va.venue_id]) {
-          venueAmenitiesMap[va.venue_id] = [];
+      },
+      include: {
+        venue_plans: {
+          where: { is_active: true },
+          orderBy: { name: 'asc' }
         }
-        if (amenityMap[va.amenity_id]) {
-          venueAmenitiesMap[va.venue_id].push(amenityMap[va.amenity_id]);
-        }
-      });
+      }
+    });
+    
+    // Get organization data for each venue
+    const orgIds = [...new Set(venuesWithPlans.filter(v => v.organization).map(v => v.organization))];
+    const organizations = orgIds.length > 0 ? await prisma.organizations.findMany({
+      where: { id: { in: orgIds } }
+    }) : [];
+    const orgMap = {};
+    organizations.forEach(o => { orgMap[o.id] = o; });
+    
+    // Get venue amenities for all venues
+    const venueIds = venuesWithPlans.map(v => v.id);
+    const venueAmenities = await prisma.venue_amenities.findMany({
+      where: { venue_id: { in: venueIds } }
+    });
+    const allAmenityIds = [...new Set(venueAmenities.map(va => va.amenity_id))];
+    const amenitiesData = allAmenityIds.length > 0 ? await prisma.amenities.findMany({
+      where: { id: { in: allAmenityIds } }
+    }) : [];
+    const amenityMap = {};
+    amenitiesData.forEach(a => { amenityMap[a.id] = a; });
+    
+    // Build venue amenities map
+    const venueAmenitiesMap = {};
+    venueAmenities.forEach(va => {
+      if (!venueAmenitiesMap[va.venue_id]) {
+        venueAmenitiesMap[va.venue_id] = [];
+      }
+      if (amenityMap[va.amenity_id]) {
+        venueAmenitiesMap[va.venue_id].push(amenityMap[va.amenity_id]);
+      }
+    });
+    
+    // Check for existing accommodations in the date range for each venue
+    
+    // Get all accommodations for these venues
+    const existingAccommodations = await prisma.accommodations.findMany({
+      where: {
+        venue: { in: venueIds },
+        cancelled_at: null
+      }
+    });
+    
+    // Calculate accommodation end dates and check for overlaps
+    const busyVenueIds = new Set();
+    existingAccommodations.forEach(acc => {
+      const accDate = new Date(acc.date);
+      // Duration is stored in seconds, default to 12 hours (pasadia) if missing
+      const durationSeconds = parseInt(acc.duration) || 43200;
+      const accEndDate = new Date(accDate.getTime() + durationSeconds * 1000);
       
-      // Check for existing accommodations in the date range for each venue
+      // Normalize dates to day boundaries for comparison
+      const accStartDay = new Date(accDate.getUTCFullYear(), accDate.getUTCMonth(), accDate.getUTCDate());
+      const accEndDay = new Date(accEndDate.getUTCFullYear(), accEndDate.getUTCMonth(), accEndDate.getUTCDate());
+      const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
+      const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
       
-      // Get all accommodations for these venues
-      const existingAccommodations = await prisma.accommodations.findMany({
-        where: {
-          venue: { in: venueIds },
-          cancelled_at: null
-        }
-      });
+      // Check if this accommodation overlaps with requested dates
+      // Overlap condition: accStart <= checkOut AND accEnd >= checkIn
+      if (accStartDay <= checkOutDay && accEndDay >= checkInDay) {
+        busyVenueIds.add(acc.venue);
+      }
+    });
+    
+    // Build result with availability info
+    let result = venuesWithPlans.map(venue => {
+      const plans = venue.venue_plans || [];
+      const venueAmenityList = venueAmenitiesMap[venue.id] || [];
       
-      // Calculate accommodation end dates and check for overlaps
-      const busyVenueIds = new Set();
-      existingAccommodations.forEach(acc => {
-        const accDate = new Date(acc.date);
-        // Duration is stored in seconds, default to 12 hours (pasadia) if missing
-        const durationSeconds = parseInt(acc.duration) || 43200;
-        const accEndDate = new Date(accDate.getTime() + durationSeconds * 1000);
-        
-        // Normalize dates to day boundaries for comparison
-        const accStartDay = new Date(accDate.getUTCFullYear(), accDate.getUTCMonth(), accDate.getUTCDate());
-        const accEndDay = new Date(accEndDate.getUTCFullYear(), accEndDate.getUTCMonth(), accEndDate.getUTCDate());
-        const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
-        const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
-        
-        // Check if this accommodation overlaps with requested dates
-        // Overlap condition: accStart <= checkOut AND accEnd >= checkIn
-        if (accStartDay <= checkOutDay && accEndDay >= checkInDay) {
-          busyVenueIds.add(acc.venue);
-        }
-      });
-      
-      // Build result with availability info
-      let result = venuesWithPlans.map(venue => {
-        const plans = venue.venue_plans || [];
-        const venueAmenityList = venueAmenitiesMap[venue.id] || [];
-        
-        // Check each plan for guest suitability
-        const plansWithSuitability = plans.map(p => {
-          const planMin = p.min_guests || 1;
-          const planMax = p.max_capacity || 999;
-          const isSuitable = totalGuests >= planMin && totalGuests <= planMax;
-          return {
-            id: p.id,
-            name: p.name,
-            plan_type: p.plan_type,
-            adult_price: p.adult_price,
-            child_price: p.child_price,
-            min_guests: p.min_guests,
-            max_capacity: p.max_capacity,
-            is_suitable: isSuitable
-          };
-        });
-        
-        // Venue has a matching plan if at least one plan is suitable
-        const hasMatchingPlan = plansWithSuitability.some(p => p.is_suitable);
-        const minGuests = Math.min(...plans.map(p => p.min_guests || 1));
-        const maxCapacity = Math.max(...plans.map(p => p.max_capacity || 999));
-        
+      // Check each plan for guest suitability
+      const plansWithSuitability = plans.map(p => {
+        const planMin = p.min_guests || 1;
+        const planMax = p.max_capacity || 999;
+        const isSuitable = totalGuests >= planMin && totalGuests <= planMax;
         return {
-          id: venue.id,
-          name: venue.name,
-          organization: venue.organization,
-          organization_name: orgMap[venue.organization]?.name || null,
-          is_available: !busyVenueIds.has(venue.id),
-          has_matching_plan: hasMatchingPlan,
-          min_guests: minGuests,
-          max_capacity: maxCapacity === 999 ? null : maxCapacity,
-          plans_count: plans.length,
-          plans: plansWithSuitability,
-          amenities: venueAmenityList
+          id: p.id,
+          name: p.name,
+          plan_type: p.plan_type,
+          adult_price: p.adult_price,
+          child_price: p.child_price,
+          min_guests: p.min_guests,
+          max_capacity: p.max_capacity,
+          is_suitable: isSuitable
         };
       });
       
-      // Filter by required amenities
-      if (requiredAmenityIds.length > 0) {
-        result = result.filter(venue => {
-          const venueAmenityIdSet = new Set(venue.amenities.map(a => a.id));
-          return requiredAmenityIds.every(reqId => venueAmenityIdSet.has(reqId));
-        });
-      }
+      // Venue has a matching plan if at least one plan is suitable
+      const hasMatchingPlan = plansWithSuitability.some(p => p.is_suitable);
+      const minGuests = Math.min(...plans.map(p => p.min_guests || 1));
+      const maxCapacity = Math.max(...plans.map(p => p.max_capacity || 999));
       
-      // Sort: available first, then has matching plan, then by name
-      result.sort((a, b) => {
-        if (a.is_available !== b.is_available) return b.is_available - a.is_available;
-        if (a.has_matching_plan !== b.has_matching_plan) return b.has_matching_plan - a.has_matching_plan;
-        return a.name.localeCompare(b.name);
+      return {
+        id: venue.id,
+        name: venue.name,
+        organization: venue.organization,
+        organization_name: orgMap[venue.organization]?.name || null,
+        is_available: !busyVenueIds.has(venue.id),
+        has_matching_plan: hasMatchingPlan,
+        min_guests: minGuests,
+        max_capacity: maxCapacity === 999 ? null : maxCapacity,
+        plans_count: plans.length,
+        plans: plansWithSuitability,
+        amenities: venueAmenityList
+      };
+    });
+    
+    // Filter by required amenities
+    if (requiredAmenityIds.length > 0) {
+      result = result.filter(venue => {
+        const venueAmenityIdSet = new Set(venue.amenities.map(a => a.id));
+        return requiredAmenityIds.every(reqId => venueAmenityIdSet.has(reqId));
       });
-      
-      res.json(result);
+    }
+    
+    // Sort: available first, then has matching plan, then by name
+    result.sort((a, b) => {
+      if (a.is_available !== b.is_available) return b.is_available - a.is_available;
+      if (a.has_matching_plan !== b.has_matching_plan) return b.has_matching_plan - a.has_matching_plan;
+      return a.name.localeCompare(b.name);
+    });
+    
+    return result;
+  }
+
+  // Availability check endpoint - returns venues with plans and their availability status
+  app.get('/api/availability', async (req, res) => {
+    try {
+      res.json(await buildAvailability(req.query));
     } catch (error) {
+      if (error.status === 400) return res.status(400).json({ error: error.message });
       console.error('Availability error:', error);
       res.status(500).json({ error: error.message });
     }
@@ -4274,6 +4412,349 @@ async function startServer() {
     }
   });
 
+  // =====================
+  // MEMBERSHIPS (platform billing, super admin only)
+  // =====================
+
+  const MEMBERSHIP_CLIENT_TYPES = ['cabana', 'revendedor'];
+
+  async function requireSuperAdmin(req, res) {
+    const userId = String(req.user.claims?.sub);
+    const currentUser = await prisma.users.findUnique({ where: { id: userId }, select: { is_super_admin: true } });
+    if (!currentUser?.is_super_admin) {
+      res.status(403).json({ error: 'Solo el administrador de la plataforma puede gestionar membresías' });
+      return null;
+    }
+    return userId;
+  }
+
+  /** A @db.Date value from 'YYYY-MM-DD' (or null). */
+  function dateOnly(value) {
+    return value ? new Date(String(value).slice(0, 10) + 'T00:00:00.000Z') : null;
+  }
+
+  /** Memberships with owner, status and the organizations/venues their users manage. */
+  async function listMemberships(where = {}) {
+    const subs = await prisma.subscriptions.findMany({
+      where,
+      include: {
+        subscription_users: true,
+        payments: { orderBy: [{ payment_date: 'desc' }, { created_at: 'desc' }], take: 1 }
+      },
+      orderBy: { created_at: 'desc' }
+    });
+    const userIds = [...new Set(subs.flatMap(s => s.subscription_users.map(su => su.user_id)))];
+    const [users, userOrgs] = await Promise.all([
+      prisma.users.findMany({ where: { id: { in: userIds } }, select: { id: true, email: true, display_name: true } }),
+      prisma.user_organizations.findMany({ where: { user_id: { in: userIds } } })
+    ]);
+    const orgIds = [...new Set(userOrgs.map(uo => uo.organization_id))];
+    const venues = orgIds.length
+      ? await prisma.venues.findMany({ where: { organization: { in: orgIds } }, select: { id: true, organization: true } })
+      : [];
+    const usersMap = Object.fromEntries(users.map(u => [u.id, u]));
+
+    return subs.map(sub => {
+      const memberIds = sub.subscription_users.map(su => su.user_id);
+      const ownerSu = sub.subscription_users.find(su => su.is_owner) || null;
+      const subOrgIds = new Set(userOrgs.filter(uo => memberIds.includes(uo.user_id)).map(uo => uo.organization_id));
+      const status = membership.membershipStatus(sub.paid_until);
+      const { subscription_users, payments, ...rest } = sub;
+      return {
+        ...rest,
+        paid_until: status.paid_until,
+        status: status.status,
+        days_left: status.days_left,
+        owner: ownerSu ? (usersMap[ownerSu.user_id] || { id: ownerSu.user_id }) : null,
+        users_count: memberIds.length,
+        organizations_count: subOrgIds.size,
+        venues_count: venues.filter(v => subOrgIds.has(v.organization)).length,
+        last_payment: payments[0] || null
+      };
+    });
+  }
+
+  app.get('/api/admin/memberships', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await requireSuperAdmin(req, res))) return;
+      res.json(await listMemberships());
+    } catch (error) {
+      console.error('Memberships error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/memberships', isAuthenticated, async (req, res) => {
+    try {
+      const adminId = await requireSuperAdmin(req, res);
+      if (!adminId) return;
+      const { name, client_type, monthly_price, owner_email, paid_until, max_users, max_organizations, description } = req.body;
+      if (!name) return res.status(400).json({ error: 'El nombre es requerido' });
+      if (client_type && !MEMBERSHIP_CLIENT_TYPES.includes(client_type)) {
+        return res.status(400).json({ error: 'Tipo de cliente inválido' });
+      }
+
+      let owner = null;
+      if (owner_email) {
+        owner = await prisma.users.findFirst({ where: { email: { equals: String(owner_email).trim(), mode: 'insensitive' } } });
+        if (!owner) return res.status(400).json({ error: 'No existe un usuario con ese correo' });
+      }
+
+      const sub = await prisma.subscriptions.create({
+        data: {
+          name,
+          description: description || null,
+          plan_type: 'paid',
+          client_type: client_type || 'cabana',
+          monthly_price: monthly_price === '' || monthly_price == null ? null : Number(monthly_price),
+          paid_until: dateOnly(paid_until),
+          max_users: parseInt(max_users, 10) || 5,
+          max_organizations: parseInt(max_organizations, 10) || (client_type === 'revendedor' ? 20 : 1),
+          is_active: true
+        }
+      });
+      if (owner) {
+        await prisma.subscription_users.create({
+          data: { subscription_id: sub.id, user_id: owner.id, role: 'owner', is_owner: true, added_by: adminId }
+        });
+      }
+      res.json((await listMemberships({ id: sub.id }))[0]);
+    } catch (error) {
+      console.error('Create membership error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Billing data of an existing subscription (also turns old subscriptions into memberships).
+  app.put('/api/admin/memberships/:id', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await requireSuperAdmin(req, res))) return;
+      const { name, client_type, monthly_price, paid_until, is_active } = req.body;
+      if (client_type !== undefined && !MEMBERSHIP_CLIENT_TYPES.includes(client_type)) {
+        return res.status(400).json({ error: 'Tipo de cliente inválido' });
+      }
+      const data = {};
+      if (name !== undefined) data.name = name;
+      if (client_type !== undefined) data.client_type = client_type;
+      if (monthly_price !== undefined) data.monthly_price = monthly_price === '' || monthly_price === null ? null : Number(monthly_price);
+      if (paid_until !== undefined) data.paid_until = dateOnly(paid_until);
+      if (is_active !== undefined) data.is_active = !!is_active;
+      await prisma.subscriptions.update({ where: { id: req.params.id }, data });
+      res.json((await listMemberships({ id: req.params.id }))[0]);
+    } catch (error) {
+      console.error('Update membership error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/memberships/:id/payments', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await requireSuperAdmin(req, res))) return;
+      const payments = await prisma.subscription_payments.findMany({
+        where: { subscription_id: req.params.id },
+        orderBy: [{ payment_date: 'desc' }, { created_at: 'desc' }]
+      });
+      res.json(payments);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Register a payment: extends paid_until by `months` from max(paid_until, payment date).
+  app.post('/api/admin/memberships/:id/payments', isAuthenticated, async (req, res) => {
+    try {
+      const adminId = await requireSuperAdmin(req, res);
+      if (!adminId) return;
+      const { payment_date, amount, months, method, note } = req.body;
+      const paymentDate = payment_date ? String(payment_date).slice(0, 10) : membership.todayBogota();
+      const monthsNum = parseInt(months, 10);
+      const amountNum = Number(amount);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) return res.status(400).json({ error: 'Fecha de pago inválida' });
+      if (!monthsNum || monthsNum < 1 || monthsNum > 36) return res.status(400).json({ error: 'Los meses deben estar entre 1 y 36' });
+      if (!(amountNum >= 0)) return res.status(400).json({ error: 'Monto inválido' });
+
+      const payment = await prisma.$transaction(async (tx) => {
+        const sub = await tx.subscriptions.findUnique({ where: { id: req.params.id } });
+        if (!sub) throw Object.assign(new Error('Membresía no encontrada'), { status: 404 });
+        const newPaidUntil = membership.extendPaidUntil(sub.paid_until, paymentDate, monthsNum);
+        await tx.subscriptions.update({
+          where: { id: sub.id },
+          data: { paid_until: dateOnly(newPaidUntil), is_active: true }
+        });
+        return tx.subscription_payments.create({
+          data: {
+            subscription_id: sub.id,
+            payment_date: dateOnly(paymentDate),
+            amount: amountNum,
+            months: monthsNum,
+            method: method || null,
+            note: note || null,
+            paid_until_before: sub.paid_until,
+            paid_until_after: dateOnly(newPaidUntil),
+            created_by: adminId
+          }
+        });
+      });
+      res.json({ payment, membership: (await listMemberships({ id: req.params.id }))[0] });
+    } catch (error) {
+      if (error.status === 404) return res.status(404).json({ error: error.message });
+      console.error('Membership payment error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Undo the latest payment only (restores the paid_until it had before).
+  app.delete('/api/admin/memberships/:id/payments/:paymentId', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await requireSuperAdmin(req, res))) return;
+      const latest = await prisma.subscription_payments.findFirst({
+        where: { subscription_id: req.params.id },
+        orderBy: { created_at: 'desc' }
+      });
+      if (!latest || latest.id !== req.params.paymentId) {
+        return res.status(400).json({ error: 'Solo se puede anular el último pago registrado' });
+      }
+      await prisma.$transaction([
+        prisma.subscriptions.update({ where: { id: req.params.id }, data: { paid_until: latest.paid_until_before } }),
+        prisma.subscription_payments.delete({ where: { id: latest.id } })
+      ]);
+      res.json((await listMemberships({ id: req.params.id }))[0]);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * Daily: in-app notice to membership owners 7 and 1 days before paid_until
+   * and when it expires. expiry_notice_key makes each notice go out once.
+   */
+  async function sendMembershipExpiryNotices() {
+    const subs = await prisma.subscriptions.findMany({
+      where: { paid_until: { not: null } },
+      include: { subscription_users: { where: { is_owner: true } } }
+    });
+    for (const sub of subs) {
+      const notice = membership.dueNotice(sub.paid_until);
+      if (!notice || notice.key === sub.expiry_notice_key) continue;
+      // Claim first so a concurrent run (or a restart) does not send it twice.
+      const claimed = await prisma.subscriptions.updateMany({
+        where: { id: sub.id, OR: [{ expiry_notice_key: null }, { expiry_notice_key: { not: notice.key } }] },
+        data: { expiry_notice_key: notice.key }
+      });
+      if (claimed.count === 0 || !sub.subscription_users.length) continue;
+
+      const paidUntil = membership.toDateStr(sub.paid_until);
+      let title;
+      if (notice.daysLeft < 0) title = 'Tu membresía de CabanIA está vencida';
+      else if (notice.daysLeft === 0) title = 'Tu membresía de CabanIA vence hoy';
+      else if (notice.daysLeft === 1) title = 'Tu membresía de CabanIA vence mañana';
+      else title = `Tu membresía de CabanIA vence en ${notice.daysLeft} días`;
+      const body = notice.daysLeft < 0
+        ? `La membresía "${sub.name}" estaba pagada hasta el ${paidUntil}. Renuévala para seguir usando la aplicación.`
+        : `La membresía "${sub.name}" está pagada hasta el ${paidUntil}. Renuévala para no perder el acceso.`;
+      await prisma.notifications.createMany({
+        data: sub.subscription_users.map(su => ({
+          user_id: su.user_id,
+          type: 'membership_expiry',
+          title,
+          body,
+          link: '/profile'
+        }))
+      });
+      console.log('[membership] Expiry notice sent', { subscription: sub.id, key: notice.key });
+    }
+  }
+
+  // =====================
+  // RESELLER ("Mis cabañas")
+  // =====================
+
+  /**
+   * Venues a reseller can sell: those of their own organizations plus those
+   * where they are the linked commission agent (agent.venue_id, or every venue
+   * of agent.organization_id when the agent is not tied to one venue).
+   * Each venue carries `source` ('propia' | 'comisionista') and the agent rules.
+   */
+  async function getResellerVenues(userId) {
+    const [userOrgs, agents] = await Promise.all([
+      prisma.user_organizations.findMany({ where: { user_id: userId }, select: { organization_id: true } }),
+      prisma.commission_agents.findMany({
+        where: { user_id: userId, is_active: true },
+        include: { rules: { orderBy: [{ plan_type: 'asc' }, { sort_order: 'asc' }] } }
+      })
+    ]);
+    const ownOrgIds = userOrgs.map(uo => uo.organization_id);
+    const agentVenueIds = agents.filter(a => a.venue_id).map(a => a.venue_id);
+    const agentOrgIds = agents.filter(a => !a.venue_id && a.organization_id).map(a => a.organization_id);
+
+    const venues = await prisma.venues.findMany({
+      where: {
+        OR: [
+          { organization: { in: [...ownOrgIds, ...agentOrgIds] } },
+          { id: { in: agentVenueIds } }
+        ]
+      },
+      select: { id: true, name: true, organization: true, slug: true },
+      orderBy: { name: 'asc' }
+    });
+    const orgIds = [...new Set(venues.map(v => v.organization).filter(Boolean))];
+    const orgs = orgIds.length ? await prisma.organizations.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } }) : [];
+    const orgMap = Object.fromEntries(orgs.map(o => [o.id, o.name]));
+
+    return venues.map(v => {
+      const agent = agents.find(a => a.venue_id === v.id) || agents.find(a => !a.venue_id && a.organization_id === v.organization) || null;
+      return {
+        ...v,
+        organization_name: orgMap[v.organization] || null,
+        source: agent ? 'comisionista' : 'propia',
+        agent: agent ? {
+          id: agent.id,
+          name: agent.name,
+          rules: agent.rules.map(r => ({
+            plan_type: r.plan_type, min_adults: r.min_adults, max_adults: r.max_adults, rate_percent: r.rate_percent
+          }))
+        } : null
+      };
+    });
+  }
+
+  /** Reseller membership, active commission-agent links or super admin. */
+  async function canUseResellerView(userId) {
+    const [user, resellerSub, agentCount] = await Promise.all([
+      prisma.users.findUnique({ where: { id: userId }, select: { is_super_admin: true } }),
+      prisma.subscription_users.findFirst({ where: { user_id: userId, subscription: { client_type: 'revendedor' } } }),
+      prisma.commission_agents.count({ where: { user_id: userId, is_active: true } })
+    ]);
+    return !!(user?.is_super_admin || resellerSub || agentCount > 0);
+  }
+
+  app.get('/api/reseller/venues', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      if (!(await canUseResellerView(userId))) return res.status(403).json({ error: 'Esta vista es para cuentas de revendedor' });
+      res.json(await getResellerVenues(userId));
+    } catch (error) {
+      console.error('Reseller venues error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Combined availability across the reseller's venues (same rules as /api/availability).
+  app.get('/api/reseller/availability', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      if (!(await canUseResellerView(userId))) return res.status(403).json({ error: 'Esta vista es para cuentas de revendedor' });
+      const venues = await getResellerVenues(userId);
+      const venueMap = Object.fromEntries(venues.map(v => [v.id, v]));
+      const result = await buildAvailability(req.query, venues.map(v => v.id));
+      res.json(result.map(r => ({ ...r, source: venueMap[r.id]?.source, agent: venueMap[r.id]?.agent || null })));
+    } catch (error) {
+      if (error.status === 400) return res.status(400).json({ error: error.message });
+      console.error('Reseller availability error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // Expense Categories API
   app.get('/api/expense-categories', async (req, res) => {
     try {
@@ -4493,11 +4974,13 @@ async function startServer() {
       
       const data = { ...req.body };
       // Convert empty strings to null for optional fields
-      for (const key of ['accommodation_id', 'subcategory', 'notes', 'provider_id', 'receipt_url', 'reference']) {
+      for (const key of ['accommodation_id', 'subcategory', 'notes', 'provider_id', 'receipt_url', 'reference', 'recurring_expense_id', 'recurring_period']) {
         if (data[key] === '') data[key] = null;
       }
       data.expense_date = new Date(data.expense_date);
       data.created_by = userId;
+      const recurringError = await applyRecurringLink(data);
+      if (recurringError) return res.status(400).json({ error: recurringError });
 
       const expense = await prisma.expenses.create({ data });
       res.json(expense);
@@ -4526,11 +5009,15 @@ async function startServer() {
       
       const updateData = { ...req.body, updated_at: new Date(), updated_by: userId };
       // Convert empty strings to null for optional fields
-      for (const key of ['accommodation_id', 'subcategory', 'notes', 'provider_id', 'receipt_url', 'reference']) {
+      for (const key of ['accommodation_id', 'subcategory', 'notes', 'provider_id', 'receipt_url', 'reference', 'recurring_expense_id', 'recurring_period']) {
         if (updateData[key] === '') updateData[key] = null;
       }
       if (req.body.expense_date) {
         updateData.expense_date = new Date(req.body.expense_date);
+      }
+      if ('recurring_expense_id' in updateData) {
+        const recurringError = await applyRecurringLink(updateData, existing);
+        if (recurringError) return res.status(400).json({ error: recurringError });
       }
       const expense = await prisma.expenses.update({
         where: { id: req.params.id },
@@ -4562,6 +5049,294 @@ async function startServer() {
       
       await prisma.expenses.delete({
         where: { id: req.params.id }
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== Recurring expenses ====================
+  // Expenses that repeat (caretaker payroll, utilities, internet...). The schedule
+  // math lives in services/recurringExpenses.js; an occurrence is covered by an
+  // expense linked to it or by skipping it (recurring_expense_periods).
+
+  /**
+   * Validate an expense's link to a recurring expense and fill recurring_period
+   * when missing (the due date closest to the expense date). Returns an error
+   * message, or null.
+   */
+  async function applyRecurringLink(data, existing = null) {
+    if (!data.recurring_expense_id) {
+      data.recurring_expense_id = null;
+      data.recurring_period = null;
+      return null;
+    }
+    const def = await prisma.recurring_expenses.findUnique({ where: { id: data.recurring_expense_id } });
+    if (!def) return 'Gasto recurrente no encontrado';
+    const orgId = data.organization_id || existing?.organization_id;
+    if (def.organization_id && orgId && def.organization_id !== orgId) {
+      return 'El gasto recurrente es de otra organización';
+    }
+    const expenseDate = recurringSchedule.isoDate(data.expense_date || existing?.expense_date) || bogotaNow().date;
+    const period = data.recurring_period
+      ? recurringSchedule.isoDate(data.recurring_period)
+      : recurringSchedule.closestOccurrence(def, expenseDate);
+    data.recurring_period = period ? new Date(period) : null;
+    return null;
+  }
+
+  /** Organizations whose recurring expenses the user can see (null = all), as in GET /api/expenses. */
+  async function recurringExpenseOrgIds(req) {
+    const userId = String(req.user.claims?.sub);
+    const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+    if (currentUser?.is_super_admin) {
+      if (req.query.viewAll === 'true') return null;
+      const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+      return userOrgs.map(uo => uo.organization_id);
+    }
+    // Users who only see expenses of their own bookings don't manage recurring ones.
+    if (hasOwnOnly(req.userPermissions, 'deposits:view')) return [];
+    return await getAccessibleOrganizationIds(req.userPermissions);
+  }
+
+  /** Whether the user can manage records of this organization, as in PUT /api/expenses/:id. */
+  async function canManageRecurringOrg(req, organizationId) {
+    const userId = String(req.user.claims?.sub);
+    const currentUser = await prisma.users.findUnique({ where: { id: userId } });
+    if (currentUser?.is_super_admin) return true;
+    if (hasOwnOnly(req.userPermissions, 'deposits:view')) return false;
+    const accessibleOrgIds = await getAccessibleOrganizationIds(req.userPermissions);
+    return accessibleOrgIds === null || !organizationId || accessibleOrgIds.includes(organizationId);
+  }
+
+  /** Clean and validate a recurring expense from the request body. Returns { data } or { error }. */
+  async function recurringExpenseData(body, { partial = false } = {}) {
+    const data = {};
+    const has = (key) => body[key] !== undefined;
+    const text = (v) => (v === null || v === undefined || String(v).trim() === '') ? null : String(v).trim();
+
+    if (!partial || has('venue_id')) {
+      const venue = body.venue_id ? await prisma.venues.findUnique({ where: { id: body.venue_id }, select: { id: true, organization: true } }) : null;
+      if (!venue) return { error: 'Seleccione una sede' };
+      data.venue_id = venue.id;
+      data.organization_id = venue.organization || null;
+    }
+    if (!partial || has('name')) {
+      data.name = text(body.name);
+      if (!data.name) return { error: 'El nombre es obligatorio' };
+    }
+    if (!partial || has('frequency')) {
+      if (!recurringSchedule.FREQUENCIES.includes(body.frequency)) return { error: 'Frecuencia inválida' };
+      data.frequency = body.frequency;
+    }
+    if (!partial || has('start_date')) {
+      if (!/^\d{4}-\d{2}-\d{2}/.test(String(body.start_date || ''))) return { error: 'La fecha de inicio es obligatoria' };
+      data.start_date = new Date(String(body.start_date).slice(0, 10));
+    }
+    if (has('end_date')) {
+      data.end_date = body.end_date ? new Date(String(body.end_date).slice(0, 10)) : null;
+    }
+    if (data.start_date && data.end_date && data.end_date < data.start_date) {
+      return { error: 'La fecha de fin no puede ser anterior a la de inicio' };
+    }
+    if (has('due_day')) {
+      const day = body.due_day === '' || body.due_day === null ? null : parseInt(body.due_day, 10);
+      const max = (data.frequency || body.frequency) === 'weekly' ? 7 : 31;
+      if (day !== null && (!Number.isInteger(day) || day < 1 || day > max)) return { error: 'Día de pago inválido' };
+      data.due_day = day;
+    }
+    if (has('expected_amount')) {
+      const amount = body.expected_amount === '' || body.expected_amount === null ? null : Number(body.expected_amount);
+      if (amount !== null && (!Number.isFinite(amount) || amount < 0)) return { error: 'Monto inválido' };
+      data.expected_amount = amount;
+    }
+    for (const key of ['description', 'subcategory', 'payment_method', 'category_id', 'provider_id']) {
+      if (has(key)) data[key] = text(body[key]);
+    }
+    if (has('is_active')) data.is_active = Boolean(body.is_active);
+    return { data };
+  }
+
+  /** Add schedule status (next due date, overdue periods...) and venue to recurring expenses. */
+  async function withRecurringStatus(defs, today) {
+    const ids = defs.map(d => d.id);
+    const venueIds = [...new Set(defs.map(d => d.venue_id).filter(Boolean))];
+    const [expenses, skips, venues] = ids.length ? await Promise.all([
+      prisma.expenses.findMany({
+        where: { recurring_expense_id: { in: ids } },
+        select: { id: true, recurring_expense_id: true, recurring_period: true, amount: true, expense_date: true },
+        orderBy: { expense_date: 'desc' }
+      }),
+      prisma.recurring_expense_periods.findMany({
+        where: { recurring_expense_id: { in: ids }, skipped_at: { not: null } },
+        select: { recurring_expense_id: true, due_date: true }
+      }),
+      prisma.venues.findMany({ where: { id: { in: venueIds } }, select: { id: true, name: true } })
+    ]) : [[], [], []];
+    const venuesMap = Object.fromEntries(venues.map(v => [v.id, v]));
+
+    return defs.map(def => {
+      const own = expenses.filter(e => e.recurring_expense_id === def.id);
+      const paid = new Set(own.map(e => recurringSchedule.isoDate(e.recurring_period)).filter(Boolean));
+      const skipped = new Set(skips.filter(s => s.recurring_expense_id === def.id).map(s => recurringSchedule.isoDate(s.due_date)));
+      return {
+        ...def,
+        ...recurringSchedule.periodStatus(def, today, paid, skipped),
+        skipped_periods: [...skipped].sort(),
+        last_expense: own[0] || null,
+        venue_data: venuesMap[def.venue_id] || null
+      };
+    });
+  }
+
+  const RECURRING_STATUS_ORDER = { vencido: 0, pendiente: 1, programado: 2, registrado: 3, omitido: 3, finalizado: 4, inactivo: 5 };
+
+  // GET /api/recurring-expenses — recurring expenses with the status of their current period.
+  // ?pending=true returns only those overdue or due soon (for the "pendientes" card).
+  app.get('/api/recurring-expenses', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, pending } = req.query;
+      const orgIds = await recurringExpenseOrgIds(req);
+      if (orgIds !== null && orgIds.length === 0) return res.json([]);
+
+      const where = {};
+      if (orgIds !== null) where.organization_id = { in: orgIds };
+      if (venue_id) where.venue_id = venue_id;
+      if (pending === 'true') where.is_active = true;
+
+      const defs = await prisma.recurring_expenses.findMany({
+        where,
+        include: { category: true, provider: true },
+        orderBy: { name: 'asc' }
+      });
+      let result = await withRecurringStatus(defs, bogotaNow().date);
+      if (pending === 'true') result = result.filter(r => r.status === 'vencido' || r.status === 'pendiente');
+      result.sort((a, b) => (RECURRING_STATUS_ORDER[a.status] ?? 9) - (RECURRING_STATUS_ORDER[b.status] ?? 9)
+        || String(a.current_period || a.next_due || '9').localeCompare(String(b.current_period || b.next_due || '9')));
+      res.json(result);
+    } catch (error) {
+      console.error('[recurring-expenses] List error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/recurring-expenses/:id', isAuthenticated, async (req, res) => {
+    try {
+      const def = await prisma.recurring_expenses.findUnique({
+        where: { id: req.params.id },
+        include: { category: true, provider: true }
+      });
+      if (!def) return res.status(404).json({ error: 'Gasto recurrente no encontrado' });
+      if (!await canManageRecurringOrg(req, def.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a este gasto recurrente' });
+      }
+      const [withStatus] = await withRecurringStatus([def], bogotaNow().date);
+      res.json(withStatus);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/recurring-expenses', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const { data, error } = await recurringExpenseData(req.body);
+      if (error) return res.status(400).json({ error });
+      if (!await canManageRecurringOrg(req, data.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a esta organización' });
+      }
+      const def = await prisma.recurring_expenses.create({ data: { ...data, created_by: userId } });
+      res.json(def);
+    } catch (error) {
+      console.error('[recurring-expenses] Create error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.put('/api/recurring-expenses/:id', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const existing = await prisma.recurring_expenses.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Gasto recurrente no encontrado' });
+      if (!await canManageRecurringOrg(req, existing.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a este gasto recurrente' });
+      }
+      const { data, error } = await recurringExpenseData(req.body, { partial: true });
+      if (error) return res.status(400).json({ error });
+      if (data.organization_id !== undefined && data.organization_id !== existing.organization_id
+        && !await canManageRecurringOrg(req, data.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a esta organización' });
+      }
+      const startDate = data.start_date || existing.start_date;
+      const endDate = data.end_date !== undefined ? data.end_date : existing.end_date;
+      if (endDate && endDate < startDate) {
+        return res.status(400).json({ error: 'La fecha de fin no puede ser anterior a la de inicio' });
+      }
+      const def = await prisma.recurring_expenses.update({
+        where: { id: req.params.id },
+        data: { ...data, updated_at: new Date(), updated_by: userId }
+      });
+      res.json(def);
+    } catch (error) {
+      console.error('[recurring-expenses] Update error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Deleting keeps the expenses already registered; they just lose the link.
+  app.delete('/api/recurring-expenses/:id', isAuthenticated, async (req, res) => {
+    try {
+      const existing = await prisma.recurring_expenses.findUnique({ where: { id: req.params.id } });
+      if (!existing) return res.status(404).json({ error: 'Gasto recurrente no encontrado' });
+      if (!await canManageRecurringOrg(req, existing.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a este gasto recurrente' });
+      }
+      await prisma.recurring_expenses.delete({ where: { id: req.params.id } });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/recurring-expenses/:id/skip { period } — mark an occurrence as not needed.
+  app.post('/api/recurring-expenses/:id/skip', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      const def = await prisma.recurring_expenses.findUnique({ where: { id: req.params.id } });
+      if (!def) return res.status(404).json({ error: 'Gasto recurrente no encontrado' });
+      if (!await canManageRecurringOrg(req, def.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a este gasto recurrente' });
+      }
+      const period = recurringSchedule.isoDate(req.body?.period);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(period || '') || !recurringSchedule.occurrencesBetween(def, period, period).length) {
+        return res.status(400).json({ error: 'Periodo inválido' });
+      }
+      const dueDate = new Date(period);
+      await prisma.recurring_expense_periods.upsert({
+        where: { recurring_expense_id_due_date: { recurring_expense_id: def.id, due_date: dueDate } },
+        create: { recurring_expense_id: def.id, due_date: dueDate, skipped_at: new Date(), skipped_by: userId },
+        update: { skipped_at: new Date(), skipped_by: userId }
+      });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // DELETE /api/recurring-expenses/:id/skip/:period — undo a skip.
+  app.delete('/api/recurring-expenses/:id/skip/:period', isAuthenticated, async (req, res) => {
+    try {
+      const def = await prisma.recurring_expenses.findUnique({ where: { id: req.params.id } });
+      if (!def) return res.status(404).json({ error: 'Gasto recurrente no encontrado' });
+      if (!await canManageRecurringOrg(req, def.organization_id)) {
+        return res.status(403).json({ error: 'No tiene acceso a este gasto recurrente' });
+      }
+      const period = recurringSchedule.isoDate(req.params.period);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) return res.status(400).json({ error: 'Periodo inválido' });
+      await prisma.recurring_expense_periods.updateMany({
+        where: { recurring_expense_id: def.id, due_date: new Date(period) },
+        data: { skipped_at: null, skipped_by: null }
       });
       res.json({ success: true });
     } catch (error) {
@@ -4959,6 +5734,33 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       res.status(500).json({ error: error.message });
     }
   });
+
+  /**
+   * Security deposit a booking should pay by the venue's rules (base amount plus
+   * extra adults), or null when the venue has no deposit rules.
+   */
+  function calculateDeposit(accommodation, venue) {
+    if (!venue || venue.deposit_base_amount == null) return null;
+    const base = parseFloat(venue.deposit_base_amount) || 0;
+    const maxIncluded = venue.deposit_max_people_included || 0;
+    const perExtra = parseFloat(venue.deposit_per_extra_person) || 0;
+    const extraPeople = Math.max(0, (accommodation.adults || 0) - maxIncluded);
+    return base + extraPeople * perExtra;
+  }
+
+  /**
+   * The deposit still to collect for a booking: { amount, calculated } when it has
+   * no deposit registered yet, or null. An explicit amount overrides the rules.
+   */
+  async function pendingDepositFor(accommodation, requested) {
+    const existing = await prisma.deposits.findFirst({ where: { accommodation_id: accommodation.id }, select: { id: true } });
+    if (existing) return null;
+    const venue = accommodation.venue ? await prisma.venues.findUnique({ where: { id: accommodation.venue } }) : null;
+    const calculated = calculateDeposit(accommodation, venue);
+    const amount = requested != null ? Math.round(Number(requested)) : calculated;
+    if (!(amount > 0)) return null;
+    return { amount, calculated, venueId: venue?.id || accommodation.venue || null, organizationId: venue?.organization || null };
+  }
 
   // Deposit calculation endpoint
   app.get('/api/accommodations/:id/deposit-calculation', isAuthenticated, async (req, res) => {
@@ -5524,6 +6326,11 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       where: { agent_id: agentId, plan_type: planType },
       orderBy: { sort_order: 'asc' }
     });
+    return commissionFromRules(rules, { adults, agreedPrice });
+  }
+
+  /** Same as computeCommission with the rules already loaded (sorted by sort_order). */
+  function commissionFromRules(rules, { adults, agreedPrice }) {
     if (!rules.length) return { total: 0, breakdown: [], no_rules: true };
     if (!adults || !agreedPrice) return { total: 0, breakdown: [] };
 
@@ -5549,6 +6356,339 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
     }
     return { total: Math.round(total), breakdown };
   }
+
+  // ==================== Ganancia por alquiler ====================
+
+  const GATEWAY_FEE_CATEGORY = 'Comisiones de pago';
+  const monthKey = (d) => new Date(d).toISOString().slice(0, 7);
+
+  /**
+   * Direct profit of each booking: verified payments + damage kept from the
+   * deposit − expenses linked to the booking − payment gateway fees − the
+   * agent's commission (recorded, or estimated from the rules when not recorded
+   * yet). Deposits themselves are refundable and never count as income.
+   *
+   * With `prorate`, the venue's expenses of the booking's month that are not
+   * linked to any booking (rent, utilities…) are split evenly among the
+   * month's non-cancelled bookings of that venue.
+   * @param {string[]} bookingIds
+   * @param {{ prorate?: boolean, detail?: boolean }} [options] detail adds the expense lines
+   * @returns {Promise<Map<string, object>>} by booking id
+   */
+  async function computeBookingProfit(bookingIds, { prorate = false, detail = false } = {}) {
+    const result = new Map();
+    const ids = [...new Set(bookingIds)].filter(id => UUID_PATTERN.test(id));
+    if (!ids.length) return result;
+
+    const bookings = await prisma.accommodations.findMany({ where: { id: { in: ids } } });
+    const [payments, deposits, expenses, commissions] = await Promise.all([
+      prisma.payments.findMany({ where: { accommodation: { in: ids }, verified: true }, select: { accommodation: true, amount: true } }),
+      prisma.deposits.findMany({ where: { accommodation_id: { in: ids }, status: 'claimed' }, select: { accommodation_id: true, damage_amount: true } }),
+      prisma.expenses.findMany({ where: { accommodation_id: { in: ids } }, include: { category: { select: { name: true } } } }),
+      prisma.commission_payments.findMany({
+        where: { accommodation_id: { in: ids }, status: { not: 'cancelled' } },
+        include: { agent: { select: { name: true } } }
+      })
+    ]);
+    // A paid commission can create an expense: counted once, as commission.
+    const commissionExpenseIds = new Set(
+      (await prisma.commission_payments.findMany({
+        where: { expense_id: { in: expenses.map(e => e.id) } }, select: { expense_id: true }
+      })).map(c => c.expense_id)
+    );
+
+    // Commission not recorded yet: estimate it from the agent's rules.
+    const recordedCommission = new Set(commissions.map(c => c.accommodation_id));
+    const toEstimate = new Set(bookings
+      .filter(b => b.commission_agent_id && b.plan_id && !b.cancelled_at && !b.no_show_at && !recordedCommission.has(b.id))
+      .map(b => b.id));
+    const plans = await prisma.venue_plans.findMany({
+      where: { id: { in: [...new Set(bookings.map(b => b.plan_id).filter(Boolean))] } },
+      select: { id: true, plan_type: true }
+    });
+    const planType = new Map(plans.map(p => [p.id, p.plan_type]));
+    const agentIds = [...new Set(bookings.filter(b => toEstimate.has(b.id)).map(b => b.commission_agent_id))];
+    const [rules, agents] = agentIds.length ? await Promise.all([
+      prisma.commission_rules.findMany({ where: { agent_id: { in: agentIds } }, orderBy: { sort_order: 'asc' } }),
+      prisma.commission_agents.findMany({ where: { id: { in: agentIds } }, select: { id: true, name: true } })
+    ]) : [[], []];
+    const agentName = new Map(agents.map(a => [a.id, a.name]));
+
+    // Fixed costs pool per venue and month, and how many bookings share it.
+    const fixedPool = new Map();
+    const dated = bookings.filter(b => b.venue && b.date && !b.cancelled_at);
+    if (prorate && dated.length) {
+      const venueIds = [...new Set(dated.map(b => b.venue))];
+      const times = dated.map(b => new Date(b.date).getTime());
+      const first = new Date(Math.min(...times));
+      const last = new Date(Math.max(...times));
+      const from = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), 1));
+      const to = new Date(Date.UTC(last.getUTCFullYear(), last.getUTCMonth() + 1, 0));
+      const [unlinked, monthBookings] = await Promise.all([
+        prisma.expenses.findMany({
+          where: { venue_id: { in: venueIds }, accommodation_id: null, expense_date: { gte: from, lte: to } },
+          select: { id: true, venue_id: true, amount: true, expense_date: true }
+        }),
+        prisma.accommodations.findMany({
+          where: { venue: { in: venueIds }, cancelled_at: null, date: { gte: from, lte: to } },
+          select: { venue: true, date: true }
+        })
+      ]);
+      const paidCommissions = new Set(
+        (await prisma.commission_payments.findMany({
+          where: { expense_id: { in: unlinked.map(e => e.id) } }, select: { expense_id: true }
+        })).map(c => c.expense_id)
+      );
+      const slot = (key) => fixedPool.get(key) || fixedPool.set(key, { total: 0, bookings: 0 }).get(key);
+      unlinked.filter(e => !paidCommissions.has(e.id))
+        .forEach(e => { slot(`${e.venue_id}|${monthKey(e.expense_date)}`).total += Number(e.amount) || 0; });
+      monthBookings.forEach(b => { slot(`${b.venue}|${monthKey(b.date)}`).bookings += 1; });
+    }
+
+    const sumBy = (rows, key, field) => rows.reduce((acc, r) => acc.set(r[key], (acc.get(r[key]) || 0) + (Number(r[field]) || 0)), new Map());
+    const paidBy = sumBy(payments, 'accommodation', 'amount');
+    const damageBy = sumBy(deposits, 'accommodation_id', 'damage_amount');
+    const isGatewayFee = (e) => e.category?.name === GATEWAY_FEE_CATEGORY || e.subcategory === 'Bold';
+    const total = (list, field) => list.reduce((s, r) => s + (Number(r[field]) || 0), 0);
+    const round = Math.round;
+
+    for (const b of bookings) {
+      const status = b.cancelled_at ? 'cancelled' : (b.no_show_at && !b.rescheduled_at ? 'no_show' : 'active');
+      const paid = paidBy.get(b.id) || 0;
+      const depositKept = damageBy.get(b.id) || 0;
+      const income = paid + depositKept;
+
+      const own = expenses.filter(e => e.accommodation_id === b.id && !commissionExpenseIds.has(e.id));
+      const direct = own.filter(e => !isGatewayFee(e));
+      const directTotal = total(direct, 'amount');
+      const gatewayFees = total(own.filter(isGatewayFee), 'amount');
+
+      const agreed = Number(b.agreed_price ?? b.calculated_price ?? 0);
+      const recorded = commissions.filter(c => c.accommodation_id === b.id);
+      let commission = { amount: 0, status: 'none', agent_name: null };
+      if (recorded.length) {
+        commission = {
+          amount: total(recorded, 'calculated_amount'),
+          status: recorded.some(c => c.status !== 'paid') ? 'pending' : 'paid',
+          agent_name: recorded.map(c => c.agent?.name).filter(Boolean).join(', ') || null
+        };
+      } else if (toEstimate.has(b.id)) {
+        const agentRules = rules.filter(r => r.agent_id === b.commission_agent_id && r.plan_type === planType.get(b.plan_id));
+        const calc = commissionFromRules(agentRules, { adults: b.adults || 0, agreedPrice: agreed });
+        if (!calc.no_rules) {
+          commission = { amount: calc.total, status: 'estimated', agent_name: agentName.get(b.commission_agent_id) || null };
+        }
+      }
+
+      let fixed = null;
+      const pool = prorate && status !== 'cancelled' && b.venue && b.date ? fixedPool.get(`${b.venue}|${monthKey(b.date)}`) : null;
+      if (pool?.bookings > 0 && pool.total > 0) {
+        fixed = { amount: round(pool.total / pool.bookings), month: monthKey(b.date), pool_total: round(pool.total), bookings: pool.bookings };
+      }
+
+      const costs = directTotal + gatewayFees + commission.amount + (fixed?.amount || 0);
+      const profit = income - costs;
+      const pendingBalance = status === 'active' ? Math.max(0, agreed - paid) : 0;
+      result.set(b.id, {
+        accommodation_id: b.id,
+        status,
+        income: { payments: round(paid), deposit_kept: round(depositKept), total: round(income) },
+        costs: {
+          expenses: detail
+            ? direct.map(e => ({ id: e.id, description: e.description, category: e.category?.name || null, amount: round(Number(e.amount) || 0), date: e.expense_date }))
+            : undefined,
+          expenses_total: round(directTotal),
+          gateway_fees: round(gatewayFees),
+          commission: { ...commission, amount: round(commission.amount) },
+          fixed,
+          total: round(costs)
+        },
+        profit: round(profit),
+        margin: income > 0 ? round((profit / income) * 1000) / 10 : null,
+        agreed_price: round(agreed),
+        pending_balance: round(pendingBalance),
+        // What it would leave once the pending balance is collected.
+        projected_profit: pendingBalance > 0 ? round(profit + pendingBalance) : null
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Who may see booking profits: analytics viewers, or whoever sees every booking
+   * and its payments (not the ":own" partner profiles), limited to their venues
+   * (venueIds null = every venue). A commission agent never sees the owner's
+   * profit of the bookings they sold.
+   */
+  const canViewProfits = (perms) => hasPermission(perms, 'analytics:view')
+    || (hasPermission(perms, 'accommodations:view') && hasPermission(perms, 'payments:view'));
+
+  async function bookingProfitAccess(req, { viewAll = false } = {}) {
+    if (!req.user || !canViewProfits(req.userPermissions)) return null;
+    const userId = String(req.user.claims?.sub);
+    const currentUser = await prisma.users.findUnique({ where: { id: userId }, select: { is_super_admin: true } });
+    if (currentUser?.is_super_admin) {
+      if (viewAll) return { venueIds: null, agentBookings: new Set() };
+      const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+      const venues = await prisma.venues.findMany({
+        where: { organization: { in: userOrgs.map(uo => uo.organization_id) } }, select: { id: true }
+      });
+      return { venueIds: venues.map(v => v.id), agentBookings: new Set() };
+    }
+    return {
+      venueIds: await getAccessibleVenueIds(req.userPermissions),
+      agentBookings: await getAgentAccommodationIds(userId)
+    };
+  }
+
+  const canSeeBookingProfit = (access, booking) => !!access && !!booking
+    && (access.venueIds === null || access.venueIds.includes(booking.venue))
+    && !access.agentBookings.has(booking.id);
+
+  // GET /api/accommodations/:id/profit?prorate=true — profit breakdown of one booking.
+  app.get('/api/accommodations/:id/profit', isAuthenticated, async (req, res) => {
+    try {
+      if (!UUID_PATTERN.test(req.params.id)) return res.status(404).json({ error: 'Alquiler no encontrado' });
+      const booking = await prisma.accommodations.findUnique({ where: { id: req.params.id }, select: { id: true, venue: true } });
+      if (!booking) return res.status(404).json({ error: 'Alquiler no encontrado' });
+      // Opening one booking: a super admin sees it whatever the "view all" switch says.
+      const access = await bookingProfitAccess(req, { viewAll: true });
+      if (!canSeeBookingProfit(access, booking)) return res.status(403).json({ error: 'No tiene permiso para ver la ganancia' });
+      const profits = await computeBookingProfit([booking.id], { prorate: req.query.prorate === 'true', detail: true });
+      res.json(profits.get(booking.id));
+    } catch (error) {
+      console.error('[profit] Booking profit failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/accommodations/profit { ids, prorate, viewAll } — profits of a page of
+  // bookings, keyed by id. Bookings the user may not see are left out.
+  app.post('/api/accommodations/profit', isAuthenticated, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 500) : [];
+      const access = await bookingProfitAccess(req, { viewAll: req.body?.viewAll === true });
+      if (!access) return res.status(403).json({ error: 'No tiene permiso para ver la ganancia' });
+      const bookings = await prisma.accommodations.findMany({
+        where: { id: { in: ids.filter(id => UUID_PATTERN.test(id)) } }, select: { id: true, venue: true }
+      });
+      const visible = bookings.filter(b => canSeeBookingProfit(access, b)).map(b => b.id);
+      const profits = await computeBookingProfit(visible, { prorate: req.body?.prorate === true });
+      res.json(Object.fromEntries(profits));
+    } catch (error) {
+      console.error('[profit] Batch profit failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/analytics/booking-profit — profit per booking for the analytics filters
+  // (period, venue, organization, basis, prorate). Accrual takes the bookings dated
+  // in the period; cash, the bookings that received a verified payment in it.
+  app.get('/api/analytics/booking-profit', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, organization_id, period, basis } = req.query;
+      const access = await bookingProfitAccess(req, { viewAll: req.query.viewAll === 'true' });
+      if (!access) return res.status(403).json({ error: 'No tiene permiso para ver la ganancia' });
+      const { startDate, endDate } = calculateDateRange(period);
+
+      const venueWhere = {};
+      if (access.venueIds !== null) venueWhere.id = { in: access.venueIds };
+      if (organization_id) venueWhere.organization = organization_id;
+      let venues = await prisma.venues.findMany({ where: venueWhere, select: { id: true, name: true } });
+      if (venue_id) venues = venues.filter(v => v.id === venue_id);
+      const venueIds = venues.map(v => v.id);
+
+      const where = { venue: { in: venueIds } };
+      if (basis === 'cash') {
+        const paid = await prisma.payments.findMany({
+          where: { verified: true, payment_date: { gte: startDate, lte: endDate }, accommodation: { not: null } },
+          select: { accommodation: true }, distinct: ['accommodation']
+        });
+        where.id = { in: paid.map(p => p.accommodation) };
+      } else {
+        where.date = { gte: startDate, lte: endDate };
+      }
+      const bookings = venueIds.length
+        ? (await prisma.accommodations.findMany({
+          where, select: { id: true, venue: true, date: true, plan_id: true, customer: true, cancelled_at: true }
+        })).filter(b => !access.agentBookings.has(b.id))
+        : [];
+
+      const profits = await computeBookingProfit(bookings.map(b => b.id), { prorate: req.query.prorate === 'true' });
+      const [plans, customers] = await Promise.all([
+        prisma.venue_plans.findMany({ where: { id: { in: [...new Set(bookings.map(b => b.plan_id).filter(Boolean))] } }, select: { id: true, name: true } }),
+        prisma.contacts.findMany({ where: { id: { in: [...new Set(bookings.map(b => b.customer).filter(Boolean))] } }, select: { id: true, fullname: true } })
+      ]);
+      const planName = new Map(plans.map(p => [p.id, p.name]));
+      const customerName = new Map(customers.map(c => [c.id, c.fullname]));
+      const venueName = new Map(venues.map(v => [v.id, v.name]));
+
+      const rows = bookings
+        .map(b => ({ b, p: profits.get(b.id) }))
+        // A cancelled booking that left nothing (no payment, no expense) is not a sale.
+        .filter(({ b, p }) => p && !(b.cancelled_at && p.income.total === 0 && p.costs.total === 0))
+        .map(({ b, p }) => ({
+          id: b.id,
+          date: b.date,
+          venue_name: venueName.get(b.venue) || null,
+          customer_name: customerName.get(b.customer) || null,
+          plan_id: b.plan_id || null,
+          plan_name: planName.get(b.plan_id) || 'Sin plan',
+          status: p.status,
+          income: p.income.total,
+          costs: p.costs.total,
+          commission_status: p.costs.commission.status,
+          profit: p.profit,
+          margin: p.margin
+        }));
+
+      const sum = (list, field) => list.reduce((s, r) => s + r[field], 0);
+      const margin = (profit, income) => (income > 0 ? Math.round((profit / income) * 1000) / 10 : null);
+      const income = sum(rows, 'income');
+      const profit = sum(rows, 'profit');
+
+      const byPlan = new Map();
+      rows.forEach(r => {
+        const key = r.plan_id || 'none';
+        const entry = byPlan.get(key) || byPlan.set(key, { plan_id: r.plan_id, name: r.plan_name, count: 0, income: 0, profit: 0 }).get(key);
+        entry.count += 1;
+        entry.income += r.income;
+        entry.profit += r.profit;
+      });
+
+      const distribution = [
+        { label: 'Pérdida', from: null, to: 0 },
+        { label: '$0 – $300 mil', from: 0, to: 300000 },
+        { label: '$300 – $700 mil', from: 300000, to: 700000 },
+        { label: '$700 mil – $1,5 M', from: 700000, to: 1500000 },
+        { label: '$1,5 – $3 M', from: 1500000, to: 3000000 },
+        { label: 'Más de $3 M', from: 3000000, to: null }
+      ].map(bucket => ({
+        ...bucket,
+        count: rows.filter(r => (bucket.from === null || r.profit >= bucket.from) && (bucket.to === null || r.profit < bucket.to)).length
+      }));
+
+      const sorted = [...rows].sort((a, b) => b.profit - a.profit);
+      res.json({
+        count: rows.length,
+        totals: { income, costs: sum(rows, 'costs'), profit },
+        avg_profit: rows.length ? Math.round(profit / rows.length) : 0,
+        margin: margin(profit, income),
+        estimated_commissions: rows.filter(r => r.commission_status === 'estimated').length,
+        by_plan: [...byPlan.values()]
+          .map(p => ({ ...p, avg_profit: Math.round(p.profit / p.count), margin: margin(p.profit, p.income) }))
+          .sort((a, b) => b.avg_profit - a.avg_profit),
+        distribution,
+        top: sorted.slice(0, 5),
+        // With five or fewer bookings the top list already shows them all.
+        bottom: sorted.length > 5 ? sorted.slice(-5).reverse() : [],
+        period: { from: startDate, to: endDate }
+      });
+    } catch (error) {
+      console.error('[profit] Analytics booking profit failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   async function convertEstimateToAccommodation(estimate, db = prisma) {
     const contact = guestContact(estimate) || {};
@@ -9421,38 +10561,40 @@ REGLAS:
     };
   }
 
+  // ==================== Notification center ====================
+  // notify(type, { organizationId, venueId, data }) delivers an event to whoever
+  // the organization chose in Notificaciones (bell, email, WhatsApp of the team).
+  // Types and their messages live in services/notifications.js.
+  const notifier = createNotifier({ prisma, whatsappClient, cleanPhone, appBaseUrl });
+  const { notify } = notifier;
+
   /**
-   * Let the venue's team know a booking was confirmed online (paid, with contract)
-   * so someone follows up in person: an in-app notification for every user of the
-   * organization, plus WhatsApp and email when the venue turned them on.
+   * Let the venue's team know a booking was closed without them (paid online
+   * through the chat, with contract) so someone follows up in person. Who hears
+   * and how is the booking_created_ai setting; the commission agent who sold it
+   * gets their own version with their commission.
    */
-  async function notifyBookingConfirmed(accommodationId, { paidAmount, balance, contractUrl, manual = false } = {}) {
+  /** A balance paid through Bold: the payment_received notice (as configured). */
+  async function notifyBalancePaid(accommodationId, { paidAmount, balance, depositPart = 0 }) {
+    const acc = await prisma.accommodations.findUnique({ where: { id: accommodationId }, select: { id: true, venue: true } });
+    if (!acc?.venue) return;
+    await notify('payment_received', {
+      venueId: acc.venue,
+      data: {
+        accommodationId: acc.id,
+        amount: paidAmount,
+        method: depositPart > 0 ? `Bold, incluye depósito de ${money(depositPart)}` : 'Bold',
+        verified: true,
+        balance
+      }
+    });
+  }
+
+  async function notifyBookingConfirmed(accommodationId, { paidAmount, balance, contractUrl, manual = false, channel = null } = {}) {
     const acc = await prisma.accommodations.findUnique({ where: { id: accommodationId } });
     if (!acc?.venue) return;
-    const [venue, plan, customer, agent] = await Promise.all([
-      prisma.venues.findUnique({ where: { id: acc.venue } }),
-      acc.plan_id ? prisma.venue_plans.findUnique({ where: { id: acc.plan_id }, select: { name: true } }) : null,
-      acc.customer ? prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true, whatsapp: true } }) : null,
-      acc.commission_agent_id ? prisma.commission_agents.findUnique({ where: { id: acc.commission_agent_id }, select: { name: true } }) : null
-    ]);
+    const venue = await prisma.venues.findUnique({ where: { id: acc.venue }, select: { id: true, name: true, organization: true } });
     if (!venue) return;
-
-    const adults = acc.adults || 0;
-    const children = acc.children || 0;
-    const total = adults + children;
-    const people = `${total} persona${total === 1 ? '' : 's'}`
-      + (children ? ` (${adults} adulto${adults === 1 ? '' : 's'} y ${children} niño${children === 1 ? '' : 's'})` : '');
-    const date = formatBookingDate(acc.date);
-    const summary = `Se registró un alquiler para el ${date} en ${venue.name}: ${people}.`;
-    const details = [
-      plan?.name ? `Plan: ${plan.name}` : null,
-      customer?.fullname ? `Cliente: ${customer.fullname}${customer.whatsapp ? ` (${customer.whatsapp})` : ''}` : null,
-      agent?.name ? `Vendido por: ${agent.name}` : null,
-      paidAmount ? `Pagado: ${money(paidAmount)}${balance > 0 ? ` · Saldo pendiente: ${money(balance)}` : ''}` : null,
-      contractUrl ? 'Contrato generado, pendiente de firma' : null,
-      manual ? 'Pago conciliado a mano' : null
-    ].filter(Boolean);
-    const link = `/business/accommodations/${acc.id}`;
 
     // The commission agent who sold it gets their own version (below), even when
     // they are also a member of the organization.
@@ -9460,33 +10602,22 @@ REGLAS:
       ? await prisma.commission_agents.findUnique({ where: { id: acc.commission_agent_id }, select: { user_id: true } })
       : null;
 
-    // In-app: always, to everyone in the organization.
-    if (venue.organization) {
-      const members = (await prisma.user_organizations.findMany({
-        where: { organization_id: venue.organization },
-        select: { user_id: true }
-      })).filter(m => m.user_id !== seller?.user_id);
-      if (members.length) {
-        await prisma.notifications.createMany({
-          data: members.map(m => ({
-            user_id: m.user_id,
-            organization_id: venue.organization,
-            venue_id: venue.id,
-            type: 'booking_confirmed',
-            title: `Nuevo alquiler: ${date}`,
-            body: `${summary} ${details.join(' · ')}`.trim(),
-            link
-          }))
-        });
-      }
-    }
+    await notify('booking_created_ai', {
+      organizationId: venue.organization,
+      venueId: venue.id,
+      data: { accommodationId: acc.id, channel, paidAmount, balance, contractUrl, manual },
+      excludeUserIds: [seller?.user_id]
+    });
 
     // The commission agent who sold it hears too, with their commission. Unlike
     // the chat confirmation, this one has no 24-hour window.
     if (seller?.user_id) {
+      const customer = acc.customer ? await prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true } }) : null;
       const commission = await prisma.commission_payments.findFirst({
         where: { agent_id: acc.commission_agent_id, accommodation_id: acc.id }
       });
+      const total = (acc.adults || 0) + (acc.children || 0);
+      const date = formatBookingDate(acc.date);
       const client = customer?.fullname ? `Tu cliente ${customer.fullname}` : 'Tu cliente';
       await prisma.notifications.create({
         data: {
@@ -9495,44 +10626,81 @@ REGLAS:
           venue_id: venue.id,
           type: 'agent_booking_confirmed',
           title: `Alquiler confirmado: ${date}`,
-          body: `${client} confirmó su alquiler para el ${date} en ${venue.name}: ${people}.`
+          body: `${client} confirmó su alquiler para el ${date} en ${venue.name}: ${total} persona${total === 1 ? '' : 's'}.`
             + (commission
               ? ` Tu comisión: ${money(commission.calculated_amount)} (${commission.status === 'paid' ? 'pagada' : 'pendiente de pago'}).`
               : ''),
-          link
+          link: `/business/accommodations/${acc.id}`
         }
       });
     }
+  }
 
-    const appUrl = `${appBaseUrl()}/#${link}`;
-    const text = `🎉 *Nuevo alquiler confirmado - ${venue.name}*\n\n${summary}\n${details.map(d => `• ${d}`).join('\n')}\n\nVer el alquiler: ${appUrl}`;
+  /**
+   * A payment of a booking was registered or verified: tell the team (except
+   * whoever did it). Runs in the background; never fails the request.
+   */
+  function notifyPayment(payment, { actorUserId = null } = {}) {
+    if (!payment?.accommodation) return;
+    prisma.accommodations.findUnique({ where: { id: payment.accommodation }, select: { id: true, venue: true } })
+      .then(acc => acc?.venue && notify('payment_received', {
+        venueId: acc.venue,
+        data: { accommodationId: acc.id, amount: Number(payment.amount || 0), method: payment.payment_method, verified: !!payment.verified },
+        excludeUserIds: [actorUserId]
+      }))
+      .catch(err => console.error('[notify] Payment notification failed', { payment: payment.id, error: err.message }));
+  }
 
-    if (venue.notify_booking_whatsapp) {
-      const phone = cleanPhone(venue.notify_booking_whatsapp_phone) || cleanPhone(venue.whatsapp ? String(venue.whatsapp) : null);
-      if (!phone) {
-        console.warn('[booking-notify] WhatsApp on but no phone', { venue: venue.id });
-      } else if (!whatsappClient.isAvailable()) {
-        console.warn('[booking-notify] System WhatsApp unavailable', { venue: venue.id });
-      } else {
-        await whatsappClient.sendSystemMessage(phone, text)
-          .catch(err => console.error('[booking-notify] WhatsApp failed', { venue: venue.id, error: err.message }));
-      }
+  /** The guest signed the contract (or an amendment) of a booking. */
+  function notifyContractSigned(accommodationId, { amendmentNumber = null } = {}) {
+    prisma.accommodations.findUnique({ where: { id: accommodationId }, select: { id: true, venue: true } })
+      .then(acc => acc?.venue && notify('contract_signed', {
+        venueId: acc.venue,
+        data: { accommodationId: acc.id, amendmentNumber }
+      }))
+      .catch(err => console.error('[notify] Contract notification failed', { accommodation: accommodationId, error: err.message }));
+  }
+
+  /**
+   * Booking reminders for the team, days before check-in as each plan defines
+   * (venue_plans.reminder_days_before, default [1]). Runs every hour from 7:00
+   * Bogotá time; booking_reminders_sent makes each reminder go only once per
+   * booking, date and offset, even with several instances running.
+   */
+  const REMINDER_MAX_DAYS = 60;
+
+  /** "7, 1" or [7, 1] → [7, 1]: whole days before check-in, 0 = the same day. */
+  function parseReminderDays(value) {
+    const list = Array.isArray(value) ? value : String(value ?? '').split(/[,;\s]+/);
+    return [...new Set(list.map(v => String(v).trim()).filter(v => /^\d+$/.test(v)).map(Number)
+      .filter(n => n >= 0 && n <= REMINDER_MAX_DAYS))].sort((a, b) => b - a);
+  }
+
+  async function sendBookingReminders() {
+    const local = bogotaNow();
+    if (local.time < '07:00') return;
+    const today = new Date(`${local.date}T00:00:00.000Z`);
+    const DAY = 24 * 60 * 60 * 1000;
+    const plans = await prisma.venue_plans.findMany({ select: { id: true, reminder_days_before: true } });
+    // An empty list means the plan wants no reminders.
+    const offsetsByPlan = new Map(plans.map(p => [p.id, p.reminder_days_before ?? [1]]));
+    const maxOffset = Math.min(REMINDER_MAX_DAYS, Math.max(1, ...[...offsetsByPlan.values()].flat()));
+    const bookings = await prisma.accommodations.findMany({
+      where: { cancelled_at: null, venue: { not: null }, date: { gte: today, lte: new Date(today.getTime() + maxOffset * DAY) } },
+      select: { id: true, venue: true, date: true, plan_id: true }
+    });
+    for (const booking of bookings) {
+      const daysBefore = Math.round((new Date(booking.date).getTime() - today.getTime()) / DAY);
+      const offsets = (booking.plan_id && offsetsByPlan.get(booking.plan_id)) || [1];
+      if (!offsets.includes(daysBefore)) continue;
+      // Claim first: whoever inserts the row sends it.
+      const claimed = await prisma.booking_reminders_sent.createMany({
+        data: [{ accommodation_id: booking.id, booking_date: booking.date, days_before: daysBefore }],
+        skipDuplicates: true
+      });
+      if (!claimed.count) continue;
+      await notify('booking_reminder', { venueId: booking.venue, data: { accommodationId: booking.id, daysBefore } });
     }
-
-    if (venue.notify_booking_email) {
-      const to = String(venue.notify_booking_emails || '').split(/[,;\s]+/).map(e => e.trim()).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
-      if (to.length) {
-        const escape = (v) => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-        const html = `<p><strong>${escape(summary)}</strong></p><ul>${details.map(d => `<li>${escape(d)}</li>`).join('')}</ul>`
-          + `<p><a href="${escape(appUrl)}">Ver el alquiler en CabanIA</a></p>`;
-        const result = await require('./services/email').getEmailProvider()
-          .send({ to: to.join(', '), subject: `Nuevo alquiler confirmado: ${venue.name}, ${date}`, html });
-        if (!result?.success) console.error('[booking-notify] Email failed', { venue: venue.id, error: result?.error });
-      } else {
-        console.warn('[booking-notify] Email on but no valid address', { venue: venue.id });
-      }
-    }
-    console.log('[booking-notify] Sent', { accommodation: acc.id, whatsapp: venue.notify_booking_whatsapp, email: venue.notify_booking_email });
   }
 
   /**
@@ -9716,6 +10884,83 @@ REGLAS:
     }
   }
 
+  // ==================== Overdue recurring expenses ====================
+
+  // A period still unpaid gets a reminder every few days, up to a few notices.
+  const RECURRING_REMINDER_DAYS = 3;
+  const RECURRING_MAX_NOTICES = 3;
+
+  /**
+   * A recurring expense's period is overdue: the recurring_expense_overdue notice,
+   * delivered as the organization set it up in Notificaciones. Returns the result.
+   */
+  async function notifyRecurringExpenseOverdue(def, dueDate, { reminder = false, overdueCount = 1 } = {}) {
+    const venue = def.venue_id
+      ? await prisma.venues.findUnique({ where: { id: def.venue_id }, select: { id: true, name: true } })
+      : null;
+    const date = new Date(dueDate).toLocaleDateString('es-CO', { timeZone: 'UTC', day: 'numeric', month: 'long' });
+    const where = venue?.name ? ` en ${venue.name}` : '';
+    const body = `${def.name}${where} venció el ${date} y no tiene gasto registrado.`
+      + (def.expected_amount ? ` Monto aproximado: ${money(def.expected_amount)}.` : '')
+      + (overdueCount > 1 ? ` Hay ${overdueCount} periodos sin registrar.` : '')
+      + ' Regístralo u omite el periodo si no aplica.';
+    return notify('recurring_expense_overdue', {
+      organizationId: def.organization_id || null,
+      venueId: venue?.id || null,
+      data: {
+        title: `${reminder ? 'Recordatorio: g' : 'G'}asto recurrente vencido: ${def.name}`,
+        body,
+        link: `/business/expenses?tab=recurrentes${venue ? `&venue_id=${venue.id}` : ''}`,
+        details: [['Gasto', def.name], ['Venció', date], ['Monto aproximado', def.expected_amount ? money(def.expected_amount) : '—']],
+        ctaLabel: 'Ver gastos recurrentes'
+      }
+    });
+  }
+
+  /**
+   * From 8 a.m. Bogotá, notify recurring expenses whose latest overdue period has
+   * no expense and was not skipped. Idempotent per period: the period row is
+   * claimed before notifying, so reruns (and other instances) only send the
+   * reminders that are due.
+   */
+  async function checkOverdueRecurringExpenses() {
+    const local = bogotaNow();
+    if (local.time < '08:00') return;
+    const defs = await prisma.recurring_expenses.findMany({ where: { is_active: true } });
+    if (!defs.length) return;
+
+    const reminderBefore = new Date(Date.now() - RECURRING_REMINDER_DAYS * 24 * 60 * 60 * 1000);
+    for (const def of await withRecurringStatus(defs, local.date)) {
+      const period = def.overdue_periods[def.overdue_periods.length - 1];
+      if (!period) continue;
+      const dueDate = new Date(period);
+      try {
+        const row = await prisma.recurring_expense_periods.upsert({
+          where: { recurring_expense_id_due_date: { recurring_expense_id: def.id, due_date: dueDate } },
+          create: { recurring_expense_id: def.id, due_date: dueDate },
+          update: {}
+        });
+        const claimed = await prisma.recurring_expense_periods.updateMany({
+          where: {
+            id: row.id,
+            skipped_at: null,
+            notified_count: { lt: RECURRING_MAX_NOTICES },
+            OR: [{ last_notified_at: null }, { last_notified_at: { lt: reminderBefore } }]
+          },
+          data: { last_notified_at: new Date(), notified_count: { increment: 1 } }
+        });
+        if (claimed.count === 0) continue;
+        const sent = await notifyRecurringExpenseOverdue(def, period, {
+          reminder: row.notified_count > 0,
+          overdueCount: def.overdue_periods.length
+        });
+        console.log('[recurring-expenses] Overdue notice', { recurring_expense: def.id, period, recipients: sent });
+      } catch (err) {
+        console.error('[recurring-expenses] Notify failed', { recurring_expense: def.id, period, error: err.message });
+      }
+    }
+  }
+
   /**
    * Record a paid Bold link: convert the estimate into a booking, register the
    * payment as verified with its income, and confirm to the guest. Idempotent: the
@@ -9746,6 +10991,8 @@ REGLAS:
           ? await tx.estimates.findUnique({ where: { id: link.estimate_id } })
           : null;
         let accommodationId = link.accommodation_id || estimate?.accommodation_id || null;
+        // The booking is born from this payment (a chat quote) or already existed.
+        const createdBooking = !accommodationId && !!estimate;
         if (!accommodationId && estimate) {
           accommodationId = (await convertEstimateToAccommodation(estimate, tx)).id;
         }
@@ -9758,10 +11005,36 @@ REGLAS:
           : null;
 
         const now = new Date();
+        // A link can carry the security deposit: that part becomes the booking's
+        // deposit (unless one was registered meanwhile) and the rest the payment.
+        let depositPart = Number(link.deposit_amount || 0);
+        if (depositPart > 0 && accommodationId
+          && !(await tx.deposits.findFirst({ where: { accommodation_id: accommodationId }, select: { id: true } }))) {
+          await tx.deposits.create({
+            data: {
+              accommodation_id: accommodationId,
+              venue_id: venueId,
+              organization_id: venue?.organization || null,
+              amount: depositPart,
+              status: 'pending',
+              payment_method: state.paymentMethod ? `Bold - ${state.paymentMethod}` : 'Bold',
+              payment_date: now,
+              reference: state.transactionId || link.bold_link_id,
+              notes: `Recibido por Bold junto con el pago del alquiler. Link: ${link.bold_link_id}`,
+              verified: true,
+              verified_at: now,
+              verified_by: state.actor || 'system:bold',
+              created_by: state.actor || 'system:bold'
+            }
+          });
+        } else {
+          depositPart = 0;
+        }
+        const paymentAmount = Number(link.amount) - depositPart;
         const payment = await tx.payments.create({
           data: {
             accommodation: accommodationId,
-            amount: link.amount,
+            amount: paymentAmount,
             payment_method: state.paymentMethod ? `Bold - ${state.paymentMethod}` : 'Bold',
             payment_date: now,
             reference: state.transactionId || link.bold_link_id,
@@ -9780,7 +11053,7 @@ REGLAS:
           const incomeData = {
             organization_id: venue?.organization || null,
             venue_id: venueId,
-            amount: link.amount,
+            amount: paymentAmount,
             type: 'accommodation',
             date: now,
             accrual_date: accommodation?.date || null
@@ -9876,9 +11149,13 @@ REGLAS:
         return {
           venueName: venue?.name || null,
           accommodationId,
+          createdBooking,
+          channel: estimate?.contact_type || null,
+          paymentMethod: payment.payment_method,
           paymentId: payment.id,
           balance,
           commission,
+          depositPart,
           forAgent: !!estimate?.commission_agent_id,
           clientName: estimate?.customer_name || null,
           date: accommodation?.date || null
@@ -9897,14 +11174,26 @@ REGLAS:
       detail: { accommodation_id: result.accommodationId, payment_id: result.paymentId, balance: result.balance, commission: result.commission }
     });
 
+    // A link the team created to collect the balance of an existing booking: the
+    // booking was already confirmed, so the team only hears about the payment.
+    if (!link.estimate_id && link.accommodation_id && link.created_by && !String(link.created_by).startsWith('system')) {
+      notifyBalancePaid(result.accommodationId, { paidAmount: Number(link.amount), balance: result.balance, depositPart: result.depositPart })
+        .catch(err => console.error('[booking-notify] Balance notice failed', { accommodation: result.accommodationId, error: err.message }));
+      return;
+    }
+
     // The contract is generated outside the payment transaction: a missing or
     // broken template must not undo a payment the guest already made.
     let contractUrl = null;
     if (result.accommodationId) {
       try {
-        let contract = await prisma.contracts.findFirst({ where: { accommodation_id: result.accommodationId } });
-        if (!contract) {
-          const accommodation = await prisma.accommodations.findUnique({ where: { id: result.accommodationId } });
+        const accommodation = await prisma.accommodations.findUnique({ where: { id: result.accommodationId } });
+        // Sin el módulo de contratos no se genera ni se envía contrato.
+        const contractsOn = await modules.isModuleEnabledForVenue(accommodation?.venue, 'contracts');
+        let contract = contractsOn
+          ? await prisma.contracts.findFirst({ where: { accommodation_id: result.accommodationId } })
+          : null;
+        if (!contract && contractsOn) {
           const created = await createAccommodationContract(accommodation, 'system:bold');
           contract = created.snapshot_html ? created : null;
           if (!contract) {
@@ -9923,10 +11212,22 @@ REGLAS:
 
     // The team hears in the background (not awaited): a slow or blocked mail
     // server must not hold the guest's or agent's chat confirmation.
-    if (result.accommodationId) {
+    // A booking born from this payment is news on its own (with what was paid);
+    // a payment on an existing booking is just a payment.
+    if (result.accommodationId && result.createdBooking) {
+      let channel = result.channel;
+      if (link.conversation_id) {
+        const conv = await prisma.chat_conversations.findUnique({ where: { id: link.conversation_id }, select: { source: true } });
+        channel = conv?.source || channel;
+      }
       notifyBookingConfirmed(result.accommodationId, {
-        paidAmount: Number(link.amount), balance: result.balance, contractUrl, manual: !!state.actor
+        paidAmount: Number(link.amount), balance: result.balance, contractUrl, manual: !!state.actor, channel
       }).catch(err => console.error('[booking-notify] Failed', { accommodation: result.accommodationId, error: err.message }));
+    } else if (result.accommodationId) {
+      notifyPayment({
+        id: result.paymentId, accommodation: result.accommodationId, amount: link.amount,
+        payment_method: result.paymentMethod, verified: true
+      }, { actorUserId: state.actor });
     }
 
     if (link.conversation_id) {
@@ -10129,7 +11430,8 @@ REGLAS:
   // In-app assistant for the team (server/assistant.js)
   const agentToolDeps = {
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
-    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission
+    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission,
+    notify, notifier
   };
   require('./assistant')(app, { ...agentToolDeps, llmService, isAuthenticated, logAICall });
 
@@ -10176,6 +11478,144 @@ REGLAS:
       });
       res.json({ success: true });
     } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== Notification settings (Notificaciones) ====================
+
+  /**
+   * Organizations whose notifications the user may configure: theirs (a super
+   * admin without memberships, all of them).
+   */
+  async function notificationOrganizations(req) {
+    const userId = currentUserId(req);
+    const accessible = await getAccessibleOrganizationIds(req.userPermissions);
+    let ids = accessible;
+    if (ids === null) {
+      const memberships = await prisma.user_organizations.findMany({ where: { user_id: userId }, select: { organization_id: true } });
+      ids = memberships.length ? memberships.map(m => m.organization_id) : null;
+    }
+    return prisma.organizations.findMany({
+      where: ids === null ? { system: { not: true } } : { id: { in: ids } },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' }
+    });
+  }
+
+  /** The organization and venue a settings request is about, or an error. */
+  async function notificationScope(req, source) {
+    const organizations = await notificationOrganizations(req);
+    const organizationId = source.organization_id || organizations[0]?.id || null;
+    const accessible = await getAccessibleOrganizationIds(req.userPermissions);
+    if (!organizationId || !UUID_PATTERN.test(organizationId)
+      || (accessible !== null && !accessible.includes(organizationId))) {
+      return { error: 'Organización no encontrada' };
+    }
+    const venues = await prisma.venues.findMany({
+      where: { organization: organizationId },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' }
+    });
+    const venueId = source.venue_id || null;
+    if (venueId && !venues.some(v => v.id === venueId)) return { error: 'Cabaña no encontrada' };
+    return { organizations, organizationId, venues, venueId };
+  }
+
+  // GET /api/notification-settings?organization_id=&venue_id= — what applies to
+  // each type (and where it comes from), the organization's users and venues.
+  app.get('/api/notification-settings', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+    try {
+      const scope = await notificationScope(req, req.query);
+      if (scope.error) return res.status(404).json({ error: scope.error });
+      const { organizations, organizationId, venues, venueId } = scope;
+      const settings = {};
+      for (const type of Object.keys(NOTIFICATION_TYPES)) {
+        settings[type] = await notifier.resolveSettings(type, organizationId, venueId);
+      }
+      res.json({
+        organizations,
+        organization_id: organizationId,
+        venues,
+        venue_id: venueId,
+        types: typeCatalog(),
+        settings,
+        members: await notifier.organizationMembers(organizationId),
+        whatsapp_available: whatsappClient.isAvailable()
+      });
+    } catch (error) {
+      console.error('[notification-settings] Load failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PUT /api/notification-settings — save one type for the organization or a venue.
+  app.put('/api/notification-settings', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+    try {
+      const body = req.body || {};
+      if (!NOTIFICATION_TYPES[body.type]) return res.status(400).json({ error: 'Tipo de notificación no válido' });
+      const scope = await notificationScope(req, body);
+      if (scope.error) return res.status(404).json({ error: scope.error });
+      const { organizationId, venueId } = scope;
+
+      const channels = Object.fromEntries(NOTIFICATION_CHANNELS.map(c => [c, body.channels?.[c] === true]));
+      let recipients = null;
+      if (Array.isArray(body.recipient_user_ids)) {
+        const memberIds = new Set((await notifier.organizationMembers(organizationId)).map(m => m.id));
+        recipients = [...new Set(body.recipient_user_ids.map(String))].filter(id => memberIds.has(id));
+      }
+      const emails = String(body.extra_emails || '').split(/[,;\s]+/).map(e => e.trim()).filter(Boolean);
+      const badEmail = emails.find(e => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+      if (badEmail) return res.status(400).json({ error: `Correo no válido: ${badEmail}` });
+      const phoneList = String(body.whatsapp_phones || '').split(/[,;]+/).map(p => p.trim()).filter(Boolean);
+      const badPhone = phoneList.find(p => !cleanPhone(p));
+      if (badPhone) return res.status(400).json({ error: `Teléfono no válido: ${badPhone}` });
+
+      const data = {
+        enabled: body.enabled !== false,
+        channels,
+        recipient_user_ids: recipients,
+        email_to_users: body.email_to_users !== false,
+        extra_emails: emails.join(', ').slice(0, 500) || null,
+        whatsapp_phones: phoneList.map(cleanPhone).join(', ').slice(0, 255) || null,
+        updated_at: new Date(),
+        updated_by: currentUserId(req)
+      };
+      const existing = await prisma.notification_settings.findFirst({
+        where: { organization_id: organizationId, venue_id: venueId, type: body.type }
+      });
+      if (existing) {
+        await prisma.notification_settings.update({ where: { id: existing.id }, data });
+      } else {
+        await prisma.notification_settings.create({ data: { organization_id: organizationId, venue_id: venueId, type: body.type, ...data } });
+      }
+      // The venue's old new-booking alert is now this row: it must not come back.
+      if (body.type === 'booking_created_ai' && venueId) {
+        await prisma.venues.update({ where: { id: venueId }, data: { notify_booking_whatsapp: false, notify_booking_email: false } });
+      }
+      res.json({ success: true, settings: await notifier.resolveSettings(body.type, organizationId, venueId) });
+    } catch (error) {
+      console.error('[notification-settings] Save failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // DELETE /api/notification-settings?organization_id=&venue_id=&type= — a venue
+  // goes back to the organization's settings (or the organization to the defaults).
+  app.delete('/api/notification-settings', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+    try {
+      const type = String(req.query.type || '');
+      if (!NOTIFICATION_TYPES[type]) return res.status(400).json({ error: 'Tipo de notificación no válido' });
+      const scope = await notificationScope(req, req.query);
+      if (scope.error) return res.status(404).json({ error: scope.error });
+      const { organizationId, venueId } = scope;
+      await prisma.notification_settings.deleteMany({ where: { organization_id: organizationId, venue_id: venueId, type } });
+      if (type === 'booking_created_ai' && venueId) {
+        await prisma.venues.update({ where: { id: venueId }, data: { notify_booking_whatsapp: false, notify_booking_email: false } });
+      }
+      res.json({ success: true, settings: await notifier.resolveSettings(type, organizationId, venueId) });
+    } catch (error) {
+      console.error('[notification-settings] Reset failed', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -10371,6 +11811,119 @@ REGLAS:
       res.json({ success: true, payment_id: updated.payment_id, accommodation_id: updated.accommodation_id });
     } catch (error) {
       console.error('[bold] Manual reconciliation failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/accommodations/:id/payment-link — Bold link to collect the balance of
+  // a booking, created by the team to share by hand (WhatsApp, Instagram...). When
+  // it is paid, the payment is recorded on the booking like any Bold payment.
+  app.post('/api/accommodations/:id/payment-link', isAuthenticated, async (req, res) => {
+    try {
+      const acc = await findEditableAccommodation(req);
+      if (!acc) return res.status(404).json({ error: 'Alquiler no encontrado o sin permiso' });
+      if (acc.cancelled_at) return res.status(400).json({ error: 'Este alquiler está cancelado' });
+      if (!bold.isConfigured()) return res.status(400).json({ error: 'El pago en línea con Bold no está configurado' });
+      const method = await prisma.venue_payment_methods.findFirst({
+        where: { venue_id: acc.venue, method_type: 'bold', is_active: true }
+      });
+      if (!method) return res.status(400).json({ error: 'Esta cabaña no tiene activo el pago en línea con Bold' });
+
+      const paid = await prisma.payments.aggregate({ where: { accommodation: acc.id }, _sum: { amount: true } });
+      const balance = Math.round(Number(acc.agreed_price ?? acc.calculated_price ?? 0) - Number(paid._sum.amount || 0));
+      // Usually the balance and the security deposit go in the same payment.
+      const deposit = req.body?.include_deposit ? await pendingDepositFor(acc, req.body.deposit_amount) : null;
+      if (req.body?.include_deposit && !deposit) {
+        return res.status(400).json({ error: 'Este alquiler ya tiene depósito registrado o la cabaña no tiene reglas de depósito' });
+      }
+      const depositAmount = deposit?.amount || 0;
+      const amount = req.body?.amount != null ? Math.round(Number(req.body.amount)) : balance + depositAmount;
+      if (!(amount >= 1000)) return res.status(400).json({ error: 'El monto a cobrar debe ser de al menos $1.000' });
+      if (amount > balance + depositAmount) {
+        return res.status(400).json({ error: `El monto supera lo pendiente (${money(balance + depositAmount)})` });
+      }
+      if (depositAmount && amount <= depositAmount) {
+        return res.status(400).json({ error: 'Con Bold, el cobro con depósito debe incluir también parte del saldo' });
+      }
+
+      // Reuse an open link for the same booking and amount instead of creating duplicates.
+      let link = await prisma.bold_payment_links.findFirst({
+        where: {
+          accommodation_id: acc.id,
+          estimate_id: null,
+          amount,
+          deposit_amount: depositAmount || null,
+          status: { in: BOLD_OPEN_STATUSES },
+          expiration_date: { gt: new Date(Date.now() + 60 * 60 * 1000) }
+        },
+        orderBy: { created_at: 'desc' }
+      });
+      if (!link) {
+        const venue = await prisma.venues.findUnique({ where: { id: acc.venue }, select: { name: true } });
+        const hours = Number(process.env.BOLD_LINK_EXPIRATION_HOURS) || 48;
+        const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
+        const what = amount - depositAmount < balance ? 'Abono' : 'Saldo';
+        const description = `${what}${depositAmount ? ' y depósito' : ''} alquiler ${venue?.name || ''} ${formatBookingDate(acc.date)}`.trim();
+        const created = await bold.createPaymentLink({ amount, description, expiresAt });
+        link = await prisma.bold_payment_links.create({
+          data: {
+            bold_link_id: created.linkId,
+            bold_url: created.url,
+            amount,
+            deposit_amount: depositAmount || null,
+            description,
+            status: 'ACTIVE',
+            expiration_date: expiresAt,
+            accommodation_id: acc.id,
+            venue_id: acc.venue,
+            created_by: String(req.user.claims?.sub)
+          }
+        });
+        await logBoldEvent(link.id, 'created', {
+          source: 'app', toStatus: 'ACTIVE', actor: String(req.user.claims?.sub),
+          detail: { amount, deposit_amount: depositAmount, accommodation_id: acc.id, balance, expires_at: expiresAt }
+        });
+      }
+      // QR Bre-B (Bold's QR API): scanned from any bank app, valid for 10 minutes.
+      if (req.body?.format === 'qr') {
+        if (!bold.isQrConfigured()) return res.status(400).json({ error: 'El QR Bre-B de Bold no está activo' });
+        if (link.qr_reference && link.qr_status === 'running'
+          && await syncBoldLink(link, { checkLink: false }) === 'PAID') {
+          return res.status(409).json({ error: 'Este cobro ya se pagó' });
+        }
+        const qrStillValid = link.qr_image_url && link.qr_status === 'running'
+          && link.qr_expires_at && link.qr_expires_at > new Date(Date.now() + 2 * 60 * 1000);
+        if (!qrStillValid) {
+          const customer = acc.customer
+            ? await prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true, email: true, whatsapp: true } })
+            : null;
+          const venue = await prisma.venues.findUnique({ where: { id: acc.venue }, select: { whatsapp: true } });
+          const phone = cleanPhone(customer?.whatsapp ? String(customer.whatsapp) : null) || cleanPhone(venue?.whatsapp ? String(venue.whatsapp) : null);
+          link = await refreshBoldQr(link, {
+            total: amount,
+            description: link.description || 'Saldo alquiler',
+            payer: {
+              name: customer?.fullname || 'Cliente',
+              email: customer?.email || process.env.BOLD_PAYER_EMAIL || 'hola@cabania.co',
+              phone: (phone && phone.slice(-10)) || process.env.BOLD_PAYER_PHONE || '3000000000'
+            }
+          });
+        }
+      }
+
+      res.json({
+        id: link.id,
+        url: link.bold_url,
+        amount: Number(link.amount),
+        deposit_amount: Number(link.deposit_amount || 0),
+        balance,
+        expires_at: link.expiration_date,
+        qr_available: bold.isQrConfigured(),
+        qr_image_url: req.body?.format === 'qr' ? link.qr_image_url : null,
+        qr_expires_at: req.body?.format === 'qr' ? link.qr_expires_at : null
+      });
+    } catch (error) {
+      console.error('[bold] Balance link failed', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -14728,6 +16281,7 @@ Responde con JSON EXACTAMENTE en este formato:
           updated_at: new Date()
         }
       });
+      notifyContractSigned(amendment.accommodation_id, { amendmentNumber: amendment.number });
       res.json({ ...updated, kind: 'amendment', attachments: [] });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -14883,6 +16437,7 @@ Responde con JSON EXACTAMENTE en este formato:
 
       // TODO: Generate PDF + hash (ticket #10)
 
+      notifyContractSigned(contract.accommodation_id);
       res.json(updated);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -14966,6 +16521,24 @@ Responde con JSON EXACTAMENTE en este formato:
     // Daily Instagram activity summary (per venue settings).
     setInterval(() => sendInstagramDailySummaries().catch(err =>
       console.error('[ig-summary] Error:', err.message)), 5 * 60 * 1000);
+
+    // Overdue recurring expenses (caretaker, utilities...): notify the admins.
+    const runRecurringCheck = () => checkOverdueRecurringExpenses().catch(err =>
+      console.error('[recurring-expenses] Error:', err.message));
+    setTimeout(runRecurringCheck, 60 * 1000);
+    setInterval(runRecurringCheck, 30 * 60 * 1000);
+
+    // Team reminders of upcoming bookings, as each plan defines (hourly, Bogotá).
+    const runBookingReminders = () => sendBookingReminders().catch(err =>
+      console.error('[reminders] Error:', err.message));
+    setTimeout(runBookingReminders, 2 * 60 * 1000);
+    setInterval(runBookingReminders, 60 * 60 * 1000);
+
+    // Membership expiry notices (7 days, 1 day, expired). Idempotent per paid_until.
+    const runMembershipNotices = () => sendMembershipExpiryNotices().catch(err =>
+      console.error('[membership] Notice error:', err.message));
+    setTimeout(runMembershipNotices, 2 * 60 * 1000);
+    setInterval(runMembershipNotices, 60 * 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });

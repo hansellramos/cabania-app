@@ -43,7 +43,7 @@
             </CRow>
 
             <CRow class="mb-3">
-              <CCol :md="4">
+              <CCol v-if="maintenanceOn" :md="4">
                 <CFormLabel>Zona</CFormLabel>
                 <CFormSelect v-model="form.zone_id" :disabled="!form.venue_id">
                   <option value="">{{ form.venue_id ? 'Seleccionar...' : 'Seleccione sede primero' }}</option>
@@ -152,9 +152,13 @@ import {
   CForm, CFormLabel, CFormInput, CFormSelect, CFormTextarea
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
+import { useModules } from '@/composables/useModules'
 
 const route = useRoute()
 const router = useRouter()
+// Las zonas son del módulo Mantenimiento.
+const { isEnabled } = useModules()
+const maintenanceOn = computed(() => isEnabled('maintenance'))
 
 const isEditing = computed(() => !!route.params.id)
 const saving = ref(false)
@@ -211,7 +215,7 @@ const loadVenues = async () => {
 }
 
 const loadZones = async () => {
-  if (!form.value.venue_id) { zones.value = []; return }
+  if (!form.value.venue_id || !maintenanceOn.value) { zones.value = []; return }
   try {
     const response = await fetch(`/api/maintenance-zones?venue_id=${form.value.venue_id}`, { credentials: 'include' })
     if (response.ok) zones.value = await response.json()

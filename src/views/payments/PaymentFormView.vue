@@ -150,6 +150,7 @@
                   <option value="">Seleccionar...</option>
                   <option value="Nequi">Nequi</option>
                   <option value="Daviplata">Daviplata</option>
+                  <option value="Bre-B">Bre-B</option>
                   <option value="Transferencia bancaria">Transferencia bancaria</option>
                   <option value="Efectivo">Efectivo</option>
                   <option value="Tarjeta débito">Tarjeta débito</option>
@@ -157,6 +158,23 @@
                   <option value="PSE">PSE</option>
                   <option value="Otro">Otro</option>
                 </CFormSelect>
+              </CCol>
+              <CCol v-if="depositOffer" :md="12" class="mt-2">
+                <CFormCheck
+                  id="payment-includes-deposit"
+                  v-model="includesDeposit"
+                  label="Este pago incluye el depósito de garantía"
+                />
+                <div v-if="includesDeposit" class="d-flex align-items-center gap-2 mt-1 small">
+                  <span>Depósito:</span>
+                  <CInputGroup size="sm" style="max-width: 180px;">
+                    <CInputGroupText>$</CInputGroupText>
+                    <CFormInput v-model.number="depositAmount" type="number" min="0" aria-label="Monto del depósito" />
+                  </CInputGroup>
+                  <span class="text-body-secondary">
+                    Pago del alquiler: {{ formatMoney((Number(form.amount) || 0) - (Number(depositAmount) || 0)) }}
+                  </span>
+                </div>
               </CCol>
             </CRow>
             <CRow class="mb-3">
@@ -243,7 +261,7 @@
 
 <script setup>
 import { todayIso } from '@/utils/dates'
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 
@@ -270,6 +288,28 @@ const extractingData = ref(false)
 const extractionError = ref('')
 const extractionSuccess = ref(false)
 
+// A new payment for a booking without deposit can carry the deposit in the same transfer.
+const depositOffer = ref(false)
+const includesDeposit = ref(false)
+const depositAmount = ref(0)
+const formatMoney = (v) => `$${Math.round(Number(v) || 0).toLocaleString('es-CO')}`
+
+async function loadDepositOffer(accommodationId) {
+  depositOffer.value = false
+  if (isEditing.value || !accommodationId) return
+  try {
+    const [deposits, calc] = await Promise.all([
+      fetch(`/api/deposits?accommodation_id=${accommodationId}`, { credentials: 'include' }).then(r => (r.ok ? r.json() : [])),
+      fetch(`/api/accommodations/${accommodationId}/deposit-calculation`, { credentials: 'include' }).then(r => (r.ok ? r.json() : {}))
+    ])
+    if (deposits.length) return
+    depositOffer.value = true
+    if (!includesDeposit.value) depositAmount.value = Math.round(Number(calc.calculated_amount) || 0)
+  } catch {
+    // Without the offer the payment is registered as usual.
+  }
+}
+
 const form = ref({
   type: '',
   accommodation: '',
@@ -280,6 +320,8 @@ const form = ref({
   notes: '',
   receipt_url: ''
 })
+
+watch(() => form.value.accommodation, loadDepositOffer)
 
 const goBack = () => {
   if (fromAccommodation.value) {
@@ -506,7 +548,10 @@ const savePayment = async () => {
     const response = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form.value)
+      body: JSON.stringify({
+        ...form.value,
+        deposit_amount: !isEditing.value && depositOffer.value && includesDeposit.value ? depositAmount.value : undefined
+      })
     })
     
     if (response.ok) {
@@ -534,6 +579,13 @@ onMounted(() => {
   if (route.query.accommodation_id) {
     form.value.accommodation = route.query.accommodation_id
     form.value.type = 'accommodation'
+  }
+  // Coming from "Cobrar saldo": the amount, method and deposit of that collection.
+  if (route.query.amount) form.value.amount = route.query.amount
+  if (route.query.method) form.value.payment_method = route.query.method
+  if (route.query.deposit) {
+    includesDeposit.value = true
+    depositAmount.value = Math.round(Number(route.query.deposit)) || 0
   }
 })
 </script>

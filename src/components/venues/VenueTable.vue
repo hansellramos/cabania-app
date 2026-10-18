@@ -39,7 +39,7 @@
             <CTableDataCell>
               <CButton color="primary" size="sm" @click="onEdit(venue)">Editar</CButton>
               <CButton color="success" size="sm" class="ms-2" @click="viewPlans(venue)">Planes</CButton>
-              <CButton color="secondary" size="sm" class="ms-2" @click="viewContracts(venue)">Contratos</CButton>
+              <CButton v-if="isEnabled('contracts', venue.organization)" color="secondary" size="sm" class="ms-2" @click="viewContracts(venue)">Contratos</CButton>
               <CButton color="warning" size="sm" class="ms-2" @click="viewExpenses(venue)">Egresos</CButton>
 
               <CButton color="info" size="sm" class="ms-2" @click="viewUpcoming(venue)">Próximos</CButton>
@@ -59,9 +59,11 @@ import { RouterLink, useRouter } from 'vue-router'
 import { fetchVenues, deleteVenue } from '@/services/venueService'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
+import { useModules } from '@/composables/useModules'
 
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
+const { isEnabled } = useModules()
 
 const venues = ref([])
 const allVenues = ref([])
