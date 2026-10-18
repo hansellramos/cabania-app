@@ -233,7 +233,8 @@ const ASSISTANT_TOOLS = DEFINITIONS.filter(t => !t.write && t.name !== 'get_cont
 function createAgentTools(deps) {
   const {
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
-    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission
+    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission,
+    notify, notifier
   } = deps;
 
   /**
@@ -585,10 +586,7 @@ function createAgentTools(deps) {
         })),
         advance: venue.advance_percentage ? `${venue.advance_percentage}%` : '100% (sin anticipo configurado)',
         payment_methods: methods.map(m => `${m.label} (${m.method_type})`),
-        booking_notices: {
-          email: venue.notify_booking_email ? venue.notify_booking_emails : 'apagado',
-          whatsapp: venue.notify_booking_whatsapp ? (venue.notify_booking_whatsapp_phone || 'WhatsApp de la cabaña') : 'apagado'
-        },
+        booking_notices: await describeBookingNotices(venue),
         followup: venue.followup_enabled
           ? `desde las ${venue.followup_time}, tras ${venue.followup_min_idle_hours} h sin respuesta`
           : 'apagado',
@@ -779,6 +777,13 @@ function createAgentTools(deps) {
         }
       });
       const commission = agent ? await recordCommission(booking, agent, plan, scope) : null;
+      // The team hears about it (except whoever asked the agent for it).
+      notify?.('booking_created_ai', {
+        organizationId: venue.organization,
+        venueId: venue.id,
+        data: { accommodationId: booking.id, channel: scope.agentKeyName ? 'api' : 'assistant' },
+        excludeUserIds: [scope.userId]
+      });
       const [summary] = await describeBookings([booking]);
       return { ok: true, booking: summary, customer_created: customer.created, commission };
     },
@@ -889,6 +894,11 @@ function createAgentTools(deps) {
           created_by: scope.userId
         }
       });
+      notify?.('payment_received', {
+        venueId: booking.venue,
+        data: { accommodationId: booking.id, amount, method, verified: false },
+        excludeUserIds: [scope.userId]
+      });
       const [summary] = await describeBookings([booking]);
       return {
         ok: true,
@@ -962,6 +972,19 @@ function createAgentTools(deps) {
   }
 
   /** The agent's pending commission for the booking, from their rules (once per booking). */
+  /** How the team hears about new bookings of a venue (Notificaciones). */
+  async function describeBookingNotices(venue) {
+    if (!notifier || !venue.organization) return null;
+    const s = await notifier.resolveSettings('booking_created_ai', venue.organization, venue.id);
+    if (!s.enabled) return { estado: 'apagado', edit_link: '/business/notifications' };
+    return {
+      app: s.channels.in_app ? 'sí' : 'no',
+      email: s.channels.email ? ([s.email_to_users ? 'destinatarios' : null, s.extra_emails].filter(Boolean).join(', ') || 'sin correos') : 'apagado',
+      whatsapp: s.channels.whatsapp ? (s.whatsapp_phones || 'WhatsApp de la cabaña') : 'apagado',
+      edit_link: '/business/notifications'
+    };
+  }
+
   async function recordCommission(booking, agent, plan, scope) {
     if (!computeCommission) return null;
     const existing = await prisma.commission_payments.findFirst({

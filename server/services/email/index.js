@@ -1,12 +1,14 @@
 const SmtpProvider = require('./SmtpProvider')
 const ResendProvider = require('./ResendProvider')
+const LogProvider = require('./LogProvider')
 
 let instance = null
 
 /**
  * Get the configured email provider instance (singleton).
- * Reads EMAIL_PROVIDER env var to decide which provider to use: 'smtp' (default)
- * or 'resend' (HTTPS API with RESEND_API_KEY; needed on Railway, which blocks SMTP).
+ * Reads EMAIL_PROVIDER env var to decide which provider to use: 'smtp' (default),
+ * 'resend' (HTTPS API with RESEND_API_KEY; needed on Railway, which blocks SMTP)
+ * or 'log' (only prints to the console: local development and tests).
  *
  * To add a new provider:
  *   1. Create MyProvider.js extending EmailProvider
@@ -19,6 +21,10 @@ function getEmailProvider() {
   const provider = (process.env.EMAIL_PROVIDER || 'smtp').toLowerCase()
 
   switch (provider) {
+    case 'log':
+      instance = new LogProvider()
+      break
+
     case 'resend':
       instance = new ResendProvider({
         apiKey: process.env.RESEND_API_KEY,

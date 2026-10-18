@@ -377,6 +377,8 @@ model venue_plans {
   includes_beverages      Boolean  @default(false)
   terms_conditions        String?
   is_active               Boolean  @default(true)
+  // Days before check-in when the team gets a reminder of a booking (e.g. [7, 1]).
+  reminder_days_before    Int[]    @default([1])
   created_at              DateTime @default(now()) @db.Timestamptz(6)
   venue                   venues   @relation(fields: [venue_id], references: [id], onDelete: Cascade)
 }
@@ -998,6 +1000,42 @@ model notifications {
   created_at      DateTime  @default(now()) @db.Timestamptz(6)
 
   @@index([user_id, created_at])
+}
+
+// Who hears about each kind of event (server/services/notifications.js) and how:
+// one row per organization and type (venue_id null), optionally overridden for
+// a venue. No row = the type's defaults.
+model notification_settings {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id String    @db.Uuid
+  venue_id        String?   @db.Uuid
+  type            String    @db.VarChar(40)
+  enabled         Boolean   @default(true)
+  // { in_app: true, email: false, whatsapp: false }
+  channels        Json      @default("{}") @db.Json
+  // Users of the organization; null = the type's default (the organization's admins).
+  recipient_user_ids Json?  @db.Json
+  // Email goes to the recipients' own addresses (unless email_to_users is off)
+  // plus extra_emails. WhatsApp goes from the system number to whatsapp_phones.
+  email_to_users  Boolean   @default(true)
+  extra_emails    String?   @db.VarChar(500)
+  whatsapp_phones String?   @db.VarChar(255)
+  updated_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_by      String?   @db.VarChar(255)
+
+  @@unique([organization_id, venue_id, type])
+}
+
+// Booking reminders already sent, so the job never repeats one. booking_date
+// lets a rescheduled booking get its reminders again for the new date.
+model booking_reminders_sent {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  accommodation_id String   @db.Uuid
+  booking_date     DateTime @db.Date
+  days_before      Int
+  sent_at          DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([accommodation_id, booking_date, days_before])
 }
 
 // Audit trail of a Bold payment link: every status change, webhook, check and
