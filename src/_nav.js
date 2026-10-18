@@ -76,6 +76,13 @@ export default [
     permission: 'organizations:view',
   },
   {
+    component: 'CNavItem',
+    name: 'Notificaciones',
+    to: '/business/notifications',
+    icon: 'cil-bell',
+    permission: 'venues:edit',
+  },
+  {
     component: 'CNavTitle',
     name: 'Contabilidad',
     permission: 'payments:view',

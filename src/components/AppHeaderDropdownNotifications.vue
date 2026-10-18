@@ -15,9 +15,21 @@
     <CDropdownMenu class="pt-0" style="width: 360px; max-width: 90vw">
       <CDropdownHeader class="bg-body-secondary fw-semibold d-flex justify-content-between align-items-center">
         <span>Notificaciones</span>
-        <CButton v-if="unread > 0" color="link" size="sm" class="p-0 small text-decoration-none fw-normal" @click.stop="markAllRead">
-          Marcar todo como leído
-        </CButton>
+        <span class="d-flex align-items-center gap-2">
+          <CButton v-if="unread > 0" color="link" size="sm" class="p-0 small text-decoration-none fw-normal" @click.stop="markAllRead">
+            Marcar todo como leído
+          </CButton>
+          <CButton
+            v-if="canConfigure"
+            color="link"
+            size="sm"
+            class="p-0 text-body-secondary"
+            title="Configurar notificaciones"
+            @click="router.push('/business/notifications')"
+          >
+            <CIcon icon="cil-settings" />
+          </CButton>
+        </span>
       </CDropdownHeader>
       <div style="max-height: 420px; overflow-y: auto">
         <CDropdownItem
@@ -44,10 +56,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuth } from '@/composables/useAuth'
 
 const router = useRouter()
+const { user } = useAuth()
+// Same rule as the sidebar: whoever can edit venues configures notifications.
+const canConfigure = computed(() => user.value?.is_super_admin === true
+  || (user.value?.profile?.permissions || []).includes('venues:edit'))
 const items = ref([])
 const unread = ref(0)
 let timer = null

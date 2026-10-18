@@ -499,6 +499,12 @@ const routes = [
         meta: { breadcrumb: 'WhatsApp del Sistema', permission: 'whatsapp:manage' },
       },
       {
+        path: '/business/notifications',
+        name: 'NotificationSettings',
+        component: () => import('@/views/settings/NotificationSettingsView.vue'),
+        meta: { breadcrumb: 'Notificaciones', permission: 'venues:edit' },
+      },
+      {
         path: '/admin/ai-settings',
         name: 'AISettings',
         component: () => import('@/views/settings/AISettingsView.vue'),

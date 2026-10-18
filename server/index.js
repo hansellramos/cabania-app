@@ -15,6 +15,7 @@ const whatsappClient = require('./services/whatsappClient');
 const metaWhatsApp = require('./services/metaWhatsApp');
 const metaInstagram = require('./services/metaInstagram');
 const bold = require('./services/bold');
+const { createNotifier, typeCatalog, TYPES: NOTIFICATION_TYPES, CHANNELS: NOTIFICATION_CHANNELS } = require('./services/notifications');
 
 /**
  * Calculate the next resume time at given hour in America/Bogota timezone.
@@ -2188,6 +2189,7 @@ async function startServer() {
       }
       
       const payment = await prisma.payments.create({ data });
+      notifyPayment(payment, { actorUserId: replitId });
       res.json(payment);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -2324,6 +2326,11 @@ async function startServer() {
         await prisma.incomes.deleteMany({
           where: { payment_id: paymentId }
         });
+      }
+
+      // The team hears about a payment that just became verified.
+      if (verified === true && !currentPayment.verified) {
+        notifyPayment(payment, { actorUserId: replitId });
       }
 
       // Update linked estimate and notify client via WhatsApp
@@ -3534,7 +3541,7 @@ async function startServer() {
         free_children_qty, free_children_max_age, free_children_condition, child_food_price,
         min_guests, max_capacity, check_in_time, check_out_time,
         includes_overnight, includes_rooms, includes_food, food_description, includes_beverages,
-        terms_conditions, is_active, amenity_ids
+        terms_conditions, is_active, amenity_ids, reminder_days_before
       } = req.body;
       
       const parseIntOrNull = (val) => val === '' || val === null || val === undefined ? null : parseInt(val, 10);
@@ -3561,7 +3568,8 @@ async function startServer() {
           food_description: food_description || null,
           includes_beverages: includes_beverages || false,
           terms_conditions: terms_conditions || null,
-          is_active: is_active !== false
+          is_active: is_active !== false,
+          ...(reminder_days_before !== undefined && { reminder_days_before: parseReminderDays(reminder_days_before) })
         }
       });
       
@@ -3591,7 +3599,7 @@ async function startServer() {
         free_children_qty, free_children_max_age, free_children_condition, child_food_price,
         min_guests, max_capacity, check_in_time, check_out_time,
         includes_overnight, includes_rooms, includes_food, food_description, includes_beverages,
-        terms_conditions, is_active, amenity_ids
+        terms_conditions, is_active, amenity_ids, reminder_days_before
       } = req.body;
       
       const parseIntOrNull = (val) => val === '' || val === null || val === undefined ? null : parseInt(val, 10);
@@ -3619,7 +3627,8 @@ async function startServer() {
           food_description: food_description || null,
           includes_beverages: includes_beverages || false,
           terms_conditions: terms_conditions || null,
-          is_active: is_active !== false
+          is_active: is_active !== false,
+          ...(reminder_days_before !== undefined && { reminder_days_before: parseReminderDays(reminder_days_before) })
         }
       });
       
@@ -9421,38 +9430,24 @@ REGLAS:
     };
   }
 
+  // ==================== Notification center ====================
+  // notify(type, { organizationId, venueId, data }) delivers an event to whoever
+  // the organization chose in Notificaciones (bell, email, WhatsApp of the team).
+  // Types and their messages live in services/notifications.js.
+  const notifier = createNotifier({ prisma, whatsappClient, cleanPhone, appBaseUrl });
+  const { notify } = notifier;
+
   /**
-   * Let the venue's team know a booking was confirmed online (paid, with contract)
-   * so someone follows up in person: an in-app notification for every user of the
-   * organization, plus WhatsApp and email when the venue turned them on.
+   * Let the venue's team know a booking was closed without them (paid online
+   * through the chat, with contract) so someone follows up in person. Who hears
+   * and how is the booking_created_ai setting; the commission agent who sold it
+   * gets their own version with their commission.
    */
-  async function notifyBookingConfirmed(accommodationId, { paidAmount, balance, contractUrl, manual = false } = {}) {
+  async function notifyBookingConfirmed(accommodationId, { paidAmount, balance, contractUrl, manual = false, channel = null } = {}) {
     const acc = await prisma.accommodations.findUnique({ where: { id: accommodationId } });
     if (!acc?.venue) return;
-    const [venue, plan, customer, agent] = await Promise.all([
-      prisma.venues.findUnique({ where: { id: acc.venue } }),
-      acc.plan_id ? prisma.venue_plans.findUnique({ where: { id: acc.plan_id }, select: { name: true } }) : null,
-      acc.customer ? prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true, whatsapp: true } }) : null,
-      acc.commission_agent_id ? prisma.commission_agents.findUnique({ where: { id: acc.commission_agent_id }, select: { name: true } }) : null
-    ]);
+    const venue = await prisma.venues.findUnique({ where: { id: acc.venue }, select: { id: true, name: true, organization: true } });
     if (!venue) return;
-
-    const adults = acc.adults || 0;
-    const children = acc.children || 0;
-    const total = adults + children;
-    const people = `${total} persona${total === 1 ? '' : 's'}`
-      + (children ? ` (${adults} adulto${adults === 1 ? '' : 's'} y ${children} niño${children === 1 ? '' : 's'})` : '');
-    const date = formatBookingDate(acc.date);
-    const summary = `Se registró un alquiler para el ${date} en ${venue.name}: ${people}.`;
-    const details = [
-      plan?.name ? `Plan: ${plan.name}` : null,
-      customer?.fullname ? `Cliente: ${customer.fullname}${customer.whatsapp ? ` (${customer.whatsapp})` : ''}` : null,
-      agent?.name ? `Vendido por: ${agent.name}` : null,
-      paidAmount ? `Pagado: ${money(paidAmount)}${balance > 0 ? ` · Saldo pendiente: ${money(balance)}` : ''}` : null,
-      contractUrl ? 'Contrato generado, pendiente de firma' : null,
-      manual ? 'Pago conciliado a mano' : null
-    ].filter(Boolean);
-    const link = `/business/accommodations/${acc.id}`;
 
     // The commission agent who sold it gets their own version (below), even when
     // they are also a member of the organization.
@@ -9460,33 +9455,22 @@ REGLAS:
       ? await prisma.commission_agents.findUnique({ where: { id: acc.commission_agent_id }, select: { user_id: true } })
       : null;
 
-    // In-app: always, to everyone in the organization.
-    if (venue.organization) {
-      const members = (await prisma.user_organizations.findMany({
-        where: { organization_id: venue.organization },
-        select: { user_id: true }
-      })).filter(m => m.user_id !== seller?.user_id);
-      if (members.length) {
-        await prisma.notifications.createMany({
-          data: members.map(m => ({
-            user_id: m.user_id,
-            organization_id: venue.organization,
-            venue_id: venue.id,
-            type: 'booking_confirmed',
-            title: `Nuevo alquiler: ${date}`,
-            body: `${summary} ${details.join(' · ')}`.trim(),
-            link
-          }))
-        });
-      }
-    }
+    await notify('booking_created_ai', {
+      organizationId: venue.organization,
+      venueId: venue.id,
+      data: { accommodationId: acc.id, channel, paidAmount, balance, contractUrl, manual },
+      excludeUserIds: [seller?.user_id]
+    });
 
     // The commission agent who sold it hears too, with their commission. Unlike
     // the chat confirmation, this one has no 24-hour window.
     if (seller?.user_id) {
+      const customer = acc.customer ? await prisma.contacts.findUnique({ where: { id: acc.customer }, select: { fullname: true } }) : null;
       const commission = await prisma.commission_payments.findFirst({
         where: { agent_id: acc.commission_agent_id, accommodation_id: acc.id }
       });
+      const total = (acc.adults || 0) + (acc.children || 0);
+      const date = formatBookingDate(acc.date);
       const client = customer?.fullname ? `Tu cliente ${customer.fullname}` : 'Tu cliente';
       await prisma.notifications.create({
         data: {
@@ -9495,44 +9479,81 @@ REGLAS:
           venue_id: venue.id,
           type: 'agent_booking_confirmed',
           title: `Alquiler confirmado: ${date}`,
-          body: `${client} confirmó su alquiler para el ${date} en ${venue.name}: ${people}.`
+          body: `${client} confirmó su alquiler para el ${date} en ${venue.name}: ${total} persona${total === 1 ? '' : 's'}.`
             + (commission
               ? ` Tu comisión: ${money(commission.calculated_amount)} (${commission.status === 'paid' ? 'pagada' : 'pendiente de pago'}).`
               : ''),
-          link
+          link: `/business/accommodations/${acc.id}`
         }
       });
     }
+  }
 
-    const appUrl = `${appBaseUrl()}/#${link}`;
-    const text = `🎉 *Nuevo alquiler confirmado - ${venue.name}*\n\n${summary}\n${details.map(d => `• ${d}`).join('\n')}\n\nVer el alquiler: ${appUrl}`;
+  /**
+   * A payment of a booking was registered or verified: tell the team (except
+   * whoever did it). Runs in the background; never fails the request.
+   */
+  function notifyPayment(payment, { actorUserId = null } = {}) {
+    if (!payment?.accommodation) return;
+    prisma.accommodations.findUnique({ where: { id: payment.accommodation }, select: { id: true, venue: true } })
+      .then(acc => acc?.venue && notify('payment_received', {
+        venueId: acc.venue,
+        data: { accommodationId: acc.id, amount: Number(payment.amount || 0), method: payment.payment_method, verified: !!payment.verified },
+        excludeUserIds: [actorUserId]
+      }))
+      .catch(err => console.error('[notify] Payment notification failed', { payment: payment.id, error: err.message }));
+  }
 
-    if (venue.notify_booking_whatsapp) {
-      const phone = cleanPhone(venue.notify_booking_whatsapp_phone) || cleanPhone(venue.whatsapp ? String(venue.whatsapp) : null);
-      if (!phone) {
-        console.warn('[booking-notify] WhatsApp on but no phone', { venue: venue.id });
-      } else if (!whatsappClient.isAvailable()) {
-        console.warn('[booking-notify] System WhatsApp unavailable', { venue: venue.id });
-      } else {
-        await whatsappClient.sendSystemMessage(phone, text)
-          .catch(err => console.error('[booking-notify] WhatsApp failed', { venue: venue.id, error: err.message }));
-      }
+  /** The guest signed the contract (or an amendment) of a booking. */
+  function notifyContractSigned(accommodationId, { amendmentNumber = null } = {}) {
+    prisma.accommodations.findUnique({ where: { id: accommodationId }, select: { id: true, venue: true } })
+      .then(acc => acc?.venue && notify('contract_signed', {
+        venueId: acc.venue,
+        data: { accommodationId: acc.id, amendmentNumber }
+      }))
+      .catch(err => console.error('[notify] Contract notification failed', { accommodation: accommodationId, error: err.message }));
+  }
+
+  /**
+   * Booking reminders for the team, days before check-in as each plan defines
+   * (venue_plans.reminder_days_before, default [1]). Runs every hour from 7:00
+   * Bogotá time; booking_reminders_sent makes each reminder go only once per
+   * booking, date and offset, even with several instances running.
+   */
+  const REMINDER_MAX_DAYS = 60;
+
+  /** "7, 1" or [7, 1] → [7, 1]: whole days before check-in, 0 = the same day. */
+  function parseReminderDays(value) {
+    const list = Array.isArray(value) ? value : String(value ?? '').split(/[,;\s]+/);
+    return [...new Set(list.map(v => String(v).trim()).filter(v => /^\d+$/.test(v)).map(Number)
+      .filter(n => n >= 0 && n <= REMINDER_MAX_DAYS))].sort((a, b) => b - a);
+  }
+
+  async function sendBookingReminders() {
+    const local = bogotaNow();
+    if (local.time < '07:00') return;
+    const today = new Date(`${local.date}T00:00:00.000Z`);
+    const DAY = 24 * 60 * 60 * 1000;
+    const plans = await prisma.venue_plans.findMany({ select: { id: true, reminder_days_before: true } });
+    // An empty list means the plan wants no reminders.
+    const offsetsByPlan = new Map(plans.map(p => [p.id, p.reminder_days_before ?? [1]]));
+    const maxOffset = Math.min(REMINDER_MAX_DAYS, Math.max(1, ...[...offsetsByPlan.values()].flat()));
+    const bookings = await prisma.accommodations.findMany({
+      where: { cancelled_at: null, venue: { not: null }, date: { gte: today, lte: new Date(today.getTime() + maxOffset * DAY) } },
+      select: { id: true, venue: true, date: true, plan_id: true }
+    });
+    for (const booking of bookings) {
+      const daysBefore = Math.round((new Date(booking.date).getTime() - today.getTime()) / DAY);
+      const offsets = (booking.plan_id && offsetsByPlan.get(booking.plan_id)) || [1];
+      if (!offsets.includes(daysBefore)) continue;
+      // Claim first: whoever inserts the row sends it.
+      const claimed = await prisma.booking_reminders_sent.createMany({
+        data: [{ accommodation_id: booking.id, booking_date: booking.date, days_before: daysBefore }],
+        skipDuplicates: true
+      });
+      if (!claimed.count) continue;
+      await notify('booking_reminder', { venueId: booking.venue, data: { accommodationId: booking.id, daysBefore } });
     }
-
-    if (venue.notify_booking_email) {
-      const to = String(venue.notify_booking_emails || '').split(/[,;\s]+/).map(e => e.trim()).filter(e => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
-      if (to.length) {
-        const escape = (v) => String(v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-        const html = `<p><strong>${escape(summary)}</strong></p><ul>${details.map(d => `<li>${escape(d)}</li>`).join('')}</ul>`
-          + `<p><a href="${escape(appUrl)}">Ver el alquiler en CabanIA</a></p>`;
-        const result = await require('./services/email').getEmailProvider()
-          .send({ to: to.join(', '), subject: `Nuevo alquiler confirmado: ${venue.name}, ${date}`, html });
-        if (!result?.success) console.error('[booking-notify] Email failed', { venue: venue.id, error: result?.error });
-      } else {
-        console.warn('[booking-notify] Email on but no valid address', { venue: venue.id });
-      }
-    }
-    console.log('[booking-notify] Sent', { accommodation: acc.id, whatsapp: venue.notify_booking_whatsapp, email: venue.notify_booking_email });
   }
 
   /**
@@ -9746,6 +9767,8 @@ REGLAS:
           ? await tx.estimates.findUnique({ where: { id: link.estimate_id } })
           : null;
         let accommodationId = link.accommodation_id || estimate?.accommodation_id || null;
+        // The booking is born from this payment (a chat quote) or already existed.
+        const createdBooking = !accommodationId && !!estimate;
         if (!accommodationId && estimate) {
           accommodationId = (await convertEstimateToAccommodation(estimate, tx)).id;
         }
@@ -9876,6 +9899,9 @@ REGLAS:
         return {
           venueName: venue?.name || null,
           accommodationId,
+          createdBooking,
+          channel: estimate?.contact_type || null,
+          paymentMethod: payment.payment_method,
           paymentId: payment.id,
           balance,
           commission,
@@ -9923,10 +9949,22 @@ REGLAS:
 
     // The team hears in the background (not awaited): a slow or blocked mail
     // server must not hold the guest's or agent's chat confirmation.
-    if (result.accommodationId) {
+    // A booking born from this payment is news on its own (with what was paid);
+    // a payment on an existing booking is just a payment.
+    if (result.accommodationId && result.createdBooking) {
+      let channel = result.channel;
+      if (link.conversation_id) {
+        const conv = await prisma.chat_conversations.findUnique({ where: { id: link.conversation_id }, select: { source: true } });
+        channel = conv?.source || channel;
+      }
       notifyBookingConfirmed(result.accommodationId, {
-        paidAmount: Number(link.amount), balance: result.balance, contractUrl, manual: !!state.actor
+        paidAmount: Number(link.amount), balance: result.balance, contractUrl, manual: !!state.actor, channel
       }).catch(err => console.error('[booking-notify] Failed', { accommodation: result.accommodationId, error: err.message }));
+    } else if (result.accommodationId) {
+      notifyPayment({
+        id: result.paymentId, accommodation: result.accommodationId, amount: link.amount,
+        payment_method: result.paymentMethod, verified: true
+      }, { actorUserId: state.actor });
     }
 
     if (link.conversation_id) {
@@ -10129,7 +10167,8 @@ REGLAS:
   // In-app assistant for the team (server/assistant.js)
   const agentToolDeps = {
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
-    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission
+    findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission,
+    notify, notifier
   };
   require('./assistant')(app, { ...agentToolDeps, llmService, isAuthenticated, logAICall });
 
@@ -10176,6 +10215,144 @@ REGLAS:
       });
       res.json({ success: true });
     } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ==================== Notification settings (Notificaciones) ====================
+
+  /**
+   * Organizations whose notifications the user may configure: theirs (a super
+   * admin without memberships, all of them).
+   */
+  async function notificationOrganizations(req) {
+    const userId = currentUserId(req);
+    const accessible = await getAccessibleOrganizationIds(req.userPermissions);
+    let ids = accessible;
+    if (ids === null) {
+      const memberships = await prisma.user_organizations.findMany({ where: { user_id: userId }, select: { organization_id: true } });
+      ids = memberships.length ? memberships.map(m => m.organization_id) : null;
+    }
+    return prisma.organizations.findMany({
+      where: ids === null ? { system: { not: true } } : { id: { in: ids } },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' }
+    });
+  }
+
+  /** The organization and venue a settings request is about, or an error. */
+  async function notificationScope(req, source) {
+    const organizations = await notificationOrganizations(req);
+    const organizationId = source.organization_id || organizations[0]?.id || null;
+    const accessible = await getAccessibleOrganizationIds(req.userPermissions);
+    if (!organizationId || !UUID_PATTERN.test(organizationId)
+      || (accessible !== null && !accessible.includes(organizationId))) {
+      return { error: 'Organización no encontrada' };
+    }
+    const venues = await prisma.venues.findMany({
+      where: { organization: organizationId },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' }
+    });
+    const venueId = source.venue_id || null;
+    if (venueId && !venues.some(v => v.id === venueId)) return { error: 'Cabaña no encontrada' };
+    return { organizations, organizationId, venues, venueId };
+  }
+
+  // GET /api/notification-settings?organization_id=&venue_id= — what applies to
+  // each type (and where it comes from), the organization's users and venues.
+  app.get('/api/notification-settings', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+    try {
+      const scope = await notificationScope(req, req.query);
+      if (scope.error) return res.status(404).json({ error: scope.error });
+      const { organizations, organizationId, venues, venueId } = scope;
+      const settings = {};
+      for (const type of Object.keys(NOTIFICATION_TYPES)) {
+        settings[type] = await notifier.resolveSettings(type, organizationId, venueId);
+      }
+      res.json({
+        organizations,
+        organization_id: organizationId,
+        venues,
+        venue_id: venueId,
+        types: typeCatalog(),
+        settings,
+        members: await notifier.organizationMembers(organizationId),
+        whatsapp_available: whatsappClient.isAvailable()
+      });
+    } catch (error) {
+      console.error('[notification-settings] Load failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // PUT /api/notification-settings — save one type for the organization or a venue.
+  app.put('/api/notification-settings', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+    try {
+      const body = req.body || {};
+      if (!NOTIFICATION_TYPES[body.type]) return res.status(400).json({ error: 'Tipo de notificación no válido' });
+      const scope = await notificationScope(req, body);
+      if (scope.error) return res.status(404).json({ error: scope.error });
+      const { organizationId, venueId } = scope;
+
+      const channels = Object.fromEntries(NOTIFICATION_CHANNELS.map(c => [c, body.channels?.[c] === true]));
+      let recipients = null;
+      if (Array.isArray(body.recipient_user_ids)) {
+        const memberIds = new Set((await notifier.organizationMembers(organizationId)).map(m => m.id));
+        recipients = [...new Set(body.recipient_user_ids.map(String))].filter(id => memberIds.has(id));
+      }
+      const emails = String(body.extra_emails || '').split(/[,;\s]+/).map(e => e.trim()).filter(Boolean);
+      const badEmail = emails.find(e => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e));
+      if (badEmail) return res.status(400).json({ error: `Correo no válido: ${badEmail}` });
+      const phoneList = String(body.whatsapp_phones || '').split(/[,;]+/).map(p => p.trim()).filter(Boolean);
+      const badPhone = phoneList.find(p => !cleanPhone(p));
+      if (badPhone) return res.status(400).json({ error: `Teléfono no válido: ${badPhone}` });
+
+      const data = {
+        enabled: body.enabled !== false,
+        channels,
+        recipient_user_ids: recipients,
+        email_to_users: body.email_to_users !== false,
+        extra_emails: emails.join(', ').slice(0, 500) || null,
+        whatsapp_phones: phoneList.map(cleanPhone).join(', ').slice(0, 255) || null,
+        updated_at: new Date(),
+        updated_by: currentUserId(req)
+      };
+      const existing = await prisma.notification_settings.findFirst({
+        where: { organization_id: organizationId, venue_id: venueId, type: body.type }
+      });
+      if (existing) {
+        await prisma.notification_settings.update({ where: { id: existing.id }, data });
+      } else {
+        await prisma.notification_settings.create({ data: { organization_id: organizationId, venue_id: venueId, type: body.type, ...data } });
+      }
+      // The venue's old new-booking alert is now this row: it must not come back.
+      if (body.type === 'booking_created_ai' && venueId) {
+        await prisma.venues.update({ where: { id: venueId }, data: { notify_booking_whatsapp: false, notify_booking_email: false } });
+      }
+      res.json({ success: true, settings: await notifier.resolveSettings(body.type, organizationId, venueId) });
+    } catch (error) {
+      console.error('[notification-settings] Save failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // DELETE /api/notification-settings?organization_id=&venue_id=&type= — a venue
+  // goes back to the organization's settings (or the organization to the defaults).
+  app.delete('/api/notification-settings', isAuthenticated, requirePermission('venues:edit'), async (req, res) => {
+    try {
+      const type = String(req.query.type || '');
+      if (!NOTIFICATION_TYPES[type]) return res.status(400).json({ error: 'Tipo de notificación no válido' });
+      const scope = await notificationScope(req, req.query);
+      if (scope.error) return res.status(404).json({ error: scope.error });
+      const { organizationId, venueId } = scope;
+      await prisma.notification_settings.deleteMany({ where: { organization_id: organizationId, venue_id: venueId, type } });
+      if (type === 'booking_created_ai' && venueId) {
+        await prisma.venues.update({ where: { id: venueId }, data: { notify_booking_whatsapp: false, notify_booking_email: false } });
+      }
+      res.json({ success: true, settings: await notifier.resolveSettings(type, organizationId, venueId) });
+    } catch (error) {
+      console.error('[notification-settings] Reset failed', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -14728,6 +14905,7 @@ Responde con JSON EXACTAMENTE en este formato:
           updated_at: new Date()
         }
       });
+      notifyContractSigned(amendment.accommodation_id, { amendmentNumber: amendment.number });
       res.json({ ...updated, kind: 'amendment', attachments: [] });
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -14883,6 +15061,7 @@ Responde con JSON EXACTAMENTE en este formato:
 
       // TODO: Generate PDF + hash (ticket #10)
 
+      notifyContractSigned(contract.accommodation_id);
       res.json(updated);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -14966,6 +15145,12 @@ Responde con JSON EXACTAMENTE en este formato:
     // Daily Instagram activity summary (per venue settings).
     setInterval(() => sendInstagramDailySummaries().catch(err =>
       console.error('[ig-summary] Error:', err.message)), 5 * 60 * 1000);
+
+    // Team reminders of upcoming bookings, as each plan defines (hourly, Bogotá).
+    const runBookingReminders = () => sendBookingReminders().catch(err =>
+      console.error('[reminders] Error:', err.message));
+    setTimeout(runBookingReminders, 2 * 60 * 1000);
+    setInterval(runBookingReminders, 60 * 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });
