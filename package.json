@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "vite",
-    "build": "prisma generate --schema=server/prisma/schema.prisma && vite build",
+    "build": "prisma generate --schema=server/prisma/schema.prisma && vite build && node scripts/sourcemaps.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

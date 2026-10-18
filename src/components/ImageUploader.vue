@@ -41,6 +41,7 @@
 
     <div
       v-if="images.length < maxImages"
+      ref="uploadArea"
       class="image-upload-area"
       :class="{ 'is-dragging': isDragging, 'is-uploading': uploading }"
       @paste="handlePaste"
@@ -63,7 +64,7 @@
           <CButton color="info" size="sm" @click.stop="triggerCamera">
             <CIcon name="cil-camera" class="me-1" /> Tomar Foto
           </CButton>
-          <CButton color="secondary" size="sm" @click.stop="pasteFromClipboard">
+          <CButton v-if="canReadClipboard" color="secondary" size="sm" @click.stop="pasteFromClipboard">
             <CIcon name="cil-clipboard" class="me-1" /> Pegar
           </CButton>
         </div>
@@ -177,7 +178,12 @@ const handlePaste = (event) => {
   }
 }
 
+// Browsers without clipboard.read (Firefox, some mobiles) only support Ctrl/Cmd+V on the area.
+const canReadClipboard = typeof navigator !== 'undefined' && !!navigator.clipboard?.read
+const uploadArea = ref(null)
+
 const pasteFromClipboard = async () => {
+  uploadError.value = ''
   try {
     const clipboardItems = await navigator.clipboard.read()
     for (const item of clipboardItems) {
@@ -189,10 +195,11 @@ const pasteFromClipboard = async () => {
         return
       }
     }
-    uploadError.value = 'No hay imagen en el portapapeles'
+    uploadError.value = 'No hay una imagen copiada. Copia la imagen primero (no el archivo) y vuelve a intentar.'
   } catch (error) {
     console.error('Clipboard error:', error)
-    uploadError.value = 'No se pudo acceder al portapapeles. Usa Ctrl+V en el área de carga.'
+    uploadError.value = 'El navegador no dejó leer el portapapeles. Usa Ctrl/Cmd+V aquí mismo (el área ya está seleccionada).'
+    uploadArea.value?.focus()
   }
 }
 

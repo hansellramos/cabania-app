@@ -79,7 +79,7 @@
                 <CTableHeaderCell>Acciones</CTableHeaderCell>
               </CTableRow>
             </CTableHead>
-            <CTableBody>
+            <CTableBody class="ph-no-capture">
               <CTableRow v-for="payment in paginatedPayments" :key="payment.id">
                 <CTableDataCell>{{ formatDate(filters.basis === 'accrual' ? (payment.accommodation_data?.date || payment.payment_date) : payment.payment_date) }}</CTableDataCell>
                 <CTableDataCell>{{ formatCurrency(payment.amount) }}</CTableDataCell>

@@ -210,6 +210,7 @@ import {
   CFormCheck, CCollapse
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
+import { track } from '@/lib/analytics'
 
 const stayType = ref('pasadia')
 const checkIn = ref('')
@@ -371,6 +372,13 @@ const searchAvailability = async () => {
     const response = await fetch(`/api/availability?${params}`)
     if (response.ok) {
       venues.value = await response.json()
+      track('availability_searched', {
+        stay_type: stayType.value,
+        adults: adults.value,
+        children: children.value,
+        amenities_count: selectedAmenityIds.value.length,
+        results_count: venues.value.length,
+      })
     } else {
       const data = await response.json().catch(() => ({}))
       errorMessage.value = data.error || 'Error al buscar disponibilidad'

@@ -16,6 +16,28 @@ const whatsappClient = require('./services/whatsappClient');
 const metaWhatsApp = require('./services/metaWhatsApp');
 const metaInstagram = require('./services/metaInstagram');
 const bold = require('./services/bold');
+const analytics = require('./lib/analytics');
+
+// Chat source → analytics channel (Meta Cloud API and Baileys are both WhatsApp).
+const chatChannel = (source) => (['cloud_api', 'whatsapp', 'baileys'].includes(source) ? 'whatsapp' : source || 'web');
+
+// booking_created event (fire-and-forget; looks up the plan type off the request path).
+function trackBookingCreated(acc, source, userId) {
+  if (!acc) return;
+  (acc.plan_id ? prisma.venue_plans.findUnique({ where: { id: acc.plan_id }, select: { plan_type: true } }) : Promise.resolve(null))
+    .catch(() => null)
+    .then(plan => analytics.track('booking_created', {
+      userId,
+      venueId: acc.venue,
+      properties: {
+        source,
+        plan_type: plan?.plan_type || null,
+        adults_bucket: analytics.countBucket((acc.adults || 0) + (acc.children || 0)),
+        total_bucket: analytics.amountBucket(acc.agreed_price ?? acc.calculated_price),
+        has_agent: !!acc.commission_agent_id,
+      },
+    }));
+}
 const recurringSchedule = require('./services/recurringExpenses');
 const { createNotifier, typeCatalog, TYPES: NOTIFICATION_TYPES, CHANNELS: NOTIFICATION_CHANNELS } = require('./services/notifications');
 const membership = require('./services/membership');
@@ -1134,6 +1156,12 @@ async function startServer() {
         delete data.followup_time;
       }
       const venue = await prisma.venues.create({ data });
+      analytics.track('venue_created', {
+        userId: req.user?.claims?.sub,
+        organizationId: venue.organization || null,
+        venueId: venue.id,
+        properties: { source: 'form' },
+      });
       res.json(venue);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -1829,6 +1857,7 @@ async function startServer() {
       }
 
       const accommodation = await prisma.accommodations.create({ data });
+      trackBookingCreated(accommodation, data.commission_agent_id && !commission_agent_id ? 'reseller' : 'direct', userId);
       res.json(accommodation);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -2306,6 +2335,13 @@ async function startServer() {
       }
       
       const payment = await prisma.payments.create({ data });
+      (payment.accommodation ? prisma.accommodations.findUnique({ where: { id: payment.accommodation }, select: { venue: true } }) : Promise.resolve(null))
+        .catch(() => null)
+        .then(acc => analytics.track('payment_recorded', {
+          userId,
+          venueId: acc?.venue || null,
+          properties: { method: payment.payment_method || null, type: payment.type || null, amount_bucket: analytics.amountBucket(payment.amount), has_receipt: !!payment.receipt_url },
+        }));
       notifyPayment(payment, { actorUserId: replitId });
       res.json(payment);
     } catch (error) {
@@ -4983,6 +5019,12 @@ async function startServer() {
       if (recurringError) return res.status(400).json({ error: recurringError });
 
       const expense = await prisma.expenses.create({ data });
+      analytics.track('expense_created', {
+        userId,
+        organizationId: expense.organization_id || null,
+        venueId: expense.venue_id || null,
+        properties: { category_id: expense.category_id || null, amount_bucket: analytics.amountBucket(expense.amount), linked_to_booking: !!expense.accommodation_id, has_receipt: !!expense.receipt_url },
+      });
       res.json(expense);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -6168,6 +6210,11 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
           created_by: userId
         }
       });
+      analytics.track('quote_created', {
+        userId,
+        venueId: venue_id,
+        properties: { source: 'form', channel: contact_type, total_bucket: analytics.amountBucket(agreed_price ?? calculated_price) },
+      });
       
       res.status(201).json(estimate);
     } catch (error) {
@@ -6780,6 +6827,12 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       }
       
       const accommodation = await convertEstimateToAccommodation(estimate);
+      trackBookingCreated(accommodation, 'quote', userId);
+      analytics.track('quote_converted', {
+        userId,
+        venueId: estimate.venue_id,
+        properties: { channel: estimate.contact_type || null, from_chat: !!estimate.conversation_id, has_agent: !!estimate.commission_agent_id },
+      });
 
       res.json({ estimate_id: req.params.id, accommodation_id: accommodation.id, accommodation });
     } catch (error) {
@@ -8871,6 +8924,7 @@ REGLAS:
                   }
                 });
                 conversation.messages = [];
+                analytics.track('ai_conversation_started', { venueId: venue_id, properties: { channel: 'whatsapp', source: 'cloud_api' } });
               }
 
               // Check if conversation is escalated
@@ -9131,6 +9185,7 @@ REGLAS:
             }
           });
           conversation.messages = [];
+          analytics.track('ai_conversation_started', { venueId: venue_id, properties: { channel: 'instagram', source: 'instagram' } });
         }
 
         // If escalated, save message but skip AI
@@ -9823,6 +9878,9 @@ REGLAS:
         updated_at: new Date()
       }
     });
+    if (conversation.status !== 'human_attention') {
+      analytics.track('ai_handoff_to_human', { venueId: conversation.venue_id, properties: { channel: chatChannel(conversation.source), reason: 'human_reply' } });
+    }
   }
 
   /**
@@ -10272,6 +10330,11 @@ REGLAS:
       return confirmAgentCharge({ venue, conversation, agent, args: { draft_id: existing.id } });
     }
     const estimate = existing || await prisma.estimates.create({ data });
+    if (!existing) {
+      const props = { source: 'ai_chat', channel: conversation.source || null, from_agent: true, total_bucket: analytics.amountBucket(agreedPrice) };
+      analytics.track('quote_created', { venueId: venue.id, properties: props });
+      analytics.track('ai_quote_generated', { venueId: venue.id, properties: props });
+    }
 
     const commission = await computeCommission({ agentId: agent.id, planType: plan.plan_type, adults, agreedPrice });
     const people = `${adults} adulto${adults === 1 ? '' : 's'}${children ? ` y ${children} niño${children === 1 ? '' : 's'}` : ''}`;
@@ -10985,6 +11048,7 @@ REGLAS:
     });
 
     let result;
+    let convertedBooking = null;
     try {
       result = await prisma.$transaction(async (tx) => {
         const estimate = link.estimate_id
@@ -10994,7 +11058,8 @@ REGLAS:
         // The booking is born from this payment (a chat quote) or already existed.
         const createdBooking = !accommodationId && !!estimate;
         if (!accommodationId && estimate) {
-          accommodationId = (await convertEstimateToAccommodation(estimate, tx)).id;
+          convertedBooking = await convertEstimateToAccommodation(estimate, tx);
+          accommodationId = convertedBooking.id;
         }
         const accommodation = accommodationId
           ? await tx.accommodations.findUnique({ where: { id: accommodationId } })
@@ -11167,6 +11232,11 @@ REGLAS:
       await logBoldEvent(link.id, 'record_failed', { source, detail: { error: err.message } });
       return;
     }
+    if (convertedBooking) trackBookingCreated(convertedBooking, 'quote_paid', null);
+    analytics.track('payment_recorded', {
+      venueId: link.venue_id || convertedBooking?.venue || null,
+      properties: { method: 'Bold', bold_method: state.paymentMethod || null, type: 'accommodation', amount_bucket: analytics.amountBucket(link.amount), automatic: !state.actor },
+    });
 
     console.log('[bold] Payment recorded', { link: link.bold_link_id, ...result });
     await logBoldEvent(link.id, 'recorded', {
@@ -11196,6 +11266,7 @@ REGLAS:
         if (!contract && contractsOn) {
           const created = await createAccommodationContract(accommodation, 'system:bold');
           contract = created.snapshot_html ? created : null;
+          if (contract) analytics.track('contract_sent', { venueId: accommodation.venue, properties: { kind: 'contract', source: 'bold' } });
           if (!contract) {
             // No active template for this venue: nothing the guest could sign.
             await prisma.contracts.delete({ where: { id: created.id } });
@@ -12623,6 +12694,11 @@ REGLAS:
               created_by: 'chat_ai'
             }
           });
+          if (!existingEstimate) {
+            const props = { source: 'ai_chat', channel: source || null, from_agent: false, total_bucket: analytics.amountBucket(calculatedPrice) };
+            analytics.track('quote_created', { venueId: venue_id, properties: props });
+            analytics.track('ai_quote_generated', { venueId: venue_id, properties: props });
+          }
 
           const estimateResult = {
             success: true,
@@ -12951,6 +13027,7 @@ REGLAS:
                 updated_at: new Date()
               }
             });
+            analytics.track('ai_handoff_to_human', { venueId: venue_id, properties: { channel: chatChannel(source), reason } });
 
             // Send notification via system WhatsApp
             const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
@@ -13075,6 +13152,7 @@ REGLAS:
               updated_at: new Date()
             }
           });
+          analytics.track('ai_handoff_to_human', { venueId: venue_id, properties: { channel: 'whatsapp', reason: 'message_limit' } });
 
           // Notify owner
           const notificationPhone = waConn?.notification_phone || (venue.whatsapp ? String(venue.whatsapp) : null);
@@ -13225,6 +13303,7 @@ REGLAS:
           }
         });
         conversation.messages = [];
+        analytics.track('ai_conversation_started', { venueId: venue_id, properties: { channel: chatChannel(source), source } });
       }
 
       // Update visitor info if provided
@@ -13766,6 +13845,10 @@ REGLAS:
       if (data.warranty_expiry && data.warranty_expiry !== '') data.warranty_expiry = new Date(data.warranty_expiry);
       else data.warranty_expiry = null;
       const item = await prisma.inventory_items.create({ data });
+      analytics.track('inventory_item_updated', {
+        userId, organizationId: item.organization_id || null, venueId: item.venue_id || null,
+        properties: { action: 'created', item_type: item.type || null },
+      });
       res.json(item);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -13792,6 +13875,10 @@ REGLAS:
       if (updateData.warranty_expiry && updateData.warranty_expiry !== '') updateData.warranty_expiry = new Date(updateData.warranty_expiry);
       else updateData.warranty_expiry = null;
       const item = await prisma.inventory_items.update({ where: { id: req.params.id }, data: updateData });
+      analytics.track('inventory_item_updated', {
+        userId, organizationId: item.organization_id || null, venueId: item.venue_id || null,
+        properties: { action: 'edited', item_type: item.type || null },
+      });
       res.json(item);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -13882,6 +13969,10 @@ REGLAS:
           data: { quantity: parseFloat(item.quantity) + parseFloat(quantity_change) }
         });
         return { movement, item: updatedItem };
+      });
+      analytics.track('inventory_item_updated', {
+        userId, organizationId: item.organization_id || null, venueId: item.venue_id || null,
+        properties: { action: 'movement', movement_type: type, item_type: item.type || null },
       });
       res.json(result);
     } catch (error) {
@@ -14089,6 +14180,10 @@ REGLAS:
       for (const f of mlOptDecimal) { if (data[f] === '' || data[f] === undefined) data[f] = null; else if (data[f] !== null) data[f] = parseFloat(data[f]); }
       for (const f of mlOptString) { if (data[f] === '') data[f] = null; }
       const log = await prisma.maintenance_logs.create({ data });
+      analytics.track('maintenance_log_created', {
+        userId, organizationId: log.organization_id || null, venueId: log.venue_id || null,
+        properties: { priority: log.priority || null, has_cost: log.cost != null, has_zone: !!log.zone_id },
+      });
       res.json(log);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -14772,6 +14867,14 @@ REGLAS:
 
         return payment;
       });
+      if (result.status === 'paid') {
+        analytics.track('commission_paid', {
+          userId,
+          organizationId: result.organization_id || null,
+          venueId: result.venue_id || null,
+          properties: { amount_bucket: analytics.amountBucket(result.calculated_amount), with_expense: !!result.expense_id },
+        });
+      }
 
       res.json(result);
     } catch (error) {
@@ -14825,6 +14928,14 @@ REGLAS:
 
         return updated;
       });
+      if (result.status === 'paid' && existing.status !== 'paid') {
+        analytics.track('commission_paid', {
+          userId,
+          organizationId: result.organization_id || null,
+          venueId: result.venue_id || null,
+          properties: { amount_bucket: analytics.amountBucket(result.calculated_amount), with_expense: !!result.expense_id },
+        });
+      }
 
       res.json(result);
     } catch (error) {
@@ -15202,6 +15313,12 @@ REGLAS:
         }).catch(() => {}); // Ignore if already exists
       }
 
+      analytics.track('signup_completed', {
+        userId,
+        organizationId: invitation.organization_id || null,
+        properties: { source: 'invitation', is_partner: !!isPartnerInvitation, profile_code: profileCode },
+      });
+
       // Auto-login: create session
       const loginUser = { id: userId, email, display_name };
       req.login(loginUser, (err) => {
@@ -15341,6 +15458,7 @@ REGLAS:
           data: existingData,
         }
       });
+      analytics.track('onboarding_step_completed', { userId, properties: { step: Number(step) } });
 
       res.json(updated);
     } catch (error) {
@@ -15356,6 +15474,7 @@ REGLAS:
         where: { user_id: userId },
         data: { completed_at: new Date() }
       });
+      analytics.track('onboarding_completed', { userId });
       res.json(updated);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -16061,6 +16180,7 @@ Responde con JSON EXACTAMENTE en este formato:
       if (existing) return res.status(400).json({ error: 'Ya existe un contrato para este hospedaje' });
 
       const contract = await createAccommodationContract(accommodation, userId, req.body?.template_id || null);
+      analytics.track('contract_sent', { userId, venueId: accommodation.venue, properties: { kind: 'contract', source: 'manual' } });
       res.json(contract);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -16202,6 +16322,11 @@ Responde con JSON EXACTAMENTE en este formato:
           created_by: String(req.user.claims?.sub || '')
         }
       });
+      analytics.track('contract_sent', {
+        userId: req.user.claims?.sub,
+        venueId: accommodation.venue,
+        properties: { kind: 'amendment', number, changed_fields: changes.map(c => c.field) },
+      });
       res.json(amendment);
     } catch (error) {
       console.error('[amendment] Create failed', error);
@@ -16281,6 +16406,9 @@ Responde con JSON EXACTAMENTE en este formato:
           updated_at: new Date()
         }
       });
+      prisma.accommodations.findUnique({ where: { id: amendment.accommodation_id }, select: { venue: true } })
+        .then(acc => analytics.track('contract_signed', { venueId: acc?.venue, properties: { kind: 'amendment', number: amendment.number } }))
+        .catch(() => {});
       notifyContractSigned(amendment.accommodation_id, { amendmentNumber: amendment.number });
       res.json({ ...updated, kind: 'amendment', attachments: [] });
     } catch (error) {
@@ -16436,6 +16564,10 @@ Responde con JSON EXACTAMENTE en este formato:
       });
 
       // TODO: Generate PDF + hash (ticket #10)
+      analytics.track('contract_signed', {
+        venueId: signedAccommodation?.venue,
+        properties: { kind: 'contract', with_photo: !!signer_photo_url },
+      });
 
       notifyContractSigned(contract.accommodation_id);
       res.json(updated);
@@ -16475,9 +16607,28 @@ Responde con JSON EXACTAMENTE en este formato:
 
   // ==================== End Contract API ====================
 
-  // Serve static files from Vue build in production
+  // Errors a route did not handle: report them and answer instead of hanging.
+  app.use((err, req, res, next) => {
+    console.error('[server] Unhandled route error', { path: req.path, error: err?.message });
+    analytics.captureException(err, { userId: req.user?.claims?.sub, path: req.route?.path || req.path, method: req.method });
+    if (res.headersSent) return next(err);
+    res.status(err?.status || 500).json({ error: err?.expose ? err.message : 'Error interno del servidor' });
+  });
+
+  // Serve static files from Vue build in production. index.html is never cached so a
+  // deploy is picked up right away; hashed /assets files are immutable. Source maps
+  // are uploaded to PostHog at build time and never served.
   const distPath = path.join(__dirname, '..', 'dist');
-  app.use(express.static(distPath));
+  app.use((req, res, next) => (req.path.endsWith('.map') ? res.status(404).end() : next()));
+  app.use(express.static(distPath, {
+    setHeaders(res, filePath) {
+      if (filePath.endsWith('index.html')) {
+        res.setHeader('Cache-Control', 'no-cache');
+      } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+    }
+  }));
   
   // Handle SPA routing - serve index.html for all non-API routes
   app.use((req, res, next) => {
@@ -16485,8 +16636,14 @@ Responde con JSON EXACTAMENTE en este formato:
     if (req.path.startsWith('/api') || req.path.startsWith('/objects')) {
       return res.status(404).json({ error: 'Not found' });
     }
+    // A missing file (an old chunk after a deploy) must 404, not get index.html:
+    // the browser would fail with "'text/html' is not a valid JavaScript MIME type".
+    if (req.path.startsWith('/assets/') || /\.[a-z0-9]+$/i.test(req.path)) {
+      return res.status(404).end();
+    }
     // Only handle GET requests for SPA routing
     if (req.method === 'GET') {
+      res.setHeader('Cache-Control', 'no-cache');
       res.sendFile(path.join(distPath, 'index.html'));
     } else {
       next();
@@ -16547,6 +16704,22 @@ Responde con JSON EXACTAMENTE en este formato:
 // When running standalone (node index.js), start the server
 if (!process.env.VERCEL) {
   startServer().catch(console.error);
+
+  // Report crashes to PostHog. An unhandled rejection still crashes the process
+  // (Node's default): it is rethrown and ends in the uncaughtException handler.
+  process.on('unhandledRejection', (reason) => {
+    throw reason instanceof Error ? reason : new Error(`Unhandled rejection: ${String(reason)}`);
+  });
+  process.on('uncaughtException', async (err) => {
+    console.error('[server] Uncaught exception', err);
+    analytics.captureException(err, { path: 'process' });
+    await Promise.race([analytics.shutdown(), new Promise(r => setTimeout(r, 2000))]);
+    process.exit(1);
+  });
+  process.on('SIGTERM', async () => {
+    await Promise.race([analytics.shutdown(), new Promise(r => setTimeout(r, 3000))]);
+    process.exit(0);
+  });
 }
 
 // For Vercel serverless: export a ready promise and the app

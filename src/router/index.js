@@ -1,6 +1,6 @@
 import { h, resolveComponent } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
-import { usePostHog } from '@/composables/usePostHog'
+import { initAnalytics, trackPageview, identifyUser } from '@/lib/analytics'
 
 import DefaultLayout from '@/layouts/DefaultLayout'
 import accommodationsRoutes from './routes/accommodations'
@@ -775,8 +775,8 @@ const router = createRouter({
   },
 })
 
-// Initialize PostHog for analytics
-const { posthog } = usePostHog()
+// Product analytics (PostHog). Only sends from production hosts.
+initAnalytics()
 
 // Public routes that don't require authentication
 const publicRoutes = ['/availability', '/p/', '/contract/', '/pages/login', '/pages/register', '/pages/forgot-password', '/pages/code-login', '/pages/404', '/pages/500', '/payment-result', '/onboarding', '/invitation/accept']
@@ -805,6 +805,7 @@ async function checkAuth() {
       isAuthenticated = true
       hasSubscription = !!(userData.subscription && userData.subscription.is_active)
       cachedUser = userData
+      identifyUser(userData)
     } else {
       isAuthenticated = false
       hasSubscription = false
@@ -892,6 +893,31 @@ router.beforeEach(async (to, from) => {
   }
 
   return true
+})
+
+router.afterEach((to, from, failure) => {
+  if (!failure) trackPageview(to)
+})
+
+// A deploy replaces the hashed chunks; a tab opened before it fails to load the
+// next lazy route. Reload once to pick up the new build.
+const CHUNK_RELOAD_KEY = 'cabania-chunk-reload'
+function isChunkLoadError(err) {
+  return /dynamically imported module|Importing a module script failed|error loading dynamically|is not a valid JavaScript MIME type/i.test(err?.message || '')
+}
+router.onError((err, to) => {
+  if (!isChunkLoadError(err)) return
+  try {
+    if (sessionStorage.getItem(CHUNK_RELOAD_KEY)) return
+    sessionStorage.setItem(CHUNK_RELOAD_KEY, '1')
+  } catch (_) {
+    return
+  }
+  window.location.hash = to.fullPath
+  window.location.reload()
+})
+router.isReady().then(() => {
+  setTimeout(() => { try { sessionStorage.removeItem(CHUNK_RELOAD_KEY) } catch (_) {} }, 10000)
 })
 
 export default router

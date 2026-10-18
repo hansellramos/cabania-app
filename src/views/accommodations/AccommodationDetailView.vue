@@ -98,7 +98,7 @@
               <CRow>
                 <CCol :md="6">
                   <h6 class="text-muted">Cliente</h6>
-                  <p class="fs-5">{{ accommodation.customer_data?.fullname || accommodation.customer_data?.user_data?.email || '—' }}</p>
+                  <p class="fs-5 ph-no-capture">{{ accommodation.customer_data?.fullname || accommodation.customer_data?.user_data?.email || '—' }}</p>
                 </CCol>
                 <CCol :md="6">
                   <h6 class="text-muted">Cabaña</h6>
@@ -204,7 +204,7 @@
                 </CCol>
               </CRow>
               <hr />
-              <CRow class="mt-3" v-if="accommodation.customer_data">
+              <CRow class="mt-3 ph-no-capture" v-if="accommodation.customer_data">
                 <CCol :xs="12">
                   <h6 class="text-muted">Contacto del Cliente</h6>
                   <p v-if="accommodation.customer_data.whatsapp">
@@ -840,7 +840,7 @@
       <CRow v-else class="g-2 mt-1">
         <CCol :sm="6">
           <CFormLabel for="cancelRefundAmount" class="small mb-1">Monto a devolver</CFormLabel>
-          <CFormInput id="cancelRefundAmount" v-model.number="cancelForm.amount" type="number" min="0" :max="verifiedPaid" step="1000" />
+          <CFormInput id="cancelRefundAmount" v-model.number="cancelForm.amount" type="number" min="0" :max="verifiedPaid" step="1" />
         </CCol>
         <CCol :sm="6">
           <CFormLabel for="cancelRefundDate" class="small mb-1">Fecha</CFormLabel>

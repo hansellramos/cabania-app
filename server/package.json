@@ -27,6 +27,7 @@
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
     "pdf-parse": "^1.1.1",
+    "posthog-node": "^5.56.2",
     "prisma": "^6.0.0",
     "twilio": "^5.12.1",
     "uuid": "^11.0.0"

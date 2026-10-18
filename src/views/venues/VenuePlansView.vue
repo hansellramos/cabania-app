@@ -128,14 +128,14 @@
                 <CFormLabel>Precio Adulto *</CFormLabel>
                 <CInputGroup>
                   <CInputGroupText>$</CInputGroupText>
-                  <CFormInput v-model="form.adult_price" type="number" min="0" step="1000" required />
+                  <CFormInput v-model="form.adult_price" type="number" min="0" step="1" required />
                 </CInputGroup>
               </CCol>
               <CCol :md="6">
                 <CFormLabel>Precio Niño *</CFormLabel>
                 <CInputGroup>
                   <CInputGroupText>$</CInputGroupText>
-                  <CFormInput v-model="form.child_price" type="number" min="0" step="1000" required />
+                  <CFormInput v-model="form.child_price" type="number" min="0" step="1" required />
                 </CInputGroup>
               </CCol>
             </CRow>
@@ -165,7 +165,7 @@
                 <CFormLabel>Precio comida niños (cortesía)</CFormLabel>
                 <CInputGroup>
                   <CInputGroupText>$</CInputGroupText>
-                  <CFormInput v-model="form.child_food_price" type="number" min="0" step="1000" />
+                  <CFormInput v-model="form.child_food_price" type="number" min="0" step="1" />
                 </CInputGroup>
               </CCol>
             </CRow>
