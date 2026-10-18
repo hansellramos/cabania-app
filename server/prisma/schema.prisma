@@ -225,7 +225,33 @@ model subscriptions {
   expires_at             DateTime?            @db.Timestamptz(6)
   created_at             DateTime             @default(now()) @db.Timestamptz(6)
   updated_at             DateTime             @default(now()) @updatedAt @db.Timestamptz(6)
+  /// Membership billing (managed by the platform super admin). 'cabana' or 'revendedor'.
+  client_type            String               @default("cabana") @db.VarChar(20)
+  monthly_price          Decimal?             @db.Decimal
+  /// Last day covered by payments. Null = no billing control (never expires).
+  paid_until             DateTime?            @db.Date
+  /// "<paid_until>|<days>" of the last expiry notice sent, so the daily job sends each one once.
+  expiry_notice_key      String?              @db.VarChar(40)
   subscription_users     subscription_users[]
+  payments               subscription_payments[]
+}
+
+/// Payments of a membership. Each one extends paid_until by `months`.
+model subscription_payments {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscription_id   String        @db.Uuid
+  payment_date      DateTime      @db.Date
+  amount            Decimal       @db.Decimal
+  months            Int           @default(1)
+  method            String?       @db.VarChar(50)
+  note              String?       @db.Text
+  paid_until_before DateTime?     @db.Date
+  paid_until_after  DateTime      @db.Date
+  created_by        String?       @db.VarChar(255)
+  created_at        DateTime      @default(now()) @db.Timestamptz(6)
+  subscription      subscriptions @relation(fields: [subscription_id], references: [id], onDelete: Cascade)
+
+  @@index([subscription_id, payment_date])
 }
 
 model subscription_users {

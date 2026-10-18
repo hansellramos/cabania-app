@@ -15,6 +15,7 @@ const whatsappClient = require('./services/whatsappClient');
 const metaWhatsApp = require('./services/metaWhatsApp');
 const metaInstagram = require('./services/metaInstagram');
 const bold = require('./services/bold');
+const membership = require('./services/membership');
 
 /**
  * Calculate the next resume time at given hour in America/Bogota timezone.
@@ -3816,169 +3817,181 @@ async function startServer() {
     }
   });
 
-  // Availability check endpoint - returns venues with plans and their availability status
-  app.get('/api/availability', async (req, res) => {
-    try {
-      const { check_in, check_out, adults, children, amenities } = req.query;
-      
-      if (!check_in) {
-        return res.status(400).json({ error: 'check_in es requerido' });
-      }
-      
-      const checkInDate = new Date(check_in);
-      // For pasadia, check_out can be same as check_in or null
-      const checkOutDate = check_out ? new Date(check_out) : checkInDate;
-      
-      // Validate date range
-      if (checkOutDate < checkInDate) {
-        return res.status(400).json({ error: 'La fecha de salida debe ser posterior a la fecha de entrada' });
-      }
-      
-      const numAdults = parseInt(adults) || 1;
-      const numChildren = parseInt(children) || 0;
-      const totalGuests = numAdults + numChildren;
-      
-      // Parse amenity filter
-      const requiredAmenityIds = amenities ? amenities.split(',').filter(Boolean) : [];
-      
-      // Get all venues that have active plans
-      const venuesWithPlans = await prisma.venues.findMany({
-        where: {
-          venue_plans: {
-            some: {
-              is_active: true
-            }
-          }
-        },
-        include: {
-          venue_plans: {
-            where: { is_active: true },
-            orderBy: { name: 'asc' }
+  /**
+   * Venues with active plans and whether they are free for the dates/guests in
+   * `query` (check_in, check_out, adults, children, amenities). `onlyVenueIds`
+   * limits the search to those venues (null = all). Throws { status: 400 } on
+   * invalid dates.
+   */
+  async function buildAvailability(query, onlyVenueIds = null) {
+    const { check_in, check_out, adults, children, amenities } = query;
+    
+    if (!check_in) {
+      throw Object.assign(new Error('check_in es requerido'), { status: 400 });
+    }
+    
+    const checkInDate = new Date(check_in);
+    // For pasadia, check_out can be same as check_in or null
+    const checkOutDate = check_out ? new Date(check_out) : checkInDate;
+    
+    // Validate date range
+    if (checkOutDate < checkInDate) {
+      throw Object.assign(new Error('La fecha de salida debe ser posterior a la fecha de entrada'), { status: 400 });
+    }
+    
+    const numAdults = parseInt(adults) || 1;
+    const numChildren = parseInt(children) || 0;
+    const totalGuests = numAdults + numChildren;
+    
+    // Parse amenity filter
+    const requiredAmenityIds = amenities ? amenities.split(',').filter(Boolean) : [];
+    
+    // Get all venues that have active plans
+    const venuesWithPlans = await prisma.venues.findMany({
+      where: {
+        ...(onlyVenueIds && { id: { in: onlyVenueIds } }),
+        venue_plans: {
+          some: {
+            is_active: true
           }
         }
-      });
-      
-      // Get organization data for each venue
-      const orgIds = [...new Set(venuesWithPlans.filter(v => v.organization).map(v => v.organization))];
-      const organizations = orgIds.length > 0 ? await prisma.organizations.findMany({
-        where: { id: { in: orgIds } }
-      }) : [];
-      const orgMap = {};
-      organizations.forEach(o => { orgMap[o.id] = o; });
-      
-      // Get venue amenities for all venues
-      const venueIds = venuesWithPlans.map(v => v.id);
-      const venueAmenities = await prisma.venue_amenities.findMany({
-        where: { venue_id: { in: venueIds } }
-      });
-      const allAmenityIds = [...new Set(venueAmenities.map(va => va.amenity_id))];
-      const amenitiesData = allAmenityIds.length > 0 ? await prisma.amenities.findMany({
-        where: { id: { in: allAmenityIds } }
-      }) : [];
-      const amenityMap = {};
-      amenitiesData.forEach(a => { amenityMap[a.id] = a; });
-      
-      // Build venue amenities map
-      const venueAmenitiesMap = {};
-      venueAmenities.forEach(va => {
-        if (!venueAmenitiesMap[va.venue_id]) {
-          venueAmenitiesMap[va.venue_id] = [];
+      },
+      include: {
+        venue_plans: {
+          where: { is_active: true },
+          orderBy: { name: 'asc' }
         }
-        if (amenityMap[va.amenity_id]) {
-          venueAmenitiesMap[va.venue_id].push(amenityMap[va.amenity_id]);
-        }
-      });
+      }
+    });
+    
+    // Get organization data for each venue
+    const orgIds = [...new Set(venuesWithPlans.filter(v => v.organization).map(v => v.organization))];
+    const organizations = orgIds.length > 0 ? await prisma.organizations.findMany({
+      where: { id: { in: orgIds } }
+    }) : [];
+    const orgMap = {};
+    organizations.forEach(o => { orgMap[o.id] = o; });
+    
+    // Get venue amenities for all venues
+    const venueIds = venuesWithPlans.map(v => v.id);
+    const venueAmenities = await prisma.venue_amenities.findMany({
+      where: { venue_id: { in: venueIds } }
+    });
+    const allAmenityIds = [...new Set(venueAmenities.map(va => va.amenity_id))];
+    const amenitiesData = allAmenityIds.length > 0 ? await prisma.amenities.findMany({
+      where: { id: { in: allAmenityIds } }
+    }) : [];
+    const amenityMap = {};
+    amenitiesData.forEach(a => { amenityMap[a.id] = a; });
+    
+    // Build venue amenities map
+    const venueAmenitiesMap = {};
+    venueAmenities.forEach(va => {
+      if (!venueAmenitiesMap[va.venue_id]) {
+        venueAmenitiesMap[va.venue_id] = [];
+      }
+      if (amenityMap[va.amenity_id]) {
+        venueAmenitiesMap[va.venue_id].push(amenityMap[va.amenity_id]);
+      }
+    });
+    
+    // Check for existing accommodations in the date range for each venue
+    
+    // Get all accommodations for these venues
+    const existingAccommodations = await prisma.accommodations.findMany({
+      where: {
+        venue: { in: venueIds },
+        cancelled_at: null
+      }
+    });
+    
+    // Calculate accommodation end dates and check for overlaps
+    const busyVenueIds = new Set();
+    existingAccommodations.forEach(acc => {
+      const accDate = new Date(acc.date);
+      // Duration is stored in seconds, default to 12 hours (pasadia) if missing
+      const durationSeconds = parseInt(acc.duration) || 43200;
+      const accEndDate = new Date(accDate.getTime() + durationSeconds * 1000);
       
-      // Check for existing accommodations in the date range for each venue
+      // Normalize dates to day boundaries for comparison
+      const accStartDay = new Date(accDate.getUTCFullYear(), accDate.getUTCMonth(), accDate.getUTCDate());
+      const accEndDay = new Date(accEndDate.getUTCFullYear(), accEndDate.getUTCMonth(), accEndDate.getUTCDate());
+      const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
+      const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
       
-      // Get all accommodations for these venues
-      const existingAccommodations = await prisma.accommodations.findMany({
-        where: {
-          venue: { in: venueIds },
-          cancelled_at: null
-        }
-      });
+      // Check if this accommodation overlaps with requested dates
+      // Overlap condition: accStart <= checkOut AND accEnd >= checkIn
+      if (accStartDay <= checkOutDay && accEndDay >= checkInDay) {
+        busyVenueIds.add(acc.venue);
+      }
+    });
+    
+    // Build result with availability info
+    let result = venuesWithPlans.map(venue => {
+      const plans = venue.venue_plans || [];
+      const venueAmenityList = venueAmenitiesMap[venue.id] || [];
       
-      // Calculate accommodation end dates and check for overlaps
-      const busyVenueIds = new Set();
-      existingAccommodations.forEach(acc => {
-        const accDate = new Date(acc.date);
-        // Duration is stored in seconds, default to 12 hours (pasadia) if missing
-        const durationSeconds = parseInt(acc.duration) || 43200;
-        const accEndDate = new Date(accDate.getTime() + durationSeconds * 1000);
-        
-        // Normalize dates to day boundaries for comparison
-        const accStartDay = new Date(accDate.getUTCFullYear(), accDate.getUTCMonth(), accDate.getUTCDate());
-        const accEndDay = new Date(accEndDate.getUTCFullYear(), accEndDate.getUTCMonth(), accEndDate.getUTCDate());
-        const checkInDay = new Date(checkInDate.getUTCFullYear(), checkInDate.getUTCMonth(), checkInDate.getUTCDate());
-        const checkOutDay = new Date(checkOutDate.getUTCFullYear(), checkOutDate.getUTCMonth(), checkOutDate.getUTCDate());
-        
-        // Check if this accommodation overlaps with requested dates
-        // Overlap condition: accStart <= checkOut AND accEnd >= checkIn
-        if (accStartDay <= checkOutDay && accEndDay >= checkInDay) {
-          busyVenueIds.add(acc.venue);
-        }
-      });
-      
-      // Build result with availability info
-      let result = venuesWithPlans.map(venue => {
-        const plans = venue.venue_plans || [];
-        const venueAmenityList = venueAmenitiesMap[venue.id] || [];
-        
-        // Check each plan for guest suitability
-        const plansWithSuitability = plans.map(p => {
-          const planMin = p.min_guests || 1;
-          const planMax = p.max_capacity || 999;
-          const isSuitable = totalGuests >= planMin && totalGuests <= planMax;
-          return {
-            id: p.id,
-            name: p.name,
-            plan_type: p.plan_type,
-            adult_price: p.adult_price,
-            child_price: p.child_price,
-            min_guests: p.min_guests,
-            max_capacity: p.max_capacity,
-            is_suitable: isSuitable
-          };
-        });
-        
-        // Venue has a matching plan if at least one plan is suitable
-        const hasMatchingPlan = plansWithSuitability.some(p => p.is_suitable);
-        const minGuests = Math.min(...plans.map(p => p.min_guests || 1));
-        const maxCapacity = Math.max(...plans.map(p => p.max_capacity || 999));
-        
+      // Check each plan for guest suitability
+      const plansWithSuitability = plans.map(p => {
+        const planMin = p.min_guests || 1;
+        const planMax = p.max_capacity || 999;
+        const isSuitable = totalGuests >= planMin && totalGuests <= planMax;
         return {
-          id: venue.id,
-          name: venue.name,
-          organization: venue.organization,
-          organization_name: orgMap[venue.organization]?.name || null,
-          is_available: !busyVenueIds.has(venue.id),
-          has_matching_plan: hasMatchingPlan,
-          min_guests: minGuests,
-          max_capacity: maxCapacity === 999 ? null : maxCapacity,
-          plans_count: plans.length,
-          plans: plansWithSuitability,
-          amenities: venueAmenityList
+          id: p.id,
+          name: p.name,
+          plan_type: p.plan_type,
+          adult_price: p.adult_price,
+          child_price: p.child_price,
+          min_guests: p.min_guests,
+          max_capacity: p.max_capacity,
+          is_suitable: isSuitable
         };
       });
       
-      // Filter by required amenities
-      if (requiredAmenityIds.length > 0) {
-        result = result.filter(venue => {
-          const venueAmenityIdSet = new Set(venue.amenities.map(a => a.id));
-          return requiredAmenityIds.every(reqId => venueAmenityIdSet.has(reqId));
-        });
-      }
+      // Venue has a matching plan if at least one plan is suitable
+      const hasMatchingPlan = plansWithSuitability.some(p => p.is_suitable);
+      const minGuests = Math.min(...plans.map(p => p.min_guests || 1));
+      const maxCapacity = Math.max(...plans.map(p => p.max_capacity || 999));
       
-      // Sort: available first, then has matching plan, then by name
-      result.sort((a, b) => {
-        if (a.is_available !== b.is_available) return b.is_available - a.is_available;
-        if (a.has_matching_plan !== b.has_matching_plan) return b.has_matching_plan - a.has_matching_plan;
-        return a.name.localeCompare(b.name);
+      return {
+        id: venue.id,
+        name: venue.name,
+        organization: venue.organization,
+        organization_name: orgMap[venue.organization]?.name || null,
+        is_available: !busyVenueIds.has(venue.id),
+        has_matching_plan: hasMatchingPlan,
+        min_guests: minGuests,
+        max_capacity: maxCapacity === 999 ? null : maxCapacity,
+        plans_count: plans.length,
+        plans: plansWithSuitability,
+        amenities: venueAmenityList
+      };
+    });
+    
+    // Filter by required amenities
+    if (requiredAmenityIds.length > 0) {
+      result = result.filter(venue => {
+        const venueAmenityIdSet = new Set(venue.amenities.map(a => a.id));
+        return requiredAmenityIds.every(reqId => venueAmenityIdSet.has(reqId));
       });
-      
-      res.json(result);
+    }
+    
+    // Sort: available first, then has matching plan, then by name
+    result.sort((a, b) => {
+      if (a.is_available !== b.is_available) return b.is_available - a.is_available;
+      if (a.has_matching_plan !== b.has_matching_plan) return b.has_matching_plan - a.has_matching_plan;
+      return a.name.localeCompare(b.name);
+    });
+    
+    return result;
+  }
+
+  // Availability check endpoint - returns venues with plans and their availability status
+  app.get('/api/availability', async (req, res) => {
+    try {
+      res.json(await buildAvailability(req.query));
     } catch (error) {
+      if (error.status === 400) return res.status(400).json({ error: error.message });
       console.error('Availability error:', error);
       res.status(500).json({ error: error.message });
     }
@@ -4270,6 +4283,349 @@ async function startServer() {
       res.json({ success: true });
     } catch (error) {
       console.error('Remove subscription user error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // =====================
+  // MEMBERSHIPS (platform billing, super admin only)
+  // =====================
+
+  const MEMBERSHIP_CLIENT_TYPES = ['cabana', 'revendedor'];
+
+  async function requireSuperAdmin(req, res) {
+    const userId = String(req.user.claims?.sub);
+    const currentUser = await prisma.users.findUnique({ where: { id: userId }, select: { is_super_admin: true } });
+    if (!currentUser?.is_super_admin) {
+      res.status(403).json({ error: 'Solo el administrador de la plataforma puede gestionar membresías' });
+      return null;
+    }
+    return userId;
+  }
+
+  /** A @db.Date value from 'YYYY-MM-DD' (or null). */
+  function dateOnly(value) {
+    return value ? new Date(String(value).slice(0, 10) + 'T00:00:00.000Z') : null;
+  }
+
+  /** Memberships with owner, status and the organizations/venues their users manage. */
+  async function listMemberships(where = {}) {
+    const subs = await prisma.subscriptions.findMany({
+      where,
+      include: {
+        subscription_users: true,
+        payments: { orderBy: [{ payment_date: 'desc' }, { created_at: 'desc' }], take: 1 }
+      },
+      orderBy: { created_at: 'desc' }
+    });
+    const userIds = [...new Set(subs.flatMap(s => s.subscription_users.map(su => su.user_id)))];
+    const [users, userOrgs] = await Promise.all([
+      prisma.users.findMany({ where: { id: { in: userIds } }, select: { id: true, email: true, display_name: true } }),
+      prisma.user_organizations.findMany({ where: { user_id: { in: userIds } } })
+    ]);
+    const orgIds = [...new Set(userOrgs.map(uo => uo.organization_id))];
+    const venues = orgIds.length
+      ? await prisma.venues.findMany({ where: { organization: { in: orgIds } }, select: { id: true, organization: true } })
+      : [];
+    const usersMap = Object.fromEntries(users.map(u => [u.id, u]));
+
+    return subs.map(sub => {
+      const memberIds = sub.subscription_users.map(su => su.user_id);
+      const ownerSu = sub.subscription_users.find(su => su.is_owner) || null;
+      const subOrgIds = new Set(userOrgs.filter(uo => memberIds.includes(uo.user_id)).map(uo => uo.organization_id));
+      const status = membership.membershipStatus(sub.paid_until);
+      const { subscription_users, payments, ...rest } = sub;
+      return {
+        ...rest,
+        paid_until: status.paid_until,
+        status: status.status,
+        days_left: status.days_left,
+        owner: ownerSu ? (usersMap[ownerSu.user_id] || { id: ownerSu.user_id }) : null,
+        users_count: memberIds.length,
+        organizations_count: subOrgIds.size,
+        venues_count: venues.filter(v => subOrgIds.has(v.organization)).length,
+        last_payment: payments[0] || null
+      };
+    });
+  }
+
+  app.get('/api/admin/memberships', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await requireSuperAdmin(req, res))) return;
+      res.json(await listMemberships());
+    } catch (error) {
+      console.error('Memberships error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.post('/api/admin/memberships', isAuthenticated, async (req, res) => {
+    try {
+      const adminId = await requireSuperAdmin(req, res);
+      if (!adminId) return;
+      const { name, client_type, monthly_price, owner_email, paid_until, max_users, max_organizations, description } = req.body;
+      if (!name) return res.status(400).json({ error: 'El nombre es requerido' });
+      if (client_type && !MEMBERSHIP_CLIENT_TYPES.includes(client_type)) {
+        return res.status(400).json({ error: 'Tipo de cliente inválido' });
+      }
+
+      let owner = null;
+      if (owner_email) {
+        owner = await prisma.users.findFirst({ where: { email: { equals: String(owner_email).trim(), mode: 'insensitive' } } });
+        if (!owner) return res.status(400).json({ error: 'No existe un usuario con ese correo' });
+      }
+
+      const sub = await prisma.subscriptions.create({
+        data: {
+          name,
+          description: description || null,
+          plan_type: 'paid',
+          client_type: client_type || 'cabana',
+          monthly_price: monthly_price === '' || monthly_price == null ? null : Number(monthly_price),
+          paid_until: dateOnly(paid_until),
+          max_users: parseInt(max_users, 10) || 5,
+          max_organizations: parseInt(max_organizations, 10) || (client_type === 'revendedor' ? 20 : 1),
+          is_active: true
+        }
+      });
+      if (owner) {
+        await prisma.subscription_users.create({
+          data: { subscription_id: sub.id, user_id: owner.id, role: 'owner', is_owner: true, added_by: adminId }
+        });
+      }
+      res.json((await listMemberships({ id: sub.id }))[0]);
+    } catch (error) {
+      console.error('Create membership error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Billing data of an existing subscription (also turns old subscriptions into memberships).
+  app.put('/api/admin/memberships/:id', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await requireSuperAdmin(req, res))) return;
+      const { name, client_type, monthly_price, paid_until, is_active } = req.body;
+      if (client_type !== undefined && !MEMBERSHIP_CLIENT_TYPES.includes(client_type)) {
+        return res.status(400).json({ error: 'Tipo de cliente inválido' });
+      }
+      const data = {};
+      if (name !== undefined) data.name = name;
+      if (client_type !== undefined) data.client_type = client_type;
+      if (monthly_price !== undefined) data.monthly_price = monthly_price === '' || monthly_price === null ? null : Number(monthly_price);
+      if (paid_until !== undefined) data.paid_until = dateOnly(paid_until);
+      if (is_active !== undefined) data.is_active = !!is_active;
+      await prisma.subscriptions.update({ where: { id: req.params.id }, data });
+      res.json((await listMemberships({ id: req.params.id }))[0]);
+    } catch (error) {
+      console.error('Update membership error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/admin/memberships/:id/payments', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await requireSuperAdmin(req, res))) return;
+      const payments = await prisma.subscription_payments.findMany({
+        where: { subscription_id: req.params.id },
+        orderBy: [{ payment_date: 'desc' }, { created_at: 'desc' }]
+      });
+      res.json(payments);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Register a payment: extends paid_until by `months` from max(paid_until, payment date).
+  app.post('/api/admin/memberships/:id/payments', isAuthenticated, async (req, res) => {
+    try {
+      const adminId = await requireSuperAdmin(req, res);
+      if (!adminId) return;
+      const { payment_date, amount, months, method, note } = req.body;
+      const paymentDate = payment_date ? String(payment_date).slice(0, 10) : membership.todayBogota();
+      const monthsNum = parseInt(months, 10);
+      const amountNum = Number(amount);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) return res.status(400).json({ error: 'Fecha de pago inválida' });
+      if (!monthsNum || monthsNum < 1 || monthsNum > 36) return res.status(400).json({ error: 'Los meses deben estar entre 1 y 36' });
+      if (!(amountNum >= 0)) return res.status(400).json({ error: 'Monto inválido' });
+
+      const payment = await prisma.$transaction(async (tx) => {
+        const sub = await tx.subscriptions.findUnique({ where: { id: req.params.id } });
+        if (!sub) throw Object.assign(new Error('Membresía no encontrada'), { status: 404 });
+        const newPaidUntil = membership.extendPaidUntil(sub.paid_until, paymentDate, monthsNum);
+        await tx.subscriptions.update({
+          where: { id: sub.id },
+          data: { paid_until: dateOnly(newPaidUntil), is_active: true }
+        });
+        return tx.subscription_payments.create({
+          data: {
+            subscription_id: sub.id,
+            payment_date: dateOnly(paymentDate),
+            amount: amountNum,
+            months: monthsNum,
+            method: method || null,
+            note: note || null,
+            paid_until_before: sub.paid_until,
+            paid_until_after: dateOnly(newPaidUntil),
+            created_by: adminId
+          }
+        });
+      });
+      res.json({ payment, membership: (await listMemberships({ id: req.params.id }))[0] });
+    } catch (error) {
+      if (error.status === 404) return res.status(404).json({ error: error.message });
+      console.error('Membership payment error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Undo the latest payment only (restores the paid_until it had before).
+  app.delete('/api/admin/memberships/:id/payments/:paymentId', isAuthenticated, async (req, res) => {
+    try {
+      if (!(await requireSuperAdmin(req, res))) return;
+      const latest = await prisma.subscription_payments.findFirst({
+        where: { subscription_id: req.params.id },
+        orderBy: { created_at: 'desc' }
+      });
+      if (!latest || latest.id !== req.params.paymentId) {
+        return res.status(400).json({ error: 'Solo se puede anular el último pago registrado' });
+      }
+      await prisma.$transaction([
+        prisma.subscriptions.update({ where: { id: req.params.id }, data: { paid_until: latest.paid_until_before } }),
+        prisma.subscription_payments.delete({ where: { id: latest.id } })
+      ]);
+      res.json((await listMemberships({ id: req.params.id }))[0]);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  /**
+   * Daily: in-app notice to membership owners 7 and 1 days before paid_until
+   * and when it expires. expiry_notice_key makes each notice go out once.
+   */
+  async function sendMembershipExpiryNotices() {
+    const subs = await prisma.subscriptions.findMany({
+      where: { paid_until: { not: null } },
+      include: { subscription_users: { where: { is_owner: true } } }
+    });
+    for (const sub of subs) {
+      const notice = membership.dueNotice(sub.paid_until);
+      if (!notice || notice.key === sub.expiry_notice_key) continue;
+      // Claim first so a concurrent run (or a restart) does not send it twice.
+      const claimed = await prisma.subscriptions.updateMany({
+        where: { id: sub.id, OR: [{ expiry_notice_key: null }, { expiry_notice_key: { not: notice.key } }] },
+        data: { expiry_notice_key: notice.key }
+      });
+      if (claimed.count === 0 || !sub.subscription_users.length) continue;
+
+      const paidUntil = membership.toDateStr(sub.paid_until);
+      let title;
+      if (notice.daysLeft < 0) title = 'Tu membresía de CabanIA está vencida';
+      else if (notice.daysLeft === 0) title = 'Tu membresía de CabanIA vence hoy';
+      else if (notice.daysLeft === 1) title = 'Tu membresía de CabanIA vence mañana';
+      else title = `Tu membresía de CabanIA vence en ${notice.daysLeft} días`;
+      const body = notice.daysLeft < 0
+        ? `La membresía "${sub.name}" estaba pagada hasta el ${paidUntil}. Renuévala para seguir usando la aplicación.`
+        : `La membresía "${sub.name}" está pagada hasta el ${paidUntil}. Renuévala para no perder el acceso.`;
+      await prisma.notifications.createMany({
+        data: sub.subscription_users.map(su => ({
+          user_id: su.user_id,
+          type: 'membership_expiry',
+          title,
+          body,
+          link: '/profile'
+        }))
+      });
+      console.log('[membership] Expiry notice sent', { subscription: sub.id, key: notice.key });
+    }
+  }
+
+  // =====================
+  // RESELLER ("Mis cabañas")
+  // =====================
+
+  /**
+   * Venues a reseller can sell: those of their own organizations plus those
+   * where they are the linked commission agent (agent.venue_id, or every venue
+   * of agent.organization_id when the agent is not tied to one venue).
+   * Each venue carries `source` ('propia' | 'comisionista') and the agent rules.
+   */
+  async function getResellerVenues(userId) {
+    const [userOrgs, agents] = await Promise.all([
+      prisma.user_organizations.findMany({ where: { user_id: userId }, select: { organization_id: true } }),
+      prisma.commission_agents.findMany({
+        where: { user_id: userId, is_active: true },
+        include: { rules: { orderBy: [{ plan_type: 'asc' }, { sort_order: 'asc' }] } }
+      })
+    ]);
+    const ownOrgIds = userOrgs.map(uo => uo.organization_id);
+    const agentVenueIds = agents.filter(a => a.venue_id).map(a => a.venue_id);
+    const agentOrgIds = agents.filter(a => !a.venue_id && a.organization_id).map(a => a.organization_id);
+
+    const venues = await prisma.venues.findMany({
+      where: {
+        OR: [
+          { organization: { in: [...ownOrgIds, ...agentOrgIds] } },
+          { id: { in: agentVenueIds } }
+        ]
+      },
+      select: { id: true, name: true, organization: true, slug: true },
+      orderBy: { name: 'asc' }
+    });
+    const orgIds = [...new Set(venues.map(v => v.organization).filter(Boolean))];
+    const orgs = orgIds.length ? await prisma.organizations.findMany({ where: { id: { in: orgIds } }, select: { id: true, name: true } }) : [];
+    const orgMap = Object.fromEntries(orgs.map(o => [o.id, o.name]));
+
+    return venues.map(v => {
+      const agent = agents.find(a => a.venue_id === v.id) || agents.find(a => !a.venue_id && a.organization_id === v.organization) || null;
+      return {
+        ...v,
+        organization_name: orgMap[v.organization] || null,
+        source: agent ? 'comisionista' : 'propia',
+        agent: agent ? {
+          id: agent.id,
+          name: agent.name,
+          rules: agent.rules.map(r => ({
+            plan_type: r.plan_type, min_adults: r.min_adults, max_adults: r.max_adults, rate_percent: r.rate_percent
+          }))
+        } : null
+      };
+    });
+  }
+
+  /** Reseller membership, active commission-agent links or super admin. */
+  async function canUseResellerView(userId) {
+    const [user, resellerSub, agentCount] = await Promise.all([
+      prisma.users.findUnique({ where: { id: userId }, select: { is_super_admin: true } }),
+      prisma.subscription_users.findFirst({ where: { user_id: userId, subscription: { client_type: 'revendedor' } } }),
+      prisma.commission_agents.count({ where: { user_id: userId, is_active: true } })
+    ]);
+    return !!(user?.is_super_admin || resellerSub || agentCount > 0);
+  }
+
+  app.get('/api/reseller/venues', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      if (!(await canUseResellerView(userId))) return res.status(403).json({ error: 'Esta vista es para cuentas de revendedor' });
+      res.json(await getResellerVenues(userId));
+    } catch (error) {
+      console.error('Reseller venues error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Combined availability across the reseller's venues (same rules as /api/availability).
+  app.get('/api/reseller/availability', isAuthenticated, async (req, res) => {
+    try {
+      const userId = String(req.user.claims?.sub);
+      if (!(await canUseResellerView(userId))) return res.status(403).json({ error: 'Esta vista es para cuentas de revendedor' });
+      const venues = await getResellerVenues(userId);
+      const venueMap = Object.fromEntries(venues.map(v => [v.id, v]));
+      const result = await buildAvailability(req.query, venues.map(v => v.id));
+      res.json(result.map(r => ({ ...r, source: venueMap[r.id]?.source, agent: venueMap[r.id]?.agent || null })));
+    } catch (error) {
+      if (error.status === 400) return res.status(400).json({ error: error.message });
+      console.error('Reseller availability error:', error);
       res.status(500).json({ error: error.message });
     }
   });
@@ -14966,6 +15322,12 @@ Responde con JSON EXACTAMENTE en este formato:
     // Daily Instagram activity summary (per venue settings).
     setInterval(() => sendInstagramDailySummaries().catch(err =>
       console.error('[ig-summary] Error:', err.message)), 5 * 60 * 1000);
+
+    // Membership expiry notices (7 days, 1 day, expired). Idempotent per paid_until.
+    const runMembershipNotices = () => sendMembershipExpiryNotices().catch(err =>
+      console.error('[membership] Notice error:', err.message));
+    setTimeout(runMembershipNotices, 2 * 60 * 1000);
+    setInterval(runMembershipNotices, 60 * 60 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });
