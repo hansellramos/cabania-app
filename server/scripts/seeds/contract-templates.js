@@ -107,3 +107,4 @@ async function seed(prisma) {
 }
 
 module.exports = seed;
+module.exports.sections = sections;
