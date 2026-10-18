@@ -1,4 +1,5 @@
 const data = [
+  { name: 'Alimentación', description: 'Comida y bebidas para el personal o los huéspedes', icon: 'cilRestaurant', color: '#8a6d3b', is_system: true, is_active: true },
   { name: 'Arreglos', description: 'Reparaciones y arreglos generales', icon: 'cilCog', color: '#4f5d73', is_system: true, is_active: true },
   { name: 'Construcción', description: 'Gastos de construcción y obras', icon: 'cilBuilding', color: '#321fdb', is_system: true, is_active: true },
   { name: 'Donaciones', description: 'Donaciones y contribuciones voluntarias a terceros', icon: 'cilGift', color: '#e44d26', is_system: true, is_active: true },
