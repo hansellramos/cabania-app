@@ -127,7 +127,7 @@
         </div>
         <div class="d-flex align-items-center gap-1">
           <CFormSwitch id="analyticsProrate" v-model="prorateFixed" label="Incluir gastos fijos prorrateados" class="mb-0" @update:modelValue="loadBookingProfit" />
-          <span v-c-tooltip="{ content: prorateHelp, placement: 'top' }" class="text-body-secondary" style="cursor: help">
+          <span v-c-tooltip="{ content: prorateHelp, placement: 'left' }" class="text-body-secondary" style="cursor: help">
             <CIcon icon="cil-info" size="sm" />
           </span>
         </div>

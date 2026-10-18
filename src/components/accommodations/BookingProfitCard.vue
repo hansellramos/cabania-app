@@ -10,7 +10,7 @@
       <div class="d-flex align-items-center gap-1">
         <CFormSwitch id="profitProrate" v-model="prorate" label="Incluir gastos fijos prorrateados" class="mb-0" />
         <span
-          v-c-tooltip="{ content: prorateHelp, placement: 'top' }"
+          v-c-tooltip="{ content: prorateHelp, placement: 'left' }"
           class="text-body-secondary"
           style="cursor: help"
         >
@@ -42,29 +42,29 @@
             <tbody>
               <tr>
                 <td>Pagos verificados</td>
-                <td class="text-end text-success">{{ formatCurrency(data.income.payments) }}</td>
+                <td class="text-end text-success text-nowrap">{{ formatCurrency(data.income.payments) }}</td>
               </tr>
               <tr v-if="data.income.deposit_kept">
                 <td>Depósito retenido por daños</td>
-                <td class="text-end text-success">{{ formatCurrency(data.income.deposit_kept) }}</td>
+                <td class="text-end text-success text-nowrap">{{ formatCurrency(data.income.deposit_kept) }}</td>
               </tr>
               <tr>
                 <td>
                   Gastos del alquiler
                   <small v-if="data.costs.expenses?.length" class="text-body-secondary">({{ expenseSummary }})</small>
                 </td>
-                <td class="text-end text-danger">{{ negative(data.costs.expenses_total) }}</td>
+                <td class="text-end text-danger text-nowrap">{{ negative(data.costs.expenses_total) }}</td>
               </tr>
               <tr v-if="data.costs.gateway_fees">
                 <td>Comisiones de pago (Bold)</td>
-                <td class="text-end text-danger">{{ negative(data.costs.gateway_fees) }}</td>
+                <td class="text-end text-danger text-nowrap">{{ negative(data.costs.gateway_fees) }}</td>
               </tr>
               <tr v-if="data.costs.commission.status !== 'none'">
                 <td>
                   Comisión {{ data.costs.commission.agent_name ? `de ${data.costs.commission.agent_name}` : 'del comisionista' }}
                   <CBadge :color="commissionBadge.color" class="ms-1">{{ commissionBadge.label }}</CBadge>
                 </td>
-                <td class="text-end text-danger">{{ negative(data.costs.commission.amount) }}</td>
+                <td class="text-end text-danger text-nowrap">{{ negative(data.costs.commission.amount) }}</td>
               </tr>
               <tr v-if="data.costs.fixed">
                 <td>
@@ -73,7 +73,7 @@
                     ({{ formatCurrency(data.costs.fixed.pool_total) }} ÷ {{ data.costs.fixed.bookings }} alquileres de {{ formatMonth(data.costs.fixed.month) }})
                   </small>
                 </td>
-                <td class="text-end text-danger">{{ negative(data.costs.fixed.amount) }}</td>
+                <td class="text-end text-danger text-nowrap">{{ negative(data.costs.fixed.amount) }}</td>
               </tr>
               <tr v-else-if="prorate">
                 <td colspan="2" class="small text-body-secondary">No hay gastos fijos registrados en el mes de este alquiler.</td>
@@ -148,7 +148,7 @@ function formatCurrency(amount) {
 }
 
 function negative(amount) {
-  return amount ? `−${formatCurrency(amount)}` : formatCurrency(0)
+  return amount ? `-${formatCurrency(amount)}` : formatCurrency(0)
 }
 
 function formatPercent(value) {
