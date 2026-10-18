@@ -196,22 +196,11 @@
                       </div>
                     </div>
                   </div>
-                  <div class="row g-3 mt-2">
-                    <div class="col-md-6">
-                      <div class="p-3 border rounded text-center">
-                        <h6 class="text-muted mb-2">Total Egresos</h6>
-                        <p class="fs-4 fw-bold text-warning mb-0">{{ formatCurrency(totalExpenses) }}</p>
-                      </div>
-                    </div>
-                    <div class="col-md-6">
-                      <div class="p-3 border rounded text-center" :class="{ 'border-success': profit >= 0, 'border-danger': profit < 0 }">
-                        <h6 class="text-muted mb-2">Ganancia</h6>
-                        <p class="fs-4 fw-bold mb-0" :class="{ 'text-success': profit >= 0, 'text-danger': profit < 0 }">
-                          {{ formatCurrency(profit) }}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                  <BookingProfitCard
+                    class="mt-3"
+                    :accommodation-id="route.params.id"
+                    :refresh-key="profitRefreshKey"
+                  />
                 </CCol>
               </CRow>
               <hr />
@@ -905,6 +894,7 @@ import { whatsappUrl, instagramDmUrl } from '@/utils/contactLinks'
 import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
 import AccommodationContractTab from '@/components/accommodations/AccommodationContractTab.vue'
 import CollectBalanceModal from '@/components/accommodations/CollectBalanceModal.vue'
+import BookingProfitCard from '@/components/accommodations/BookingProfitCard.vue'
 import { deleteAccommodation } from '@/services/accommodationService'
 
 const route = useRoute()
@@ -1197,11 +1187,13 @@ const totalExpenses = computed(() => {
   return expenses.value.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0)
 })
 
-// A cancelled booking only earns what was kept: paid minus refund and other expenses.
-const profit = computed(() => {
-  const income = accommodation.value?.cancelled_at ? totalPaid.value : agreedPrice.value
-  return income - totalExpenses.value
-})
+// Whatever changes the booking's numbers makes the profit card recompute.
+const profitRefreshKey = computed(() => JSON.stringify([
+  payments.value.map(p => [p.id, p.verified, p.amount]),
+  expenses.value.map(e => [e.id, e.amount]),
+  deposit.value && [deposit.value.status, deposit.value.damage_amount],
+  accommodation.value && [accommodation.value.cancelled_at, accommodation.value.no_show_at, accommodation.value.agreed_price]
+]))
 
 const hasDiscount = computed(() => {
   if (!accommodation.value) return false

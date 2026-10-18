@@ -117,6 +117,124 @@
       </CCol>
     </CRow>
 
+    <CCard v-if="bookingProfit" class="mb-4">
+      <CCardHeader class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+        <div>
+          <strong>Ganancia por alquiler</strong>
+          <small class="text-body-secondary ms-2">
+            {{ selectedBasis === 'accrual' ? 'Alquileres con fecha en el período' : 'Alquileres con pagos recibidos en el período' }}
+          </small>
+        </div>
+        <div class="d-flex align-items-center gap-1">
+          <CFormSwitch id="analyticsProrate" v-model="prorateFixed" label="Incluir gastos fijos prorrateados" class="mb-0" @update:modelValue="loadBookingProfit" />
+          <span v-c-tooltip="{ content: prorateHelp, placement: 'left' }" class="text-body-secondary" style="cursor: help">
+            <CIcon icon="cil-info" size="sm" />
+          </span>
+        </div>
+      </CCardHeader>
+      <CCardBody>
+        <div v-if="bookingProfit.count === 0" class="text-center text-body-secondary py-4">
+          No hay alquileres en el período seleccionado
+        </div>
+        <template v-else>
+          <CRow class="g-3 mb-4">
+            <CCol :xs="6" :lg="3">
+              <div class="p-3 border rounded text-center h-100">
+                <div class="text-muted small">Alquileres</div>
+                <div class="fs-4 fw-semibold">{{ bookingProfit.count }}</div>
+              </div>
+            </CCol>
+            <CCol :xs="6" :lg="3">
+              <div class="p-3 border rounded text-center h-100">
+                <div class="text-muted small">Ganancia total</div>
+                <div class="fs-4 fw-semibold" :class="bookingProfit.totals.profit >= 0 ? 'text-success' : 'text-danger'">
+                  {{ formatCurrency(bookingProfit.totals.profit) }}
+                </div>
+              </div>
+            </CCol>
+            <CCol :xs="6" :lg="3">
+              <div class="p-3 border rounded text-center h-100">
+                <div class="text-muted small">Ganancia promedio por alquiler</div>
+                <div class="fs-4 fw-semibold">{{ formatCurrency(bookingProfit.avg_profit) }}</div>
+              </div>
+            </CCol>
+            <CCol :xs="6" :lg="3">
+              <div class="p-3 border rounded text-center h-100">
+                <div class="text-muted small">Margen</div>
+                <div class="fs-4 fw-semibold">{{ formatMargin(bookingProfit.margin) }}</div>
+              </div>
+            </CCol>
+          </CRow>
+          <div v-if="bookingProfit.estimated_commissions" class="small text-body-secondary mb-3">
+            * {{ bookingProfit.estimated_commissions }} alquiler(es) incluyen la comisión estimada del comisionista (aún no registrada).
+          </div>
+
+          <CRow class="g-4 mb-4">
+            <CCol :md="6">
+              <h6 class="text-muted">Distribución de la ganancia por alquiler</h6>
+              <div style="height: 260px;">
+                <highcharts :options="profitDistributionOptions" />
+              </div>
+            </CCol>
+            <CCol :md="6">
+              <h6 class="text-muted">Por plan</h6>
+              <CTable small hover responsive class="mb-0">
+                <CTableHead>
+                  <CTableRow>
+                    <CTableHeaderCell>Plan</CTableHeaderCell>
+                    <CTableHeaderCell class="text-end">Alquileres</CTableHeaderCell>
+                    <CTableHeaderCell class="text-end">Promedio</CTableHeaderCell>
+                    <CTableHeaderCell class="text-end">Margen</CTableHeaderCell>
+                  </CTableRow>
+                </CTableHead>
+                <CTableBody>
+                  <CTableRow v-for="plan in bookingProfit.by_plan" :key="plan.plan_id || 'none'">
+                    <CTableDataCell>{{ plan.name }}</CTableDataCell>
+                    <CTableDataCell class="text-end">{{ plan.count }}</CTableDataCell>
+                    <CTableDataCell class="text-end" :class="plan.avg_profit >= 0 ? '' : 'text-danger'">{{ formatCurrency(plan.avg_profit) }}</CTableDataCell>
+                    <CTableDataCell class="text-end">{{ formatMargin(plan.margin) }}</CTableDataCell>
+                  </CTableRow>
+                </CTableBody>
+              </CTable>
+            </CCol>
+          </CRow>
+
+          <CRow class="g-4">
+            <CCol v-for="list in profitRankings" :key="list.title" :md="bookingProfit.bottom.length ? 6 : 12">
+              <h6 class="text-muted">{{ list.title }}</h6>
+              <CTable small hover responsive class="mb-0">
+                <CTableHead>
+                  <CTableRow>
+                    <CTableHeaderCell>Fecha</CTableHeaderCell>
+                    <CTableHeaderCell>Alquiler</CTableHeaderCell>
+                    <CTableHeaderCell class="text-end">Ganancia</CTableHeaderCell>
+                    <CTableHeaderCell class="text-end d-mobile-none">Margen</CTableHeaderCell>
+                  </CTableRow>
+                </CTableHead>
+                <CTableBody>
+                  <CTableRow v-for="row in list.rows" :key="row.id" style="cursor: pointer" @click="$router.push(`/business/accommodations/${row.id}`)">
+                    <CTableDataCell class="text-nowrap">{{ formatDate(row.date) }}</CTableDataCell>
+                    <CTableDataCell>
+                      {{ row.customer_name || 'Sin cliente' }}
+                      <small class="text-body-secondary d-block">
+                        {{ [row.venue_name, row.plan_name].filter(Boolean).join(' · ') }}
+                        <CBadge v-if="row.status === 'cancelled'" color="danger" class="ms-1">Cancelado</CBadge>
+                        <CBadge v-else-if="row.status === 'no_show'" color="warning" class="ms-1">No asistió</CBadge>
+                      </small>
+                    </CTableDataCell>
+                    <CTableDataCell class="text-end text-nowrap" :class="row.profit >= 0 ? 'text-success' : 'text-danger'">
+                      {{ formatCurrency(row.profit) }}<span v-if="row.commission_status === 'estimated'">*</span>
+                    </CTableDataCell>
+                    <CTableDataCell class="text-end d-mobile-none">{{ formatMargin(row.margin) }}</CTableDataCell>
+                  </CTableRow>
+                </CTableBody>
+              </CTable>
+            </CCol>
+          </CRow>
+        </template>
+      </CCardBody>
+    </CCard>
+
     <CRow v-if="incomeDetail.length > 0" class="mb-4">
       <CCol :xs="12">
         <CCard>
@@ -277,6 +395,12 @@ const loadingTrend = ref(false)
 const loadingCategories = ref(false)
 const loadingIncomeDetail = ref(false)
 
+// Profit per booking (null when the user may not see it)
+const bookingProfit = ref(null)
+const prorateFixed = ref(false)
+const prorateHelp = 'Suma a cada alquiler una parte de los gastos del mes de su cabaña que no están vinculados a ningún alquiler '
+  + '(servicios, mantenimiento, arriendo…), repartidos por partes iguales entre los alquileres no cancelados de ese mes.'
+
 // Income detail sorting & pagination
 const incomeSortKey = ref('display_date')
 const incomeSortOrder = ref('desc')
@@ -400,6 +524,45 @@ const expensesCategoryBarOptions = computed(() => ({
   }],
   credits: { enabled: false }
 }))
+
+const profitDistributionOptions = computed(() => ({
+  chart: { type: 'column', backgroundColor: 'transparent', height: 260 },
+  title: { text: undefined },
+  xAxis: {
+    categories: (bookingProfit.value?.distribution || []).map(b => b.label),
+    labels: { style: { color: labelColor } }
+  },
+  yAxis: {
+    title: { text: undefined },
+    allowDecimals: false,
+    min: 0,
+    labels: { style: { color: labelColor } },
+    gridLineColor: gridColor
+  },
+  tooltip: { pointFormat: '<b>{point.y}</b> alquiler(es)' },
+  plotOptions: { column: { borderWidth: 0, borderRadius: 4, pointPadding: 0.05, groupPadding: 0.1 } },
+  legend: { enabled: false },
+  series: [{
+    name: 'Alquileres',
+    data: (bookingProfit.value?.distribution || []).map(b => ({
+      y: b.count,
+      color: b.to === 0 ? '#f43f5e' : '#10b981'
+    }))
+  }],
+  credits: { enabled: false }
+}))
+
+const profitRankings = computed(() => {
+  if (!bookingProfit.value) return []
+  const lists = [{ title: bookingProfit.value.bottom.length ? 'Más rentables' : 'Alquileres por ganancia', rows: bookingProfit.value.top }]
+  if (bookingProfit.value.bottom.length) lists.push({ title: 'Menos rentables', rows: bookingProfit.value.bottom })
+  return lists
+})
+
+function formatMargin(margin) {
+  if (margin === null || margin === undefined) return '—'
+  return `${Number(margin).toLocaleString('es-CO', { maximumFractionDigits: 1 })}%`
+}
 
 function formatDate(date) {
   if (!date) return '—'
@@ -583,6 +746,15 @@ async function loadIncomeDetail() {
   }
 }
 
+async function loadBookingProfit() {
+  try {
+    const response = await fetch(`/api/analytics/booking-profit?${getQueryParams()}&prorate=${prorateFixed.value}`, { credentials: 'include' })
+    bookingProfit.value = response.ok ? await response.json() : null
+  } catch (error) {
+    console.error('Error loading booking profit:', error)
+  }
+}
+
 async function loadAllData() {
   loading.value = true
   try {
@@ -590,7 +762,8 @@ async function loadAllData() {
       loadSummary(),
       loadMonthlyTrend(),
       loadExpensesByCategory(),
-      loadIncomeDetail()
+      loadIncomeDetail(),
+      loadBookingProfit()
     ])
   } finally {
     loading.value = false
