@@ -5524,6 +5524,11 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
       where: { agent_id: agentId, plan_type: planType },
       orderBy: { sort_order: 'asc' }
     });
+    return commissionFromRules(rules, { adults, agreedPrice });
+  }
+
+  /** Same as computeCommission with the rules already loaded (sorted by sort_order). */
+  function commissionFromRules(rules, { adults, agreedPrice }) {
     if (!rules.length) return { total: 0, breakdown: [], no_rules: true };
     if (!adults || !agreedPrice) return { total: 0, breakdown: [] };
 
@@ -5549,6 +5554,339 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
     }
     return { total: Math.round(total), breakdown };
   }
+
+  // ==================== Ganancia por alquiler ====================
+
+  const GATEWAY_FEE_CATEGORY = 'Comisiones de pago';
+  const monthKey = (d) => new Date(d).toISOString().slice(0, 7);
+
+  /**
+   * Direct profit of each booking: verified payments + damage kept from the
+   * deposit − expenses linked to the booking − payment gateway fees − the
+   * agent's commission (recorded, or estimated from the rules when not recorded
+   * yet). Deposits themselves are refundable and never count as income.
+   *
+   * With `prorate`, the venue's expenses of the booking's month that are not
+   * linked to any booking (rent, utilities…) are split evenly among the
+   * month's non-cancelled bookings of that venue.
+   * @param {string[]} bookingIds
+   * @param {{ prorate?: boolean, detail?: boolean }} [options] detail adds the expense lines
+   * @returns {Promise<Map<string, object>>} by booking id
+   */
+  async function computeBookingProfit(bookingIds, { prorate = false, detail = false } = {}) {
+    const result = new Map();
+    const ids = [...new Set(bookingIds)].filter(id => UUID_PATTERN.test(id));
+    if (!ids.length) return result;
+
+    const bookings = await prisma.accommodations.findMany({ where: { id: { in: ids } } });
+    const [payments, deposits, expenses, commissions] = await Promise.all([
+      prisma.payments.findMany({ where: { accommodation: { in: ids }, verified: true }, select: { accommodation: true, amount: true } }),
+      prisma.deposits.findMany({ where: { accommodation_id: { in: ids }, status: 'claimed' }, select: { accommodation_id: true, damage_amount: true } }),
+      prisma.expenses.findMany({ where: { accommodation_id: { in: ids } }, include: { category: { select: { name: true } } } }),
+      prisma.commission_payments.findMany({
+        where: { accommodation_id: { in: ids }, status: { not: 'cancelled' } },
+        include: { agent: { select: { name: true } } }
+      })
+    ]);
+    // A paid commission can create an expense: counted once, as commission.
+    const commissionExpenseIds = new Set(
+      (await prisma.commission_payments.findMany({
+        where: { expense_id: { in: expenses.map(e => e.id) } }, select: { expense_id: true }
+      })).map(c => c.expense_id)
+    );
+
+    // Commission not recorded yet: estimate it from the agent's rules.
+    const recordedCommission = new Set(commissions.map(c => c.accommodation_id));
+    const toEstimate = new Set(bookings
+      .filter(b => b.commission_agent_id && b.plan_id && !b.cancelled_at && !b.no_show_at && !recordedCommission.has(b.id))
+      .map(b => b.id));
+    const plans = await prisma.venue_plans.findMany({
+      where: { id: { in: [...new Set(bookings.map(b => b.plan_id).filter(Boolean))] } },
+      select: { id: true, plan_type: true }
+    });
+    const planType = new Map(plans.map(p => [p.id, p.plan_type]));
+    const agentIds = [...new Set(bookings.filter(b => toEstimate.has(b.id)).map(b => b.commission_agent_id))];
+    const [rules, agents] = agentIds.length ? await Promise.all([
+      prisma.commission_rules.findMany({ where: { agent_id: { in: agentIds } }, orderBy: { sort_order: 'asc' } }),
+      prisma.commission_agents.findMany({ where: { id: { in: agentIds } }, select: { id: true, name: true } })
+    ]) : [[], []];
+    const agentName = new Map(agents.map(a => [a.id, a.name]));
+
+    // Fixed costs pool per venue and month, and how many bookings share it.
+    const fixedPool = new Map();
+    const dated = bookings.filter(b => b.venue && b.date && !b.cancelled_at);
+    if (prorate && dated.length) {
+      const venueIds = [...new Set(dated.map(b => b.venue))];
+      const times = dated.map(b => new Date(b.date).getTime());
+      const first = new Date(Math.min(...times));
+      const last = new Date(Math.max(...times));
+      const from = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), 1));
+      const to = new Date(Date.UTC(last.getUTCFullYear(), last.getUTCMonth() + 1, 0));
+      const [unlinked, monthBookings] = await Promise.all([
+        prisma.expenses.findMany({
+          where: { venue_id: { in: venueIds }, accommodation_id: null, expense_date: { gte: from, lte: to } },
+          select: { id: true, venue_id: true, amount: true, expense_date: true }
+        }),
+        prisma.accommodations.findMany({
+          where: { venue: { in: venueIds }, cancelled_at: null, date: { gte: from, lte: to } },
+          select: { venue: true, date: true }
+        })
+      ]);
+      const paidCommissions = new Set(
+        (await prisma.commission_payments.findMany({
+          where: { expense_id: { in: unlinked.map(e => e.id) } }, select: { expense_id: true }
+        })).map(c => c.expense_id)
+      );
+      const slot = (key) => fixedPool.get(key) || fixedPool.set(key, { total: 0, bookings: 0 }).get(key);
+      unlinked.filter(e => !paidCommissions.has(e.id))
+        .forEach(e => { slot(`${e.venue_id}|${monthKey(e.expense_date)}`).total += Number(e.amount) || 0; });
+      monthBookings.forEach(b => { slot(`${b.venue}|${monthKey(b.date)}`).bookings += 1; });
+    }
+
+    const sumBy = (rows, key, field) => rows.reduce((acc, r) => acc.set(r[key], (acc.get(r[key]) || 0) + (Number(r[field]) || 0)), new Map());
+    const paidBy = sumBy(payments, 'accommodation', 'amount');
+    const damageBy = sumBy(deposits, 'accommodation_id', 'damage_amount');
+    const isGatewayFee = (e) => e.category?.name === GATEWAY_FEE_CATEGORY || e.subcategory === 'Bold';
+    const total = (list, field) => list.reduce((s, r) => s + (Number(r[field]) || 0), 0);
+    const round = Math.round;
+
+    for (const b of bookings) {
+      const status = b.cancelled_at ? 'cancelled' : (b.no_show_at && !b.rescheduled_at ? 'no_show' : 'active');
+      const paid = paidBy.get(b.id) || 0;
+      const depositKept = damageBy.get(b.id) || 0;
+      const income = paid + depositKept;
+
+      const own = expenses.filter(e => e.accommodation_id === b.id && !commissionExpenseIds.has(e.id));
+      const direct = own.filter(e => !isGatewayFee(e));
+      const directTotal = total(direct, 'amount');
+      const gatewayFees = total(own.filter(isGatewayFee), 'amount');
+
+      const agreed = Number(b.agreed_price ?? b.calculated_price ?? 0);
+      const recorded = commissions.filter(c => c.accommodation_id === b.id);
+      let commission = { amount: 0, status: 'none', agent_name: null };
+      if (recorded.length) {
+        commission = {
+          amount: total(recorded, 'calculated_amount'),
+          status: recorded.some(c => c.status !== 'paid') ? 'pending' : 'paid',
+          agent_name: recorded.map(c => c.agent?.name).filter(Boolean).join(', ') || null
+        };
+      } else if (toEstimate.has(b.id)) {
+        const agentRules = rules.filter(r => r.agent_id === b.commission_agent_id && r.plan_type === planType.get(b.plan_id));
+        const calc = commissionFromRules(agentRules, { adults: b.adults || 0, agreedPrice: agreed });
+        if (!calc.no_rules) {
+          commission = { amount: calc.total, status: 'estimated', agent_name: agentName.get(b.commission_agent_id) || null };
+        }
+      }
+
+      let fixed = null;
+      const pool = prorate && status !== 'cancelled' && b.venue && b.date ? fixedPool.get(`${b.venue}|${monthKey(b.date)}`) : null;
+      if (pool?.bookings > 0 && pool.total > 0) {
+        fixed = { amount: round(pool.total / pool.bookings), month: monthKey(b.date), pool_total: round(pool.total), bookings: pool.bookings };
+      }
+
+      const costs = directTotal + gatewayFees + commission.amount + (fixed?.amount || 0);
+      const profit = income - costs;
+      const pendingBalance = status === 'active' ? Math.max(0, agreed - paid) : 0;
+      result.set(b.id, {
+        accommodation_id: b.id,
+        status,
+        income: { payments: round(paid), deposit_kept: round(depositKept), total: round(income) },
+        costs: {
+          expenses: detail
+            ? direct.map(e => ({ id: e.id, description: e.description, category: e.category?.name || null, amount: round(Number(e.amount) || 0), date: e.expense_date }))
+            : undefined,
+          expenses_total: round(directTotal),
+          gateway_fees: round(gatewayFees),
+          commission: { ...commission, amount: round(commission.amount) },
+          fixed,
+          total: round(costs)
+        },
+        profit: round(profit),
+        margin: income > 0 ? round((profit / income) * 1000) / 10 : null,
+        agreed_price: round(agreed),
+        pending_balance: round(pendingBalance),
+        // What it would leave once the pending balance is collected.
+        projected_profit: pendingBalance > 0 ? round(profit + pendingBalance) : null
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Who may see booking profits: analytics viewers, or whoever sees every booking
+   * and its payments (not the ":own" partner profiles), limited to their venues
+   * (venueIds null = every venue). A commission agent never sees the owner's
+   * profit of the bookings they sold.
+   */
+  const canViewProfits = (perms) => hasPermission(perms, 'analytics:view')
+    || (hasPermission(perms, 'accommodations:view') && hasPermission(perms, 'payments:view'));
+
+  async function bookingProfitAccess(req, { viewAll = false } = {}) {
+    if (!req.user || !canViewProfits(req.userPermissions)) return null;
+    const userId = String(req.user.claims?.sub);
+    const currentUser = await prisma.users.findUnique({ where: { id: userId }, select: { is_super_admin: true } });
+    if (currentUser?.is_super_admin) {
+      if (viewAll) return { venueIds: null, agentBookings: new Set() };
+      const userOrgs = await prisma.user_organizations.findMany({ where: { user_id: userId } });
+      const venues = await prisma.venues.findMany({
+        where: { organization: { in: userOrgs.map(uo => uo.organization_id) } }, select: { id: true }
+      });
+      return { venueIds: venues.map(v => v.id), agentBookings: new Set() };
+    }
+    return {
+      venueIds: await getAccessibleVenueIds(req.userPermissions),
+      agentBookings: await getAgentAccommodationIds(userId)
+    };
+  }
+
+  const canSeeBookingProfit = (access, booking) => !!access && !!booking
+    && (access.venueIds === null || access.venueIds.includes(booking.venue))
+    && !access.agentBookings.has(booking.id);
+
+  // GET /api/accommodations/:id/profit?prorate=true — profit breakdown of one booking.
+  app.get('/api/accommodations/:id/profit', isAuthenticated, async (req, res) => {
+    try {
+      if (!UUID_PATTERN.test(req.params.id)) return res.status(404).json({ error: 'Alquiler no encontrado' });
+      const booking = await prisma.accommodations.findUnique({ where: { id: req.params.id }, select: { id: true, venue: true } });
+      if (!booking) return res.status(404).json({ error: 'Alquiler no encontrado' });
+      // Opening one booking: a super admin sees it whatever the "view all" switch says.
+      const access = await bookingProfitAccess(req, { viewAll: true });
+      if (!canSeeBookingProfit(access, booking)) return res.status(403).json({ error: 'No tiene permiso para ver la ganancia' });
+      const profits = await computeBookingProfit([booking.id], { prorate: req.query.prorate === 'true', detail: true });
+      res.json(profits.get(booking.id));
+    } catch (error) {
+      console.error('[profit] Booking profit failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/accommodations/profit { ids, prorate, viewAll } — profits of a page of
+  // bookings, keyed by id. Bookings the user may not see are left out.
+  app.post('/api/accommodations/profit', isAuthenticated, async (req, res) => {
+    try {
+      const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 500) : [];
+      const access = await bookingProfitAccess(req, { viewAll: req.body?.viewAll === true });
+      if (!access) return res.status(403).json({ error: 'No tiene permiso para ver la ganancia' });
+      const bookings = await prisma.accommodations.findMany({
+        where: { id: { in: ids.filter(id => UUID_PATTERN.test(id)) } }, select: { id: true, venue: true }
+      });
+      const visible = bookings.filter(b => canSeeBookingProfit(access, b)).map(b => b.id);
+      const profits = await computeBookingProfit(visible, { prorate: req.body?.prorate === true });
+      res.json(Object.fromEntries(profits));
+    } catch (error) {
+      console.error('[profit] Batch profit failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // GET /api/analytics/booking-profit — profit per booking for the analytics filters
+  // (period, venue, organization, basis, prorate). Accrual takes the bookings dated
+  // in the period; cash, the bookings that received a verified payment in it.
+  app.get('/api/analytics/booking-profit', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id, organization_id, period, basis } = req.query;
+      const access = await bookingProfitAccess(req, { viewAll: req.query.viewAll === 'true' });
+      if (!access) return res.status(403).json({ error: 'No tiene permiso para ver la ganancia' });
+      const { startDate, endDate } = calculateDateRange(period);
+
+      const venueWhere = {};
+      if (access.venueIds !== null) venueWhere.id = { in: access.venueIds };
+      if (organization_id) venueWhere.organization = organization_id;
+      let venues = await prisma.venues.findMany({ where: venueWhere, select: { id: true, name: true } });
+      if (venue_id) venues = venues.filter(v => v.id === venue_id);
+      const venueIds = venues.map(v => v.id);
+
+      const where = { venue: { in: venueIds } };
+      if (basis === 'cash') {
+        const paid = await prisma.payments.findMany({
+          where: { verified: true, payment_date: { gte: startDate, lte: endDate }, accommodation: { not: null } },
+          select: { accommodation: true }, distinct: ['accommodation']
+        });
+        where.id = { in: paid.map(p => p.accommodation) };
+      } else {
+        where.date = { gte: startDate, lte: endDate };
+      }
+      const bookings = venueIds.length
+        ? (await prisma.accommodations.findMany({
+          where, select: { id: true, venue: true, date: true, plan_id: true, customer: true, cancelled_at: true }
+        })).filter(b => !access.agentBookings.has(b.id))
+        : [];
+
+      const profits = await computeBookingProfit(bookings.map(b => b.id), { prorate: req.query.prorate === 'true' });
+      const [plans, customers] = await Promise.all([
+        prisma.venue_plans.findMany({ where: { id: { in: [...new Set(bookings.map(b => b.plan_id).filter(Boolean))] } }, select: { id: true, name: true } }),
+        prisma.contacts.findMany({ where: { id: { in: [...new Set(bookings.map(b => b.customer).filter(Boolean))] } }, select: { id: true, fullname: true } })
+      ]);
+      const planName = new Map(plans.map(p => [p.id, p.name]));
+      const customerName = new Map(customers.map(c => [c.id, c.fullname]));
+      const venueName = new Map(venues.map(v => [v.id, v.name]));
+
+      const rows = bookings
+        .map(b => ({ b, p: profits.get(b.id) }))
+        // A cancelled booking that left nothing (no payment, no expense) is not a sale.
+        .filter(({ b, p }) => p && !(b.cancelled_at && p.income.total === 0 && p.costs.total === 0))
+        .map(({ b, p }) => ({
+          id: b.id,
+          date: b.date,
+          venue_name: venueName.get(b.venue) || null,
+          customer_name: customerName.get(b.customer) || null,
+          plan_id: b.plan_id || null,
+          plan_name: planName.get(b.plan_id) || 'Sin plan',
+          status: p.status,
+          income: p.income.total,
+          costs: p.costs.total,
+          commission_status: p.costs.commission.status,
+          profit: p.profit,
+          margin: p.margin
+        }));
+
+      const sum = (list, field) => list.reduce((s, r) => s + r[field], 0);
+      const margin = (profit, income) => (income > 0 ? Math.round((profit / income) * 1000) / 10 : null);
+      const income = sum(rows, 'income');
+      const profit = sum(rows, 'profit');
+
+      const byPlan = new Map();
+      rows.forEach(r => {
+        const key = r.plan_id || 'none';
+        const entry = byPlan.get(key) || byPlan.set(key, { plan_id: r.plan_id, name: r.plan_name, count: 0, income: 0, profit: 0 }).get(key);
+        entry.count += 1;
+        entry.income += r.income;
+        entry.profit += r.profit;
+      });
+
+      const distribution = [
+        { label: 'Pérdida', from: null, to: 0 },
+        { label: '$0 – $300 mil', from: 0, to: 300000 },
+        { label: '$300 – $700 mil', from: 300000, to: 700000 },
+        { label: '$700 mil – $1,5 M', from: 700000, to: 1500000 },
+        { label: '$1,5 – $3 M', from: 1500000, to: 3000000 },
+        { label: 'Más de $3 M', from: 3000000, to: null }
+      ].map(bucket => ({
+        ...bucket,
+        count: rows.filter(r => (bucket.from === null || r.profit >= bucket.from) && (bucket.to === null || r.profit < bucket.to)).length
+      }));
+
+      const sorted = [...rows].sort((a, b) => b.profit - a.profit);
+      res.json({
+        count: rows.length,
+        totals: { income, costs: sum(rows, 'costs'), profit },
+        avg_profit: rows.length ? Math.round(profit / rows.length) : 0,
+        margin: margin(profit, income),
+        estimated_commissions: rows.filter(r => r.commission_status === 'estimated').length,
+        by_plan: [...byPlan.values()]
+          .map(p => ({ ...p, avg_profit: Math.round(p.profit / p.count), margin: margin(p.profit, p.income) }))
+          .sort((a, b) => b.avg_profit - a.avg_profit),
+        distribution,
+        top: sorted.slice(0, 5),
+        // With five or fewer bookings the top list already shows them all.
+        bottom: sorted.length > 5 ? sorted.slice(-5).reverse() : [],
+        period: { from: startDate, to: endDate }
+      });
+    } catch (error) {
+      console.error('[profit] Analytics booking profit failed', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
 
   async function convertEstimateToAccommodation(estimate, db = prisma) {
     const contact = guestContact(estimate) || {};
