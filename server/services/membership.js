@@ -72,8 +72,24 @@ function dueNotice(paidUntil, today = todayBogota()) {
   return { threshold, daysLeft, key: `${paid}|${threshold}` };
 }
 
+/**
+ * Whether the user has a membership that lets them in, with the same rules as
+ * /api/auth/user: active, trial not over and not past its paid-until date.
+ */
+async function hasActiveMembership(prisma, userId) {
+  const rows = await prisma.subscription_users.findMany({
+    where: { user_id: String(userId) },
+    include: { subscription: { select: { is_active: true, paid_until: true } } }
+  });
+  const now = Date.now();
+  return rows.some(su => su.subscription?.is_active
+    && !(su.trial_expires_at && new Date(su.trial_expires_at).getTime() <= now)
+    && membershipStatus(su.subscription.paid_until).status !== 'vencida');
+}
+
 module.exports = {
   DUE_SOON_DAYS,
+  hasActiveMembership,
   todayBogota,
   toDateStr,
   addMonths,
