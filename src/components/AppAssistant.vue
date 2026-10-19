@@ -28,6 +28,7 @@
         <div v-if="!messages.length" class="text-body-secondary small">
           <p class="mb-2">
             Pregúntame por tus alquileres, pagos, chats o comisiones, y te llevo a la pantalla que necesites.
+            También puedo registrar pagos y gastos: te muestro cada cambio para que lo confirmes.
           </p>
           <div class="d-flex flex-wrap gap-2">
             <CButton
@@ -49,9 +50,32 @@
           >
             <div v-if="m.role === 'user'" style="white-space: pre-line">{{ m.content }}</div>
             <div v-else class="assistant-md" v-html="renderMarkdown(m.content)"></div>
-            <div v-if="m.actions?.length" class="d-flex flex-wrap gap-2 mt-2">
+            <!-- Changes the assistant proposes: nothing is saved until Confirmar -->
+            <div
+              v-for="(c, ci) in changes(m)"
+              :key="'c' + ci"
+              class="assistant-change mt-2 p-2 rounded-2 border"
+            >
+              <div class="fw-semibold mb-1">{{ c.title }}</div>
+              <dl class="mb-1">
+                <template v-for="[label, value] in c.lines" :key="label">
+                  <dt class="d-inline text-body-secondary">{{ label }}:</dt>
+                  <dd class="d-inline ms-1">{{ value }}</dd><br />
+                </template>
+              </dl>
+              <div v-if="c.note" class="text-body-secondary mb-2">{{ c.note }}</div>
+              <div v-if="c.status === 'done'" class="text-success">✓ Confirmado</div>
+              <div v-else-if="c.status === 'cancelled'" class="text-body-secondary">Cancelado</div>
+              <div v-else class="d-flex gap-2">
+                <CButton color="primary" size="sm" :disabled="c.status === 'saving'" @click="confirmChange(c)">
+                  <CSpinner v-if="c.status === 'saving'" size="sm" class="me-1" />Confirmar
+                </CButton>
+                <CButton color="secondary" variant="outline" size="sm" :disabled="c.status === 'saving'" @click="c.status = 'cancelled'">Cancelar</CButton>
+              </div>
+            </div>
+            <div v-if="links(m).length" class="d-flex flex-wrap gap-2 mt-2">
               <CButton
-                v-for="a in m.actions"
+                v-for="a in links(m)"
                 :key="a.path"
                 color="primary"
                 size="sm"
@@ -107,7 +131,8 @@ const suggestions = [
   '¿Cuánto he recibido este mes?',
   '¿Qué chats están esperando respuesta?',
   '¿Cuánto les debo a los comisionistas?',
-  '¿Qué contratos faltan por firmar?'
+  '¿Qué contratos faltan por firmar?',
+  '¿Qué egresos recurrentes no he registrado?'
 ]
 
 // The conversation survives page changes and reloads in this tab only.
@@ -137,6 +162,35 @@ function go(path) {
   router.push(path)
   // Full screen on phones: close it so the opened screen is visible.
   if (window.matchMedia('(max-width: 575.98px)').matches) open.value = false
+}
+
+const links = (m) => (m.actions || []).filter(a => a.type !== 'confirm')
+const changes = (m) => (m.actions || []).filter(a => a.type === 'confirm')
+
+async function confirmChange(change) {
+  if (change.status === 'saving' || change.status === 'done') return
+  change.status = 'saving'
+  error.value = ''
+  try {
+    const response = await fetch('/api/assistant/confirm', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: change.token,
+        view_all: !!(user.value?.is_super_admin && settingsStore.godModeViewAll)
+      })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || 'No se pudo aplicar el cambio')
+    change.status = data.ok ? 'done' : null
+    messages.value.push({ role: 'assistant', content: data.reply, actions: [] })
+  } catch (err) {
+    change.status = null
+    error.value = err.message
+  } finally {
+    scrollDown()
+  }
 }
 
 function reset() {
@@ -249,6 +303,9 @@ async function send(text) {
 }
 .assistant-msg {
   max-width: 92%;
+}
+.assistant-change {
+  background: var(--cui-body-bg);
 }
 .assistant-msg--user {
   background: var(--cui-primary);

@@ -349,8 +349,17 @@ const asFunctions = (defs) => defs.map(t => ({
   }
 }));
 
-/** Read-only tools for the in-app assistant (it cannot change data yet). */
+/** Read-only tools for the in-app assistant. */
 const ASSISTANT_TOOLS = DEFINITIONS.filter(t => !t.write && t.name !== 'get_context');
+
+/**
+ * Changes the in-app assistant may propose. They never run when the model calls
+ * them: the user confirms each one with a button (server/assistant.js).
+ */
+const ASSISTANT_CHANGE_TOOLS = [
+  'record_payment', 'record_expense', 'update_expense',
+  'create_recurring_expense', 'update_recurring_expense', 'mark_notifications_read'
+];
 
 function createAgentTools(deps) {
   const {
@@ -1352,6 +1361,7 @@ function createAgentTools(deps) {
     async create_recurring_expense(args, scope) {
       if (!canExpenses(scope)) return { error: 'Sin permiso para configurar egresos.' };
       let source = null;
+      if (!args.from_expense_id) source = await matchingExpense(args, scope);
       if (args.from_expense_id) {
         source = await findExpense(args.from_expense_id, scope);
         if (!source) return { error: 'Egreso no encontrado o sin acceso.' };
@@ -1374,7 +1384,7 @@ function createAgentTools(deps) {
       if (!startDate) return { error: 'start_date debe ser YYYY-MM-DD.' };
       const { data, error } = await recurringExpenseData({
         venue_id: venueId,
-        name: args.name || source?.description,
+        name: args.name || args.description || source?.description,
         frequency: args.frequency,
         start_date: startDate,
         end_date: args.end_date ? validDay(args.end_date) : undefined,
@@ -1478,6 +1488,30 @@ function createAgentTools(deps) {
   async function findExpense(id, scope) {
     if (!/^[0-9a-f-]{36}$/i.test(id || '')) return null;
     return prisma.expenses.findFirst({ where: { AND: [{ id }, expenseScopeWhere(scope)] } });
+  }
+
+  /**
+   * The expense a new recurring expense starts from when the agent did not say:
+   * the only one of that venue, on the start date, with the same category (and
+   * amount, when given) that does not pay a recurring expense yet.
+   */
+  async function matchingExpense(args, scope) {
+    const start = validDay(args.start_date);
+    const venueId = args.venue_id || (scope.venues.length === 1 ? scope.venues[0].id : null);
+    if (!start || !args.category || !scope.venues.some(v => v.id === venueId)) return null;
+    const category = findByName(await expenseCategories(), args.category);
+    if (!category) return null;
+    const rows = await prisma.expenses.findMany({
+      where: {
+        venue_id: venueId,
+        category_id: category.id,
+        recurring_expense_id: null,
+        expense_date: new Date(`${start}T00:00:00.000Z`),
+        ...(positive(args.expected_amount) && { amount: positive(args.expected_amount) })
+      },
+      take: 2
+    });
+    return rows.length === 1 ? rows[0] : null;
   }
 
   async function findRecurring(id, scope) {
@@ -1723,7 +1757,116 @@ function createAgentTools(deps) {
     return !!(linked || customer);
   }
 
-  return { tools, userScope, describeBookings };
+  /**
+   * What a change will do, in the user's words, for the confirmation card of the
+   * in-app assistant: { title, lines: [[label, value]], note } or { error } when
+   * the record it points to does not exist or is out of reach.
+   */
+  async function previewChange(name, args, scope) {
+    const names = Object.fromEntries(scope.venues.map(v => [v.id, v.name]));
+    const bookingLabel = async (id) => {
+      const booking = await findBooking(id, scope);
+      if (!booking) return null;
+      const [b] = await describeBookings([booking]);
+      return `${b.date_label} · ${b.venue} · ${b.customer || 'sin cliente'}`;
+    };
+    const day = (v) => (v ? dayLabel(validDay(v) || v) : 'hoy');
+    const amount = (v) => (v !== undefined && v !== null && v !== '' ? money(v) : null);
+    const categories = args.category ? await expenseCategories() : [];
+    const category = async (v) => (v ? findByName(categories, v)?.name : null);
+    if (args.category && !findByName(categories, args.category)) {
+      return { error: `No existe la categoría "${args.category}". Categorías: ${categories.map(c => c.name).join(', ')}.` };
+    }
+    let preview;
+
+    // Payments and expenses already happened: a future date is a misread weekday.
+    if ((name === 'record_payment' || name === 'record_expense') && validDay(args.date) && validDay(args.date) > todayIso()) {
+      return { error: `La fecha ${dayLabel(validDay(args.date))} todavía no llega: un pago o gasto se registra con la fecha en que ocurrió. Si fue el último ${dayLabel(validDay(args.date)).split(' ')[0]}, usa ${isoDay(new Date(new Date(`${validDay(args.date)}T00:00:00Z`).getTime() - 7 * 86400000))}.` };
+    }
+
+    if (name === 'record_payment') {
+      const booking = await bookingLabel(args.booking_id);
+      if (!booking) return { error: 'Alquiler no encontrado o sin acceso.' };
+      preview = {
+        title: 'Registrar pago',
+        done: 'Pago registrado',
+        lines: [['Alquiler', booking], ['Monto', amount(args.amount)], ['Método', args.method], ['Fecha', day(args.date)], ['Referencia', args.reference], ['Notas', args.notes]],
+        note: 'Queda por verificar: el saldo cambia cuando lo verifiques en la pestaña Pagos.'
+      };
+    } else if (name === 'record_expense') {
+      let where = names[args.venue_id] || (scope.venues.length === 1 ? scope.venues[0].name : null);
+      if (args.booking_id) {
+        where = await bookingLabel(args.booking_id);
+        if (!where) return { error: 'Alquiler no encontrado o sin acceso.' };
+      }
+      const def = args.recurring_expense_id ? await findRecurring(args.recurring_expense_id, scope) : null;
+      preview = {
+        title: args.booking_id ? 'Registrar gasto del alquiler' : 'Registrar egreso',
+        done: args.booking_id ? 'Gasto del alquiler registrado' : 'Egreso registrado',
+        lines: [
+          [args.booking_id ? 'Alquiler' : 'Cabaña', where], ['Monto', amount(args.amount)], ['Categoría', await category(args.category)],
+          ['Descripción', args.description], ['Fecha', day(args.date)], ['Pagado con', args.payment_method], ['Proveedor', args.provider],
+          ['Paga el recurrente', def ? `${def.name}${args.period ? ` (${dayLabel(args.period)})` : ''}` : null]
+        ]
+      };
+    } else if (name === 'update_expense') {
+      const e = await findExpense(args.expense_id, scope);
+      if (!e) return { error: 'Egreso no encontrado o sin acceso.' };
+      const def = args.recurring_expense_id && !isNone(args.recurring_expense_id) ? await findRecurring(args.recurring_expense_id, scope) : null;
+      preview = {
+        title: 'Corregir egreso',
+        done: 'Egreso corregido',
+        lines: [
+          ['Egreso', `${e.description || 'sin descripción'} · ${money(e.amount)} · ${dayLabel(isoDay(e.expense_date))}`],
+          ['Nuevo monto', amount(args.amount)], ['Nueva categoría', await category(args.category)], ['Nueva descripción', args.description],
+          ['Nueva fecha', args.date ? day(args.date) : null],
+          ['Alquiler', args.booking_id === undefined ? null : isNone(args.booking_id) ? 'quitar el alquiler' : await bookingLabel(args.booking_id)],
+          ['Recurrente', args.recurring_expense_id === undefined ? null : isNone(args.recurring_expense_id) ? 'deja de contar como pago recurrente' : `pago de ${def?.name || 'recurrente'}${args.period ? ` (${dayLabel(args.period)})` : ''}`]
+        ]
+      };
+    } else if (name === 'create_recurring_expense') {
+      const source = args.from_expense_id ? await findExpense(args.from_expense_id, scope) : await matchingExpense(args, scope);
+      if (args.from_expense_id && !source) return { error: 'Egreso no encontrado o sin acceso.' };
+      if (!args.name && !source?.description && !args.description) return { error: 'Falta el nombre del egreso recurrente (ej. "Sueldo cuidandero").' };
+      const startDate = args.start_date ? validDay(args.start_date) : source ? isoDay(source.expense_date) : todayIso();
+      preview = {
+        title: 'Configurar egreso recurrente',
+        done: 'Egreso recurrente configurado',
+        key: `${source?.venue_id || args.venue_id}|${startDate}|${args.frequency}`,
+        lines: [
+          ['Nombre', args.name || args.description || source?.description], ['Cabaña', names[source?.venue_id || args.venue_id] || null],
+          ['Frecuencia', FREQUENCY_LABELS[args.frequency] || args.frequency], ['Día de pago', args.due_day],
+          ['Monto esperado', amount(args.expected_amount ?? source?.amount)], ['Categoría', await category(args.category)],
+          ['Desde', args.start_date ? day(args.start_date) : source ? dayLabel(isoDay(source.expense_date)) : 'hoy'],
+          ['Hasta', args.end_date ? day(args.end_date) : null],
+          ['Toma el egreso', source ? `${source.description || 'sin descripción'} · ${money(source.amount)} (queda como el pago de ese período)` : null]
+        ]
+      };
+    } else if (name === 'update_recurring_expense') {
+      const def = await findRecurring(args.recurring_expense_id, scope);
+      if (!def) return { error: 'Egreso recurrente no encontrado o sin acceso.' };
+      preview = {
+        title: args.active === false ? 'Dejar de ser recurrente' : 'Cambiar egreso recurrente',
+        done: args.active === false ? 'Ya no es recurrente' : 'Egreso recurrente actualizado',
+        lines: [
+          ['Recurrente', def.name], ['Nombre', args.name], ['Frecuencia', args.frequency ? FREQUENCY_LABELS[args.frequency] || args.frequency : null],
+          ['Día de pago', args.due_day], ['Monto esperado', amount(args.expected_amount)], ['Categoría', await category(args.category)],
+          ['Hasta', args.end_date === undefined ? null : isNone(args.end_date) ? 'sin fecha de fin' : day(args.end_date)],
+          ['Estado', args.active === false ? 'deja de avisar (los gastos registrados se conservan)' : args.active === true ? 'activo de nuevo' : null],
+          ['Omitir período', args.skip_period ? day(args.skip_period) : null], ['Deshacer omisión', args.unskip_period ? day(args.unskip_period) : null]
+        ]
+      };
+    } else if (name === 'mark_notifications_read') {
+      const count = args.all === true ? 'todas las no leídas' : `${(args.notification_ids || []).length}`;
+      preview = { title: 'Marcar notificaciones como leídas', done: 'Notificaciones marcadas como leídas', lines: [['Cuántas', count]] };
+    } else {
+      return { error: 'Ese cambio no se puede hacer desde el asistente.' };
+    }
+    preview.lines = preview.lines.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([l, v]) => [l, String(v)]);
+    return preview;
+  }
+
+  return { tools, userScope, describeBookings, previewChange };
 }
 
 const positive = (v) => {
@@ -1808,6 +1951,7 @@ const agentNote = (scope, note) => {
 };
 
 module.exports = {
+  ASSISTANT_CHANGE_TOOLS,
   DEFINITIONS,
   ASSISTANT_TOOLS: asFunctions(ASSISTANT_TOOLS),
   asFunctions,
