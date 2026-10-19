@@ -5,6 +5,9 @@
       <div class="sidebar-header">
         <h6 class="mb-0">Inbox</h6>
         <span v-if="venue" class="text-body-secondary small ms-2">{{ venue.name }}</span>
+        <CButton color="primary" size="sm" class="ms-auto" @click="openNewChat" title="Chat de un canal que la IA no atiende sola">
+          + Nuevo chat
+        </CButton>
       </div>
 
       <!-- Search -->
@@ -59,7 +62,7 @@
               </div>
             </div>
             <div class="conv-source-row">
-              <CBadge :color="getSourceColor(conv.source)" size="sm" class="conv-source-badge">{{ getSourceLabel(conv.source) }}</CBadge>
+              <CBadge :color="getSourceColor(conv)" size="sm" class="conv-source-badge">{{ getSourceLabel(conv) }}</CBadge>
             </div>
           </div>
         </div>
@@ -85,8 +88,9 @@
           </button>
           <div class="chat-header-info">
             <strong>{{ selectedConv.name || selectedConv.phone || 'Sin nombre' }}</strong>
-            <span v-if="selectedConv.phone" class="text-body-secondary small ms-2">+{{ selectedConv.phone }}</span>
-            <CBadge :color="getSourceColor(selectedConv.source)" class="ms-2" size="sm">{{ getSourceLabel(selectedConv.source) }}</CBadge>
+            <span v-if="selectedConv.phone && selectedConv.source !== 'instagram'" class="text-body-secondary small ms-2">+{{ selectedConv.phone }}</span>
+            <span v-if="instagramHandle(selectedConv)" class="text-body-secondary small ms-2">@{{ instagramHandle(selectedConv) }}</span>
+            <CBadge :color="getSourceColor(selectedConv)" class="ms-2" size="sm">{{ getSourceLabel(selectedConv) }}</CBadge>
             <CBadge v-if="selectedConv.status === 'human_attention'" color="warning" class="ms-2 text-dark" size="sm">
               {{ selectedConv.escalated_reason === 'human_reply' ? 'Atendiendo el equipo' : 'Escalado' }}<template v-if="selectedConv.resume_at"> · la IA vuelve {{ formatResumeAt(selectedConv.resume_at) }}</template>
             </CBadge>
@@ -154,11 +158,26 @@
                     <span v-else-if="msg.status === 'failed'" class="text-danger">&#10007;</span>
                   </span>
                 </div>
+                <div v-if="msg.role === 'assistant' && msg.content" class="message-actions">
+                  <span v-if="isManual && msg.status === 'pending'" class="badge-pending">Por enviar</span>
+                  <button type="button" class="btn-msg-action" title="Copiar el mensaje" @click="copyMessage(msg)">
+                    {{ copiedId === msg.id ? 'Copiado' : 'Copiar' }}
+                  </button>
+                  <a
+                    v-if="sendLink(msg)"
+                    :href="sendLink(msg).url"
+                    target="_blank"
+                    rel="noopener"
+                    class="btn-msg-action"
+                    :title="sendLink(msg).title"
+                    @click="sendMessageExternally(msg)"
+                  >{{ sendLink(msg).label }}</a>
+                </div>
               </div>
             </div>
             <div v-if="sendingReply" class="message-wrapper message-assistant">
               <div class="message-bubble bubble-assistant">
-                <CSpinner size="sm" /> <span class="ms-2">Enviando...</span>
+                <CSpinner size="sm" /> <span class="ms-2">{{ isManual && manualMode === 'customer' ? 'La IA está respondiendo...' : 'Enviando...' }}</span>
               </div>
             </div>
           </template>
@@ -166,16 +185,43 @@
 
         <!-- Input bar -->
         <div class="chat-input-container">
-          <CInputGroup>
+          <!-- Manual chat: paste what the guest wrote (the AI answers) or write the reply yourself -->
+          <template v-if="isManual">
+            <div class="manual-modes mb-2">
+              <CButton size="sm" :color="manualMode === 'customer' ? 'primary' : 'secondary'" :variant="manualMode === 'customer' ? undefined : 'ghost'" @click="manualMode = 'customer'">
+                Mensaje del cliente
+              </CButton>
+              <CButton size="sm" :color="manualMode === 'reply' ? 'primary' : 'secondary'" :variant="manualMode === 'reply' ? undefined : 'ghost'" @click="manualMode = 'reply'">
+                Mi respuesta
+              </CButton>
+            </div>
+            <div class="d-flex gap-2 align-items-end">
+              <CFormTextarea
+                v-model="manualText"
+                rows="2"
+                :placeholder="manualMode === 'customer' ? 'Pega aquí lo que te escribió el cliente; la IA le responde' : 'Escribe tu respuesta para enviarla tú'"
+                :disabled="sendingReply"
+                @keydown.enter.exact.prevent="submitManual"
+              />
+              <CButton color="primary" @click="submitManual" :disabled="sendingReply || !manualText.trim()">
+                <CSpinner v-if="sendingReply" size="sm" />
+                <CIcon v-else name="cil-send" />
+              </CButton>
+            </div>
+            <small class="text-body-secondary d-block mt-1">
+              {{ manualMode === 'customer' ? 'Enter envía, Shift+Enter hace un salto de línea. La respuesta queda aquí para que la envíes con el botón.' : 'Se guarda en el chat; envíala con el botón del mensaje.' }}
+            </small>
+          </template>
+          <CInputGroup v-else>
             <CFormInput
               v-model="replyText"
               placeholder="Escribe un mensaje..."
-              @keyup.enter="sendAdminReply"
+              @keyup.enter="sendAdminReply()"
               :disabled="sendingReply"
             />
             <CButton
               color="primary"
-              @click="sendAdminReply"
+              @click="sendAdminReply()"
               :disabled="sendingReply || !replyText.trim()"
             >
               <CSpinner v-if="sendingReply" size="sm" />
@@ -193,6 +239,50 @@
     </CToast>
   </CToaster>
 
+  <CModal teleport :visible="newChat.visible" @close="newChat.visible = false" alignment="center">
+    <CModalHeader>
+      <CModalTitle>Nuevo chat</CModalTitle>
+    </CModalHeader>
+    <CModalBody>
+      <p class="small text-body-secondary">
+        Para clientes que te escriben por un medio que la IA no atiende sola. Pegas lo que te escribieron, la IA responde y tú envías la respuesta.
+      </p>
+      <div class="mb-3">
+        <CFormLabel>¿Por dónde te escribió?</CFormLabel>
+        <div class="d-flex gap-2 flex-wrap">
+          <CButton
+            v-for="ch in manualChannels"
+            :key="ch.value"
+            size="sm"
+            :color="newChat.channel === ch.value ? 'primary' : 'secondary'"
+            :variant="newChat.channel === ch.value ? undefined : 'outline'"
+            @click="newChat.channel = ch.value"
+          >{{ ch.label }}</CButton>
+        </div>
+      </div>
+      <div v-if="newChat.channel === 'whatsapp'" class="mb-3">
+        <CFormLabel>Número de WhatsApp</CFormLabel>
+        <CFormInput v-model="newChat.phone" inputmode="tel" placeholder="300 123 4567" />
+      </div>
+      <div v-if="newChat.channel === 'instagram'" class="mb-3">
+        <CFormLabel>Usuario de Instagram</CFormLabel>
+        <CFormInput v-model="newChat.instagram" placeholder="@usuario" />
+      </div>
+      <div class="mb-1">
+        <CFormLabel>Nombre <span v-if="newChat.channel !== 'other'" class="text-body-secondary">(opcional)</span></CFormLabel>
+        <CFormInput v-model="newChat.name" placeholder="Nombre del cliente" @keyup.enter="createManualChat" />
+      </div>
+      <div v-if="newChat.error" class="text-danger small mt-2">{{ newChat.error }}</div>
+    </CModalBody>
+    <CModalFooter>
+      <CButton color="secondary" variant="ghost" @click="newChat.visible = false">Cancelar</CButton>
+      <CButton color="primary" :disabled="newChat.saving" @click="createManualChat">
+        <CSpinner v-if="newChat.saving" size="sm" class="me-1" />
+        Abrir chat
+      </CButton>
+    </CModalFooter>
+  </CModal>
+
   <CModal teleport :visible="!!imageModalUrl" @close="imageModalUrl = null" size="lg" alignment="center">
     <CModalBody class="text-center p-0">
       <img v-if="imageModalUrl" :src="imageModalUrl" class="img-fluid" alt="Imagen completa" />
@@ -204,16 +294,17 @@
 // Assistant messages can carry hidden markers (tools used, payment data): not for display.
 const stripMarkers = (text) => (text || '').replace(/\n?<!-- \{.*?\} -->/g, '')
 
-import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useUrlState, urlField, urlRef, urlTab } from '@/composables/useUrlState'
 import { useRoute } from 'vue-router'
 import {
   CRow, CCol, CButton, CSpinner,
-  CFormInput, CInputGroup,
+  CFormInput, CFormTextarea, CFormLabel, CInputGroup,
   CToaster, CToast, CToastBody,
-  CBadge, CModal, CModalBody
+  CBadge, CModal, CModalBody, CModalHeader, CModalTitle, CModalFooter
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
+import { whatsappUrl, instagramDmUrl, copyText } from '@/utils/contactLinks'
 import { getVenueById } from '@/services/venueService'
 import { useBreadcrumbStore } from '@/stores/breadcrumb.js'
 
@@ -240,12 +331,23 @@ const channelFilters = [
   { label: 'Todos', value: 'all' },
   { label: 'WhatsApp', value: 'whatsapp' },
   { label: 'Instagram', value: 'instagram' },
-  { label: 'Web', value: 'web' }
+  { label: 'Web', value: 'web' },
+  { label: 'Manual', value: 'manual' }
+]
+
+const manualChannels = [
+  { label: 'WhatsApp', value: 'whatsapp' },
+  { label: 'Instagram', value: 'instagram' },
+  { label: 'Otro medio', value: 'other' }
 ]
 
 const SOURCE_ALIASES = { baileys: 'WhatsApp', cloud_api: 'WhatsApp', twilio: 'Twilio', web: 'Web', whatsapp: 'WhatsApp', meta: 'Meta', instagram: 'Instagram' }
-const getSourceLabel = (source) => SOURCE_ALIASES[source] || source || '?'
-const getSourceColor = (source) => {
+const MANUAL_ALIASES = { whatsapp: 'WhatsApp manual', instagram: 'Instagram manual', other: 'Manual' }
+const getSourceLabel = (conv) => conv?.source === 'manual'
+  ? MANUAL_ALIASES[conv.metadata?.channel] || 'Manual'
+  : SOURCE_ALIASES[conv?.source] || conv?.source || '?'
+const getSourceColor = (conv) => {
+  const source = conv?.source === 'manual' ? conv.metadata?.channel : conv?.source
   if (source === 'web') return 'primary'
   if (['whatsapp', 'baileys', 'cloud_api'].includes(source)) return 'success'
   if (source === 'instagram') return 'danger'
@@ -255,6 +357,132 @@ const getInitial = (conv) => {
   if (conv.name) return conv.name.charAt(0).toUpperCase()
   if (conv.phone) return '#'
   return '?'
+}
+
+const isManual = computed(() => selectedConv.value?.source === 'manual')
+const manualMode = ref('customer')
+const manualText = ref('')
+const copiedId = ref(null)
+
+// --- Sending a reply from the team's own app ---
+
+const instagramHandle = (conv) => conv?.metadata?.instagram_username || null
+
+/** wa.me with the text prefilled; Instagram cannot prefill, so its link goes with a copy. */
+const sendLink = (msg) => {
+  const conv = selectedConv.value
+  if (!conv) return null
+  const text = msg.content
+  const instagram = conv.source === 'instagram' || conv.metadata?.channel === 'instagram'
+  if (instagram) {
+    const url = instagramDmUrl(instagramHandle(conv))
+    return url ? { url, label: 'Abrir Instagram', title: 'Copia el mensaje y abre el chat de Instagram para pegarlo', copy: true } : null
+  }
+  if (conv.metadata?.channel === 'other') return null
+  const url = whatsappUrl(conv.phone, text)
+  return url ? { url, label: 'Enviar por WhatsApp', title: 'Abre WhatsApp con el mensaje escrito' } : null
+}
+
+const copyMessage = async (msg) => {
+  if (await copyText(msg.content)) {
+    copiedId.value = msg.id
+    setTimeout(() => { if (copiedId.value === msg.id) copiedId.value = null }, 2000)
+    if (isManual.value && selectedConv.value?.metadata?.channel === 'other') markSent(msg)
+  } else {
+    showToast('No se pudo copiar', 'danger')
+  }
+}
+
+const sendMessageExternally = async (msg) => {
+  if (sendLink(msg)?.copy) {
+    await copyText(msg.content)
+    showToast('Mensaje copiado: pégalo en Instagram')
+  }
+  // In a manual chat the team is the channel, and a failed automatic send was
+  // just sent by hand: opening the link counts as sending.
+  if (isManual.value || msg.status === 'failed') markSent(msg)
+}
+
+const markSent = async (msg) => {
+  if (['sent', 'delivered', 'read'].includes(msg.status)) return
+  try {
+    const response = await fetch(`/api/chat/${venueId}/messages/${msg.id}/mark-sent`, { method: 'POST', credentials: 'include' })
+    if (response.ok) msg.status = (await response.json()).status
+  } catch { /* the badge stays; it can be sent again */ }
+}
+
+// --- Manual chats ---
+
+const newChat = ref({ visible: false, channel: 'whatsapp', phone: '', instagram: '', name: '', saving: false, error: '' })
+
+const openNewChat = () => {
+  newChat.value = { visible: true, channel: 'whatsapp', phone: '', instagram: '', name: '', saving: false, error: '' }
+}
+
+const createManualChat = async () => {
+  const form = newChat.value
+  form.saving = true
+  form.error = ''
+  try {
+    const response = await fetch(`/api/chat/${venueId}/manual-conversations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        channel: form.channel,
+        phone: form.channel === 'whatsapp' ? form.phone : undefined,
+        instagram: form.channel === 'instagram' ? form.instagram : undefined,
+        name: form.name
+      })
+    })
+    const result = await response.json()
+    if (!response.ok) {
+      form.error = result.error || 'No se pudo abrir el chat'
+      return
+    }
+    form.visible = false
+    manualMode.value = 'customer'
+    manualText.value = ''
+    await loadConversations()
+    selectConversation(conversations.value.find(c => c.id === result.id) || result)
+  } catch {
+    form.error = 'No se pudo abrir el chat'
+  } finally {
+    form.saving = false
+  }
+}
+
+const submitManual = () => (manualMode.value === 'customer' ? sendCustomerMessage() : sendAdminReply(manualText))
+
+const sendCustomerMessage = async () => {
+  const text = manualText.value.trim()
+  if (!text || sendingReply.value || !selectedConv.value) return
+  manualText.value = ''
+  sendingReply.value = true
+  messages.value.push({ id: `tmp-${Date.now()}`, role: 'user', content: text, created_at: new Date().toISOString() })
+  try {
+    const response = await fetch(`/api/chat/${venueId}/conversations/${selectedConv.value.id}/customer-message`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ text })
+    })
+    const result = await response.json()
+    messages.value = messages.value.filter(m => !String(m.id).startsWith('tmp-'))
+    if (response.ok) {
+      messages.value.push(mapMessage(result.user_message), mapMessage(result.assistant_message))
+      loadConversations()
+    } else {
+      showToast(result.error || 'La IA no pudo responder', 'danger')
+      manualText.value = text
+    }
+  } catch {
+    messages.value = messages.value.filter(m => !String(m.id).startsWith('tmp-'))
+    showToast('La IA no pudo responder', 'danger')
+    manualText.value = text
+  } finally {
+    sendingReply.value = false
+  }
 }
 
 const toast = ref({ visible: false, message: '', color: 'success' })
@@ -310,6 +538,7 @@ const loadConversations = async () => {
     if (searchQuery.value) params.set('search', searchQuery.value)
     if (activeChannelFilter.value === 'whatsapp') params.set('source', 'baileys,cloud_api,whatsapp')
     else if (activeChannelFilter.value === 'instagram') params.set('source', 'instagram')
+    else if (activeChannelFilter.value === 'manual') params.set('source', 'manual')
     else if (activeChannelFilter.value !== 'all') params.set('source', activeChannelFilter.value)
 
     const response = await fetch(`/api/chat/${venueId}/conversations?${params}`, { credentials: 'include' })
@@ -331,6 +560,11 @@ const selectConversation = async (conv) => {
     if (response.ok) {
       const data = await response.json()
       messages.value = (data.messages || []).map(mapMessage)
+      // Opened from the URL the conversation only has its id: fill the rest.
+      if (data && selectedConv.value?.id === data.id) {
+        const { messages: _, ...fields } = data
+        selectedConv.value = { ...selectedConv.value, ...fields }
+      }
       // Clear unread badge locally
       conv.unread_count = 0
     }
@@ -354,11 +588,12 @@ const mapMessage = (m) => ({
   provider: m.provider || null
 })
 
-const sendAdminReply = async () => {
-  if (!replyText.value.trim() || sendingReply.value || !selectedConv.value) return
+const sendAdminReply = async (input = replyText) => {
+  const textRef = input?.value !== undefined ? input : replyText
+  if (!textRef.value.trim() || sendingReply.value || !selectedConv.value) return
 
-  const text = replyText.value.trim()
-  replyText.value = ''
+  const text = textRef.value.trim()
+  textRef.value = ''
   sendingReply.value = true
 
   try {
@@ -375,12 +610,12 @@ const sendAdminReply = async () => {
       loadConversations()
     } else {
       showToast(result.error || 'Error al enviar', 'danger')
-      replyText.value = text // restore
+      textRef.value = text // restore
     }
   } catch (error) {
     console.error('Admin reply error:', error)
     showToast('Error al enviar mensaje', 'danger')
-    replyText.value = text
+    textRef.value = text
   } finally {
     sendingReply.value = false
   }
@@ -729,7 +964,8 @@ function formatResumeAt(value) {
 }
 
 .chat-input-container {
-  padding: 0.75rem 1rem;
+  /* Room on the right for the floating assistant button */
+  padding: 0.75rem 4.5rem 0.75rem 1rem;
   border-top: 1px solid var(--cui-border-color, #dee2e6);
   background: var(--cui-body-bg, #fff);
 }
@@ -782,6 +1018,39 @@ function formatResumeAt(value) {
 .status-read { color: #53bdeb; }
 .bubble-user .message-status { color: rgba(255,255,255,0.7); }
 .bubble-user .status-read { color: #a0d8ef; }
+
+.message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--cui-border-color-translucent, rgba(0,0,0,0.08));
+}
+.btn-msg-action {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--cui-primary, #321fdb);
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn-msg-action:hover { text-decoration: underline; }
+.badge-pending {
+  background: #fff3cd;
+  color: #856404;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+}
+.manual-modes {
+  display: flex;
+  gap: 0.25rem;
+}
 
 .message-provider-badge {
   font-size: 0.65rem;

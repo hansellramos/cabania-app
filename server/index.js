@@ -12057,7 +12057,7 @@ REGLAS:
   // ==================== Chat API ====================
 
   // Reusable chat processing function — called by POST /api/chat/:venue_id and reprocess endpoint
-  async function processChat({ venue_id, userMessage, conversation, source, media_url, media_type, contact_type, contact_value, userId, verifiedSender = false }) {
+  async function processChat({ venue_id, userMessage, conversation, source, media_url, media_type, contact_type, contact_value, contact_name, userId, verifiedSender = false }) {
     // Get venue with all relevant info
     const venue = await prisma.venues.findUnique({
       where: { id: venue_id }
@@ -12187,7 +12187,9 @@ REGLAS:
 
     // Build context and messages
     const context = llmService.buildVenueContext(venue, templates, plans);
-    const contactInfo = (contact_type && contact_value) ? { type: contact_type, value: contact_value } : null;
+    const contactInfo = (contact_type && contact_value) || contact_name
+      ? { type: contact_type, value: contact_type && contact_value ? contact_value : null, name: contact_name || null }
+      : null;
     // A commission agent writing to the venue gets their own mode and charge tool.
     // Only a sender the channel vouches for (a signed Meta webhook, the Baileys
     // service with its internal key, or a signed-in user): the public chat endpoint
@@ -13664,6 +13666,11 @@ REGLAS:
         where: { id },
         data: { updated_at: new Date(), last_read_at: new Date() }
       });
+
+      // A manual chat is sent by the team from their own WhatsApp or Instagram:
+      // the reply stays pending until they mark it sent.
+      if (conversation.source === 'manual') return res.json(message);
+
       // The team took the conversation: keep the AI out of it for a while.
       await pauseForHuman(conversation);
 
@@ -13704,6 +13711,145 @@ REGLAS:
       res.json(message);
     } catch (error) {
       console.error('Admin reply error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // ---------- Manual chats ----------
+  // A guest writes on a channel CabanIA does not answer by itself (a personal
+  // WhatsApp, an Instagram without the integration…). The team opens a manual
+  // chat, pastes what the guest wrote, the venue's AI answers, and the team sends
+  // that answer from their own app (wa.me link or copy and paste).
+
+  const MANUAL_CHANNELS = ['whatsapp', 'instagram', 'other'];
+
+  /** Digits of a WhatsApp number, with Colombia's 57 when it has 10 digits. */
+  function manualPhone(value) {
+    const digits = String(value || '').replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 15) return null;
+    return digits.length === 10 ? `57${digits}` : digits;
+  }
+
+  // POST /api/chat/:venue_id/manual-conversations - Open (or reuse) a manual chat
+  app.post('/api/chat/:venue_id/manual-conversations', isAuthenticated, requireVenueAccess, async (req, res) => {
+    try {
+      const { venue_id } = req.params;
+      const channel = MANUAL_CHANNELS.includes(req.body.channel) ? req.body.channel : null;
+      if (!channel) return res.status(400).json({ error: 'Elige el canal: WhatsApp, Instagram u otro' });
+
+      const name = String(req.body.name || '').trim().slice(0, 255) || null;
+      const phone = req.body.phone ? manualPhone(req.body.phone) : null;
+      const instagram = req.body.instagram ? cleanInstagram(req.body.instagram)?.slice(1) : null;
+      if (req.body.phone && !phone) return res.status(400).json({ error: 'El número de WhatsApp no es válido' });
+      if (req.body.instagram && !instagram) return res.status(400).json({ error: 'El usuario de Instagram no es válido' });
+      if (channel === 'whatsapp' && !phone) return res.status(400).json({ error: 'Escribe el número de WhatsApp del cliente' });
+      if (channel === 'instagram' && !instagram) return res.status(400).json({ error: 'Escribe el usuario de Instagram del cliente' });
+      if (channel === 'other' && !name) return res.status(400).json({ error: 'Escribe el nombre del cliente' });
+
+      // The same guest on the same channel keeps one chat, so the AI remembers it.
+      const existing = (phone || instagram)
+        ? (await prisma.chat_conversations.findMany({
+            where: { venue_id, source: 'manual', ...(channel === 'whatsapp' ? { phone } : {}) },
+            orderBy: { updated_at: 'desc' },
+            take: 200
+          })).find(c => c.metadata?.channel === channel
+            && (channel !== 'instagram' || c.metadata?.instagram_username?.toLowerCase() === instagram.toLowerCase()))
+        : null;
+      if (existing) {
+        if (name && !existing.name) {
+          return res.json(await prisma.chat_conversations.update({ where: { id: existing.id }, data: { name } }));
+        }
+        return res.json(existing);
+      }
+
+      const conversation = await prisma.chat_conversations.create({
+        data: {
+          venue_id,
+          source: 'manual',
+          phone,
+          name: name || (instagram ? `@${instagram}` : null),
+          metadata: { channel, ...(instagram ? { instagram_username: instagram } : {}) },
+          updated_at: new Date(),
+          last_read_at: new Date()
+        }
+      });
+      analytics.track('ai_conversation_started', { venueId: venue_id, properties: { channel: 'manual', source: channel } });
+      res.json(conversation);
+    } catch (error) {
+      console.error('Manual conversation error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/chat/:venue_id/conversations/:id/customer-message - Paste what the
+  // guest wrote in a manual chat; the venue's AI answers it.
+  app.post('/api/chat/:venue_id/conversations/:id/customer-message', isAuthenticated, requireVenueAccess, async (req, res) => {
+    try {
+      const { venue_id, id } = req.params;
+      const text = String(req.body.text || '').trim();
+      if (!text) return res.status(400).json({ error: 'Pega el mensaje del cliente' });
+
+      const conversation = await prisma.chat_conversations.findUnique({
+        where: { id },
+        include: { messages: { orderBy: { created_at: 'desc' }, take: 20 } }
+      });
+      if (!conversation || conversation.venue_id !== venue_id) {
+        return res.status(404).json({ error: 'Conversación no encontrada' });
+      }
+      if (conversation.source !== 'manual') {
+        return res.status(400).json({ error: 'Solo en chats manuales: en los demás canales el mensaje llega solo' });
+      }
+
+      const userMessage = await prisma.chat_messages.create({
+        data: { conversation_id: id, role: 'user', content: text }
+      });
+
+      const channel = conversation.metadata?.channel;
+      const contactValue = channel === 'whatsapp' ? conversation.phone
+        : channel === 'instagram' ? conversation.metadata?.instagram_username : null;
+      // No userId: the signed-in user is the team, not the guest.
+      const result = await processChat({
+        venue_id,
+        userMessage: text,
+        conversation,
+        source: 'manual',
+        contact_type: contactValue ? channel : undefined,
+        contact_value: contactValue || undefined,
+        // A name the team typed, not the @username it defaults to.
+        contact_name: conversation.name && !conversation.name.startsWith('@') ? conversation.name : undefined
+      });
+      const assistantMessage = await prisma.chat_messages.update({
+        where: { id: result.assistantMessage.id },
+        data: { status: 'pending' }
+      });
+      await prisma.chat_conversations.update({ where: { id }, data: { last_read_at: new Date() } });
+
+      res.json({ user_message: userMessage, assistant_message: assistantMessage });
+    } catch (error) {
+      console.error('Customer message error:', error);
+      res.status(error.statusCode || 500).json({ error: error.message });
+    }
+  });
+
+  // POST /api/chat/:venue_id/messages/:message_id/mark-sent - The team sent this
+  // reply from their own WhatsApp or Instagram.
+  app.post('/api/chat/:venue_id/messages/:message_id/mark-sent', isAuthenticated, requireVenueAccess, async (req, res) => {
+    try {
+      const { venue_id, message_id } = req.params;
+      const message = await prisma.chat_messages.findUnique({
+        where: { id: message_id },
+        include: { conversation: { select: { venue_id: true } } }
+      });
+      if (!message || message.conversation.venue_id !== venue_id || message.role !== 'assistant') {
+        return res.status(404).json({ error: 'Mensaje no encontrado' });
+      }
+      if (['sent', 'delivered', 'read'].includes(message.status)) return res.json({ status: message.status });
+      const updated = await prisma.chat_messages.update({
+        where: { id: message_id },
+        data: { status: 'sent', error_details: null }
+      });
+      res.json({ status: updated.status });
+    } catch (error) {
       res.status(500).json({ error: error.message });
     }
   });
