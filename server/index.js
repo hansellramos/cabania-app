@@ -10871,7 +10871,8 @@ REGLAS:
   async function sendInstagramDailySummary(venue, since, until) {
     const metrics = await getInstagramDailySummary(venue.id, since, until);
     const { title, body } = buildInstagramSummaryMessage(venue, metrics, summaryPeriod(since, until));
-    const link = `/business/venues/${venue.id}/instagram`;
+    // The Instagram conversations inside CabanIA, not the integration settings.
+    const link = `/venues/${venue.id}/chat?channel=instagram`;
 
     if (venue.organization) {
       const members = await prisma.user_organizations.findMany({
