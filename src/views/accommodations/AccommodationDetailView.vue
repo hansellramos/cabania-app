@@ -485,6 +485,7 @@
                   Registrar Egreso
                 </CButton>
               </div>
+              <ExpenseCategoryCharts :expenses="expenses" />
               <CTable hover responsive v-if="expenses.length > 0">
                 <CTableHead>
                   <CTableRow>
@@ -498,7 +499,11 @@
                   <CTableRow v-for="expense in expenses" :key="expense.id">
                     <CTableDataCell>{{ formatPaymentDate(expense.expense_date) }}</CTableDataCell>
                     <CTableDataCell>
-                      <CBadge v-if="expense.category" :color="expense.category.color || 'secondary'">
+                      <CBadge
+                        v-if="expense.category"
+                        :color="expense.category.color?.startsWith('#') ? undefined : (expense.category.color || 'secondary')"
+                        :style="expense.category.color?.startsWith('#') ? { backgroundColor: expense.category.color, color: '#fff' } : undefined"
+                      >
                         {{ expense.category?.name || '-' }}
                       </CBadge>
                       <span v-else>-</span>
@@ -897,6 +902,7 @@ import CommissionCalculator from '@/components/commissions/CommissionCalculator.
 import AccommodationContractTab from '@/components/accommodations/AccommodationContractTab.vue'
 import CollectBalanceModal from '@/components/accommodations/CollectBalanceModal.vue'
 import BookingProfitCard from '@/components/accommodations/BookingProfitCard.vue'
+import ExpenseCategoryCharts from '@/components/accommodations/ExpenseCategoryCharts.vue'
 import { deleteAccommodation } from '@/services/accommodationService'
 import { useModules } from '@/composables/useModules'
 
