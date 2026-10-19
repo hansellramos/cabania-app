@@ -17,6 +17,7 @@
 
 const crypto = require('crypto');
 const { DEFINITIONS, createAgentTools } = require('./agent-tools');
+const { hasActiveMembership } = require('./services/membership');
 
 const KEY_PREFIX = 'cab_';
 const MAX_KEYS_PER_USER = 10;
@@ -58,7 +59,7 @@ Servidor MCP (si tu cliente lo soporta): ${appUrl()}/api/agent/mcp
 Autentícate en cada llamada con el header:
 Authorization: Bearer ${key}
 
-La key actúa con mis permisos. ${canWrite ? 'Puedes consultar y también crear cotizaciones, crear y corregir alquileres (horario, comisionista, personas, precio), registrar pagos, marcar no asistencia y cancelar alquileres: antes de cambiar algo, confírmamelo.' : 'Solo puede consultar información, no cambiar nada.'} Empieza llamando a GET ${appUrl()}/api/agent/v1/context para saber qué día es hoy y cuáles son mis cabañas.`;
+La key actúa con mis permisos. ${canWrite ? 'Puedes consultar y también crear cotizaciones, crear y corregir alquileres (horario, comisionista, personas, precio), registrar pagos, marcar no asistencia, cancelar alquileres, registrar y corregir egresos (también de un alquiler), configurar egresos recurrentes y marcar notificaciones como leídas: antes de cambiar algo, confírmamelo.' : 'Solo puede consultar información, no cambiar nada.'} Empieza llamando a GET ${appUrl()}/api/agent/v1/context para saber qué día es hoy y cuáles son mis cabañas.`;
 }
 
 module.exports = function registerAgentApi(app, deps) {
@@ -164,7 +165,12 @@ module.exports = function registerAgentApi(app, deps) {
     if (!key.last_used_at || Date.now() - key.last_used_at.getTime() > 60000) {
       prisma.api_keys.update({ where: { id: key.id }, data: { last_used_at: new Date() } }).catch(() => {});
     }
-    const scope = await userScope({ userId: key.user_id, perms: await getUserPermissions(key.user_id) });
+    const perms = await getUserPermissions(key.user_id);
+    // Same gate as the app (/no-subscription): an expired membership cannot use the API either.
+    if (!perms?.isSuperAdmin && !await hasActiveMembership(prisma, key.user_id)) {
+      return { status: 403, error: 'La membresía de CabanIA de esta cuenta está vencida o inactiva: renuévala para seguir usando la API.' };
+    }
+    const scope = await userScope({ userId: key.user_id, perms });
     scope.agentKeyName = key.name;
     return { key, scope };
   }
@@ -214,7 +220,7 @@ module.exports = function registerAgentApi(app, deps) {
     const base = `${appUrl()}/api/agent`;
     res.json({
       name: 'CabanIA',
-      description: 'API de CabanIA, una aplicación para administrar cabañas de alquiler (pasadías, eventos y hospedaje): alquileres, disponibilidad, pagos, clientes, cotizaciones, comisionistas y chats con clientes. Los montos están en pesos colombianos (COP) y las fechas en hora de Colombia.',
+      description: 'API de CabanIA, una aplicación para administrar cabañas de alquiler (pasadías, eventos y hospedaje): alquileres, disponibilidad, pagos, egresos (también recurrentes), ganancia por alquiler, clientes, cotizaciones, comisionistas, notificaciones y chats con clientes. Los montos están en pesos colombianos (COP) y las fechas en hora de Colombia.',
       authentication: {
         type: 'bearer',
         header: 'Authorization: Bearer cab_…',

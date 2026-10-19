@@ -11502,7 +11502,8 @@ REGLAS:
   const agentToolDeps = {
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
     findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission,
-    notify, notifier
+    notify, notifier, computeBookingProfit, canViewProfits,
+    withRecurringStatus, applyRecurringLink, recurringExpenseData, bogotaNow
   };
   require('./assistant')(app, { ...agentToolDeps, llmService, isAuthenticated, logAICall });
 

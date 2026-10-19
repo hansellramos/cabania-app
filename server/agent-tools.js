@@ -10,6 +10,7 @@
 
 const analytics = require('./lib/analytics');
 const modules = require('./modules');
+const recurringSchedule = require('./services/recurringExpenses');
 
 const TIMEZONE = 'America/Bogota';
 const MAX_TOOL_ROUNDS = 6;
@@ -50,7 +51,7 @@ const DEFINITIONS = [
   {
     name: 'get_booking',
     http: { method: 'GET', path: '/bookings/{booking_id}' },
-    description: 'Detalle completo de un alquiler: cliente y contacto, plan, personas, precios, pagos, depósito, contrato y otrosíes, comisionista, no asistencia.',
+    description: 'Detalle completo de un alquiler: cliente y contacto, plan, personas, precios, pagos, depósito, contrato y otrosíes, comisionista, no asistencia. Incluye la ganancia del alquiler (ingresos menos gastos, comisión y comisiones de pago) si el usuario puede verla.',
     properties: { booking_id: { type: 'string', description: 'ID del alquiler (de list_bookings).' } },
     required: ['booking_id']
   },
@@ -99,7 +100,7 @@ const DEFINITIONS = [
   {
     name: 'pending_work',
     http: { method: 'GET', path: '/pending-work' },
-    description: 'Trabajo pendiente del equipo: tareas de mantenimiento abiertas y depósitos por devolver.',
+    description: 'Trabajo pendiente del equipo: tareas de mantenimiento abiertas, depósitos por devolver y egresos recurrentes vencidos o por pagar (ej: el cuidandero de este mes sin registrar).',
     properties: { venue_id: { type: 'string', description: 'Solo esta cabaña.' } }
   },
   {
@@ -215,6 +216,126 @@ const DEFINITIONS = [
       note: { type: 'string', description: 'Qué pasó.' }
     },
     required: ['booking_id']
+  },
+  {
+    name: 'list_notifications',
+    http: { method: 'GET', path: '/notifications' },
+    description: 'Notificaciones del usuario (la campana de la app): alquileres nuevos, pagos, contratos firmados, recordatorios, egresos recurrentes vencidos… Por defecto las no leídas.',
+    properties: {
+      include_read: { type: 'boolean', description: 'Incluir también las ya leídas.' },
+      limit: { type: 'integer', description: 'Cuántas (máximo 50, por defecto 20).' }
+    }
+  },
+  {
+    name: 'mark_notifications_read',
+    write: true,
+    http: { method: 'POST', path: '/notifications/read' },
+    description: 'Marca notificaciones como leídas: las indicadas en notification_ids, o todas con all=true.',
+    properties: {
+      notification_ids: { type: 'array', items: { type: 'string' }, description: 'IDs de list_notifications.' },
+      all: { type: 'boolean', description: 'Marcar todas las no leídas.' }
+    }
+  },
+  {
+    name: 'list_expenses',
+    http: { method: 'GET', path: '/expenses' },
+    description: 'Egresos (gastos) registrados en un período: monto, categoría, descripción, proveedor, alquiler asociado y si pagan un egreso recurrente. Incluye el total por categoría y las categorías disponibles.',
+    properties: {
+      from: { type: 'string', description: 'Desde (YYYY-MM-DD). Por defecto hace 30 días.' },
+      to: { type: 'string', description: 'Hasta (YYYY-MM-DD). Por defecto hoy.' },
+      venue_id: { type: 'string', description: 'Solo esta cabaña.' },
+      booking_id: { type: 'string', description: 'Solo los gastos de este alquiler (ignora las fechas).' },
+      category: { type: 'string', description: 'Solo esta categoría (nombre).' },
+      search: { type: 'string', description: 'Texto en la descripción, notas o proveedor.' },
+      recurring: { type: 'string', enum: ['only', 'none'], description: '"only": solo los que pagan un egreso recurrente; "none": solo los que no.' }
+    }
+  },
+  {
+    name: 'recurring_expenses',
+    http: { method: 'GET', path: '/recurring-expenses' },
+    description: 'Egresos recurrentes configurados (cuidandero, servicios, internet…): frecuencia, monto esperado, estado del período actual (vencido, pendiente, registrado, omitido…), períodos sin registrar y próxima fecha.',
+    properties: {
+      venue_id: { type: 'string', description: 'Solo esta cabaña.' },
+      only_pending: { type: 'boolean', description: 'Solo los vencidos o por pagar pronto.' }
+    }
+  },
+  {
+    name: 'record_expense',
+    write: true,
+    http: { method: 'POST', path: '/expenses' },
+    description: 'Registra un egreso (gasto) de una cabaña o de un alquiler (booking_id: aseo, comida, decoración… cuentan en la ganancia de ese alquiler). Si paga un egreso recurrente, pasa recurring_expense_id (y period si no es el más cercano a la fecha).',
+    properties: {
+      amount: { type: 'number', description: 'Monto en pesos colombianos.' },
+      category: { type: 'string', description: 'Categoría (nombre, ej: Limpieza, Alimentación, Nómina). Ver list_expenses.' },
+      description: { type: 'string', description: 'Qué se pagó.' },
+      booking_id: { type: 'string', description: 'Alquiler al que pertenece el gasto (la cabaña sale del alquiler).' },
+      venue_id: { type: 'string', description: 'Cabaña, si el gasto no es de un alquiler.' },
+      date: { type: 'string', description: 'Fecha del gasto (YYYY-MM-DD). Por defecto hoy.' },
+      payment_method: { type: 'string', description: 'Cómo se pagó: Efectivo, Transferencia, Nequi…' },
+      provider: { type: 'string', description: 'Proveedor (nombre de uno existente).' },
+      reference: { type: 'string', description: 'Referencia o número de factura.' },
+      notes: { type: 'string', description: 'Notas.' },
+      recurring_expense_id: { type: 'string', description: 'Egreso recurrente que paga (de recurring_expenses).' },
+      period: { type: 'string', description: 'Fecha del período que paga (YYYY-MM-DD, de recurring_expenses).' }
+    },
+    required: ['amount', 'category', 'description']
+  },
+  {
+    name: 'update_expense',
+    write: true,
+    http: { method: 'PATCH', path: '/expenses/{expense_id}' },
+    description: 'Corrige un egreso: monto, categoría, descripción, fecha, alquiler asociado, o lo vincula/desvincula de un egreso recurrente. Solo cambia lo que envíes.',
+    properties: {
+      expense_id: { type: 'string', description: 'ID del egreso (de list_expenses).' },
+      amount: { type: 'number', description: 'Monto.' },
+      category: { type: 'string', description: 'Categoría (nombre).' },
+      description: { type: 'string', description: 'Descripción.' },
+      date: { type: 'string', description: 'Fecha (YYYY-MM-DD).' },
+      booking_id: { type: 'string', description: 'Alquiler al que pertenece; "ninguno" para quitarlo.' },
+      recurring_expense_id: { type: 'string', description: 'Egreso recurrente que paga; "ninguno" para que deje de contar como pago recurrente.' },
+      period: { type: 'string', description: 'Período del recurrente que paga (YYYY-MM-DD).' }
+    },
+    required: ['expense_id']
+  },
+  {
+    name: 'create_recurring_expense',
+    write: true,
+    http: { method: 'POST', path: '/recurring-expenses' },
+    description: 'Configura un egreso recurrente (se repite cada semana, quincena, mes, dos meses o año) para avisar cuando no se registre. Con from_expense_id toma la cabaña, categoría, monto y fecha de un egreso ya registrado y lo vincula como el pago de ese período.',
+    properties: {
+      from_expense_id: { type: 'string', description: 'Egreso existente que se repite (de list_expenses).' },
+      name: { type: 'string', description: 'Nombre (ej: "Cuidandero", "Internet"). Por defecto la descripción del egreso.' },
+      frequency: { type: 'string', enum: ['weekly', 'biweekly', 'monthly', 'bimonthly', 'yearly'], description: 'Semanal, quincenal (días 15 y último), mensual, bimestral o anual.' },
+      due_day: { type: 'integer', description: 'Día de pago: del mes (1–31) o de la semana (1 = lunes … 7 = domingo). Por defecto el de start_date.' },
+      expected_amount: { type: 'number', description: 'Monto esperado.' },
+      category: { type: 'string', description: 'Categoría (nombre).' },
+      venue_id: { type: 'string', description: 'Cabaña (si no viene de un egreso).' },
+      start_date: { type: 'string', description: 'Desde cuándo (YYYY-MM-DD). Por defecto la fecha del egreso o hoy.' },
+      end_date: { type: 'string', description: 'Hasta cuándo, si termina (YYYY-MM-DD).' },
+      payment_method: { type: 'string', description: 'Cómo se paga normalmente.' },
+      description: { type: 'string', description: 'Notas.' }
+    },
+    required: ['frequency']
+  },
+  {
+    name: 'update_recurring_expense',
+    write: true,
+    http: { method: 'PATCH', path: '/recurring-expenses/{recurring_expense_id}' },
+    description: 'Cambia un egreso recurrente: monto, día, frecuencia, nombre; active=false para que deje de ser recurrente (los gastos ya registrados se conservan); skip_period para marcar que un período no aplica, unskip_period para deshacerlo.',
+    properties: {
+      recurring_expense_id: { type: 'string', description: 'ID (de recurring_expenses).' },
+      name: { type: 'string', description: 'Nombre.' },
+      frequency: { type: 'string', enum: ['weekly', 'biweekly', 'monthly', 'bimonthly', 'yearly'], description: 'Frecuencia.' },
+      due_day: { type: 'integer', description: 'Día de pago.' },
+      expected_amount: { type: 'number', description: 'Monto esperado.' },
+      category: { type: 'string', description: 'Categoría (nombre).' },
+      end_date: { type: 'string', description: 'Hasta cuándo (YYYY-MM-DD); "ninguna" para quitarla.' },
+      payment_method: { type: 'string', description: 'Cómo se paga.' },
+      active: { type: 'boolean', description: 'false = deja de ser recurrente (no avisa más); true = lo reactiva.' },
+      skip_period: { type: 'string', description: 'Período (YYYY-MM-DD) que no se paga ni se debe.' },
+      unskip_period: { type: 'string', description: 'Deshacer un período omitido.' }
+    },
+    required: ['recurring_expense_id']
   }
 ];
 
@@ -235,7 +356,8 @@ function createAgentTools(deps) {
   const {
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
     findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission,
-    notify, notifier
+    notify, notifier, computeBookingProfit, canViewProfits,
+    withRecurringStatus, applyRecurringLink, recurringExpenseData, bogotaNow
   } = deps;
 
   /**
@@ -375,7 +497,8 @@ function createAgentTools(deps) {
         } : null,
         commission_agent: agent?.name || null,
         no_show_note: acc.no_show_note || null,
-        cancel_note: acc.cancel_note || null
+        cancel_note: acc.cancel_note || null,
+        profit: await bookingProfit(acc, scope)
       };
     },
 
@@ -564,7 +687,20 @@ function createAgentTools(deps) {
           past: bm[d.accommodation_id]?.date ? bm[d.accommodation_id].date < todayIso() : null
         }));
       }
-      return Object.keys(result).length ? result : { error: 'Sin permiso para ver tareas ni depósitos.' };
+      if (canExpenses(scope) && withRecurringStatus) {
+        const defs = await prisma.recurring_expenses.findMany({ where: { venue_id: venue, is_active: true } });
+        const due = (await withRecurringStatus(defs, bogotaNow().date)).filter(r => r.status === 'vencido' || r.status === 'pendiente');
+        result.recurring_expenses_due = due.map(r => ({
+          recurring_expense_id: r.id,
+          name: r.name,
+          venue: names[r.venue_id] || null,
+          status: r.status === 'vencido' ? 'vencido (sin registrar)' : 'por pagar pronto',
+          period: r.current_period,
+          overdue_periods: r.overdue_periods,
+          expected: r.expected_amount != null ? money(r.expected_amount) : null
+        }));
+      }
+      return Object.keys(result).length ? result : { error: 'Sin permiso para ver tareas, depósitos ni egresos.' };
     },
 
     async venue_info(args, scope) {
@@ -662,7 +798,9 @@ function createAgentTools(deps) {
           see_money: hasPermission(scope.perms, 'payments:view'),
           create_bookings: hasPermission(scope.perms, 'accommodations:create'),
           record_payments: hasPermission(scope.perms, 'payments:create'),
-          edit_bookings: scope.can('accommodations:edit')
+          edit_bookings: scope.can('accommodations:edit'),
+          see_booking_profit: !!canViewProfits?.(scope.perms),
+          manage_expenses: canExpenses(scope)
         },
         notes: [
           'Montos en pesos colombianos (COP).',
@@ -961,8 +1099,496 @@ function createAgentTools(deps) {
         data: { no_show_at: new Date(), no_show_by: scope.userId, no_show_note: agentNote(scope, args.note) }
       });
       return { ok: true, booking_id: booking.id, note: 'Marcado como "no asistió". Los pagos se quedan como están.' };
+    },
+
+    async list_notifications(args, scope) {
+      const limit = Math.max(1, Math.min(50, parseInt(args.limit, 10) || 20));
+      const where = { user_id: scope.userId, ...(args.include_read !== true && { read_at: null }) };
+      const [items, unread] = await Promise.all([
+        prisma.notifications.findMany({ where, orderBy: { created_at: 'desc' }, take: limit }),
+        prisma.notifications.count({ where: { user_id: scope.userId, read_at: null } })
+      ]);
+      const names = Object.fromEntries(scope.venues.map(v => [v.id, v.name]));
+      return {
+        unread,
+        count: items.length,
+        notifications: items.map(n => ({
+          id: n.id,
+          type: n.type,
+          title: n.title,
+          body: n.body,
+          venue: names[n.venue_id] || null,
+          at: n.created_at,
+          read: !!n.read_at,
+          link: n.link
+        }))
+      };
+    },
+
+    async mark_notifications_read(args, scope) {
+      const where = { user_id: scope.userId, read_at: null };
+      if (args.all !== true) {
+        const ids = (Array.isArray(args.notification_ids) ? args.notification_ids : [])
+          .map(String).filter(id => /^[0-9a-f-]{36}$/i.test(id));
+        if (!ids.length) return { error: 'Indica notification_ids (de list_notifications) o all=true.' };
+        where.id = { in: ids };
+      }
+      const { count } = await prisma.notifications.updateMany({ where, data: { read_at: new Date() } });
+      const unread = await prisma.notifications.count({ where: { user_id: scope.userId, read_at: null } });
+      return { ok: true, marked: count, unread };
+    },
+
+    async list_expenses(args, scope) {
+      if (!canExpenses(scope)) return { error: 'Sin permiso para ver egresos.' };
+      const and = [expenseScopeWhere(scope, args.venue_id)];
+      let from = null; let to = null;
+      if (args.booking_id) {
+        const booking = await findBooking(args.booking_id, scope);
+        if (!booking) return { error: 'Alquiler no encontrado o sin acceso.' };
+        and.push({ accommodation_id: booking.id });
+      } else {
+        to = validDay(args.to) || todayIso();
+        from = validDay(args.from) || isoDay(new Date(new Date(`${to}T00:00:00Z`).getTime() - 30 * 86400000));
+        and.push({ expense_date: dayRange(from, to) });
+      }
+      const categories = await expenseCategories();
+      if (args.category) {
+        const category = findByName(categories, args.category);
+        if (!category) return { error: `No existe la categoría "${args.category}". Categorías: ${categories.map(c => c.name).join(', ')}.` };
+        and.push({ category_id: category.id });
+      }
+      if (args.recurring === 'only') and.push({ recurring_expense_id: { not: null } });
+      if (args.recurring === 'none') and.push({ recurring_expense_id: null });
+      const q = String(args.search || '').trim();
+      if (q) {
+        and.push({
+          OR: [
+            { description: { contains: q, mode: 'insensitive' } },
+            { notes: { contains: q, mode: 'insensitive' } },
+            { provider: { name: { contains: q, mode: 'insensitive' } } }
+          ]
+        });
+      }
+      const rows = await prisma.expenses.findMany({
+        where: { AND: and },
+        include: {
+          category: { select: { name: true } },
+          provider: { select: { name: true } },
+          recurring_expense: { select: { id: true, name: true } }
+        },
+        orderBy: { expense_date: 'desc' },
+        take: 300
+      });
+      const bookings = await describeBookings(await prisma.accommodations.findMany({
+        where: { id: { in: [...new Set(rows.map(e => e.accommodation_id).filter(Boolean))] } }
+      }));
+      const bookingMap = Object.fromEntries(bookings.map(b => [b.id, b]));
+      const names = Object.fromEntries(scope.venues.map(v => [v.id, v.name]));
+      const byCategory = {};
+      for (const e of rows) byCategory[e.category?.name || 'Sin categoría'] = (byCategory[e.category?.name || 'Sin categoría'] || 0) + Number(e.amount || 0);
+      const totalValue = rows.reduce((sum, e) => sum + Number(e.amount || 0), 0);
+      return {
+        from, to,
+        count: rows.length,
+        total: money(totalValue),
+        by_category: Object.fromEntries(Object.entries(byCategory).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, money(v)])),
+        expenses: rows.slice(0, 100).map(e => describeExpense(e, names, bookingMap)),
+        truncated: rows.length > 100,
+        categories: categories.map(c => c.name)
+      };
+    },
+
+    async recurring_expenses(args, scope) {
+      if (!canExpenses(scope)) return { error: 'Sin permiso para ver egresos.' };
+      const defs = await prisma.recurring_expenses.findMany({
+        where: { venue_id: venueFilter(scope, args.venue_id), ...(args.only_pending === true && { is_active: true }) },
+        include: { category: { select: { name: true } } },
+        orderBy: { name: 'asc' }
+      });
+      let rows = await withRecurringStatus(defs, bogotaNow().date);
+      if (args.only_pending === true) rows = rows.filter(r => r.status === 'vencido' || r.status === 'pendiente');
+      return {
+        today: bogotaNow().date,
+        count: rows.length,
+        recurring_expenses: rows.map(describeRecurring),
+        link: '/business/expenses?tab=recurrentes'
+      };
+    },
+
+    async record_expense(args, scope) {
+      if (!canExpenses(scope)) return { error: 'Sin permiso para registrar egresos.' };
+      const amount = positive(args.amount);
+      if (!amount || amount > 1e9) return { error: 'amount debe ser un monto mayor que cero.' };
+      const description = String(args.description || '').trim().slice(0, 1000);
+      if (!description) return { error: 'Indica la descripción del gasto.' };
+      const categories = await expenseCategories();
+      const category = findByName(categories, args.category);
+      if (!category) return { error: `No existe la categoría "${args.category || ''}". Categorías: ${categories.map(c => c.name).join(', ')}.` };
+      const date = args.date ? validDay(args.date) : todayIso();
+      if (!date) return { error: 'date debe ser YYYY-MM-DD.' };
+
+      let booking = null;
+      let venueId = args.venue_id || null;
+      if (args.booking_id) {
+        booking = await findBooking(args.booking_id, scope);
+        if (!booking) return { error: 'Alquiler no encontrado o sin acceso.' };
+        venueId = booking.venue;
+      }
+      if (!venueId && scope.venues.length === 1) venueId = scope.venues[0].id;
+      const venue = scope.venues.find(v => v.id === venueId);
+      if (!venue) return { error: venueId ? 'Cabaña no encontrada o sin acceso.' : 'Indica venue_id o booking_id.' };
+
+      const provider = args.provider ? await findProvider(args.provider, venue) : null;
+      const notes = [
+        args.notes,
+        args.payment_method && `Pagado con: ${String(args.payment_method).slice(0, 100)}`,
+        args.provider && !provider && `Proveedor: ${String(args.provider).slice(0, 100)}`
+      ].filter(Boolean).join('. ');
+      const data = {
+        organization_id: venue.organization || null,
+        venue_id: venue.id,
+        category_id: category.id,
+        amount,
+        description,
+        expense_date: new Date(`${date}T00:00:00.000Z`),
+        reference: args.reference ? String(args.reference).slice(0, 255) : null,
+        notes: agentNote(scope, notes),
+        provider_id: provider?.id || null,
+        accommodation_id: booking?.id || null,
+        created_by: scope.userId
+      };
+      if (args.recurring_expense_id) {
+        const def = await findRecurring(args.recurring_expense_id, scope);
+        if (!def) return { error: 'Egreso recurrente no encontrado o sin acceso.' };
+        if (def.venue_id !== venue.id) return { error: `El egreso recurrente "${def.name}" es de otra cabaña.` };
+        const error = await linkRecurring(data, def.id, args.period);
+        if (error) return { error };
+      }
+      const expense = await prisma.expenses.create({
+        data,
+        include: { category: { select: { name: true } }, provider: { select: { name: true } }, recurring_expense: { select: { id: true, name: true } } }
+      });
+      analytics.track('expense_created', {
+        userId: scope.userId,
+        organizationId: expense.organization_id || null,
+        venueId: expense.venue_id,
+        properties: { category_id: expense.category_id, amount_bucket: analytics.amountBucket(amount), linked_to_booking: !!booking, has_receipt: false, source: toolSource(scope) }
+      });
+      const bookingMap = booking ? Object.fromEntries((await describeBookings([booking])).map(b => [b.id, b])) : {};
+      return {
+        ok: true,
+        expense: describeExpense(expense, { [venue.id]: venue.name }, bookingMap),
+        ...(booking && { profit: await bookingProfit(booking, scope) })
+      };
+    },
+
+    async update_expense(args, scope) {
+      if (!canExpenses(scope)) return { error: 'Sin permiso para editar egresos.' };
+      const existing = await findExpense(args.expense_id, scope);
+      if (!existing) return { error: 'Egreso no encontrado o sin acceso.' };
+      const data = {};
+      const changed = [];
+      if (args.amount !== undefined) {
+        const amount = positive(args.amount);
+        if (!amount || amount > 1e9) return { error: 'amount debe ser un monto mayor que cero.' };
+        data.amount = amount; changed.push('monto');
+      }
+      if (args.category !== undefined) {
+        const categories = await expenseCategories();
+        const category = findByName(categories, args.category);
+        if (!category) return { error: `No existe la categoría "${args.category}". Categorías: ${categories.map(c => c.name).join(', ')}.` };
+        data.category_id = category.id; changed.push('categoría');
+      }
+      if (args.description !== undefined) {
+        const description = String(args.description || '').trim().slice(0, 1000);
+        if (!description) return { error: 'La descripción no puede quedar vacía.' };
+        data.description = description; changed.push('descripción');
+      }
+      if (args.date !== undefined) {
+        const date = validDay(args.date);
+        if (!date) return { error: 'date debe ser YYYY-MM-DD.' };
+        data.expense_date = new Date(`${date}T00:00:00.000Z`); changed.push('fecha');
+      }
+      if (args.booking_id !== undefined) {
+        if (isNone(args.booking_id)) {
+          data.accommodation_id = null;
+        } else {
+          const booking = await findBooking(args.booking_id, scope);
+          if (!booking) return { error: 'Alquiler no encontrado o sin acceso.' };
+          if (existing.venue_id && booking.venue !== existing.venue_id) return { error: 'Ese alquiler es de otra cabaña.' };
+          data.accommodation_id = booking.id;
+          data.venue_id = booking.venue;
+        }
+        changed.push('alquiler');
+      }
+      if (args.recurring_expense_id !== undefined || args.period !== undefined) {
+        if (isNone(args.recurring_expense_id)) {
+          await applyRecurringLink(Object.assign(data, { recurring_expense_id: null }));
+        } else {
+          const def = await findRecurring(args.recurring_expense_id || existing.recurring_expense_id, scope);
+          if (!def) return { error: 'Egreso recurrente no encontrado o sin acceso.' };
+          if (def.venue_id !== (data.venue_id || existing.venue_id)) return { error: `El egreso recurrente "${def.name}" es de otra cabaña.` };
+          const error = await linkRecurring(data, def.id, args.period, existing);
+          if (error) return { error };
+        }
+        changed.push('egreso recurrente');
+      }
+      if (!changed.length) return { error: 'No indicaste nada para cambiar.' };
+      const expense = await prisma.expenses.update({
+        where: { id: existing.id },
+        data: { ...data, updated_at: new Date(), updated_by: scope.userId },
+        include: { category: { select: { name: true } }, provider: { select: { name: true } }, recurring_expense: { select: { id: true, name: true } } }
+      });
+      const bookings = expense.accommodation_id
+        ? await describeBookings(await prisma.accommodations.findMany({ where: { id: expense.accommodation_id } }))
+        : [];
+      return {
+        ok: true,
+        changed,
+        expense: describeExpense(expense, Object.fromEntries(scope.venues.map(v => [v.id, v.name])), Object.fromEntries(bookings.map(b => [b.id, b])))
+      };
+    },
+
+    async create_recurring_expense(args, scope) {
+      if (!canExpenses(scope)) return { error: 'Sin permiso para configurar egresos.' };
+      let source = null;
+      if (args.from_expense_id) {
+        source = await findExpense(args.from_expense_id, scope);
+        if (!source) return { error: 'Egreso no encontrado o sin acceso.' };
+        if (!source.venue_id) return { error: 'Ese egreso no tiene cabaña: indica venue_id y los datos del recurrente.' };
+        if (source.recurring_expense_id) {
+          const current = await prisma.recurring_expenses.findUnique({ where: { id: source.recurring_expense_id }, select: { name: true } });
+          return { error: `Ese egreso ya es un pago del recurrente "${current?.name || source.recurring_expense_id}".` };
+        }
+      }
+      let categoryId = source?.category_id || null;
+      if (args.category) {
+        const categories = await expenseCategories();
+        const category = findByName(categories, args.category);
+        if (!category) return { error: `No existe la categoría "${args.category}". Categorías: ${categories.map(c => c.name).join(', ')}.` };
+        categoryId = category.id;
+      }
+      let venueId = source?.venue_id || args.venue_id || (scope.venues.length === 1 ? scope.venues[0].id : null);
+      if (!scope.venues.some(v => v.id === venueId)) return { error: venueId ? 'Cabaña no encontrada o sin acceso.' : 'Indica venue_id o from_expense_id.' };
+      const startDate = args.start_date ? validDay(args.start_date) : (source ? isoDay(source.expense_date) : todayIso());
+      if (!startDate) return { error: 'start_date debe ser YYYY-MM-DD.' };
+      const { data, error } = await recurringExpenseData({
+        venue_id: venueId,
+        name: args.name || source?.description,
+        frequency: args.frequency,
+        start_date: startDate,
+        end_date: args.end_date ? validDay(args.end_date) : undefined,
+        due_day: args.due_day,
+        expected_amount: args.expected_amount ?? (source ? Number(source.amount) : undefined),
+        category_id: categoryId,
+        provider_id: source?.provider_id,
+        description: args.description,
+        payment_method: args.payment_method
+      });
+      if (error) return { error: `${error}.` };
+      const def = await prisma.recurring_expenses.create({ data: { ...data, created_by: scope.userId } });
+      let linked = null;
+      if (source) {
+        const link = { organization_id: source.organization_id };
+        const linkError = await linkRecurring(link, def.id, null, source);
+        if (!linkError) {
+          await prisma.expenses.update({ where: { id: source.id }, data: { ...link, updated_at: new Date(), updated_by: scope.userId } });
+          linked = `El egreso del ${isoDay(source.expense_date)} quedó como el pago del período ${isoDay(link.recurring_period)}.`;
+        }
+      }
+      const [row] = await withRecurringStatus([await prisma.recurring_expenses.findUnique({ where: { id: def.id }, include: { category: { select: { name: true } } } })], bogotaNow().date);
+      return { ok: true, recurring_expense: describeRecurring(row), ...(linked && { note: linked }) };
+    },
+
+    async update_recurring_expense(args, scope) {
+      if (!canExpenses(scope)) return { error: 'Sin permiso para configurar egresos.' };
+      const def = await findRecurring(args.recurring_expense_id, scope);
+      if (!def) return { error: 'Egreso recurrente no encontrado o sin acceso.' };
+      const body = {};
+      for (const key of ['name', 'frequency', 'due_day', 'expected_amount', 'payment_method']) {
+        if (args[key] !== undefined) body[key] = args[key];
+      }
+      // The day is validated against the frequency (weekday or day of month).
+      if (body.due_day !== undefined && body.frequency === undefined) body.frequency = def.frequency;
+      if (args.end_date !== undefined) {
+        if (isNone(args.end_date)) body.end_date = null;
+        else if (!validDay(args.end_date)) return { error: 'end_date debe ser YYYY-MM-DD.' };
+        else body.end_date = validDay(args.end_date);
+      }
+      if (args.category !== undefined) {
+        const categories = await expenseCategories();
+        const category = findByName(categories, args.category);
+        if (!category) return { error: `No existe la categoría "${args.category}". Categorías: ${categories.map(c => c.name).join(', ')}.` };
+        body.category_id = category.id;
+      }
+      if (typeof args.active === 'boolean') body.is_active = args.active;
+      const { data, error } = await recurringExpenseData(body, { partial: true });
+      if (error) return { error: `${error}.` };
+      const endDate = data.end_date !== undefined ? data.end_date : def.end_date;
+      if (endDate && endDate < def.start_date) return { error: 'La fecha de fin no puede ser anterior a la de inicio.' };
+
+      const changed = Object.keys(data);
+      if (changed.length) {
+        await prisma.recurring_expenses.update({ where: { id: def.id }, data: { ...data, updated_at: new Date(), updated_by: scope.userId } });
+      }
+      const current = { ...def, ...data };
+      for (const [key, skip] of [['skip_period', true], ['unskip_period', false]]) {
+        if (!args[key]) continue;
+        const period = validDay(args[key]);
+        if (!period || !recurringSchedule.occurrencesBetween(current, period, period).length) {
+          return { error: `${period || args[key]} no es una fecha de pago de "${def.name}". Revisa los períodos con recurring_expenses.` };
+        }
+        const dueDate = new Date(`${period}T00:00:00.000Z`);
+        if (skip) {
+          await prisma.recurring_expense_periods.upsert({
+            where: { recurring_expense_id_due_date: { recurring_expense_id: def.id, due_date: dueDate } },
+            create: { recurring_expense_id: def.id, due_date: dueDate, skipped_at: new Date(), skipped_by: scope.userId },
+            update: { skipped_at: new Date(), skipped_by: scope.userId }
+          });
+        } else {
+          await prisma.recurring_expense_periods.updateMany({
+            where: { recurring_expense_id: def.id, due_date: dueDate },
+            data: { skipped_at: null, skipped_by: null }
+          });
+        }
+        changed.push(key);
+      }
+      if (!changed.length) return { error: 'No indicaste nada para cambiar.' };
+      const [row] = await withRecurringStatus([await prisma.recurring_expenses.findUnique({ where: { id: def.id }, include: { category: { select: { name: true } } } })], bogotaNow().date);
+      return {
+        ok: true,
+        recurring_expense: describeRecurring(row),
+        ...(args.active === false && { note: 'Ya no es recurrente: no se avisará más. Los gastos registrados se conservan.' })
+      };
     }
   };
+
+  // ==================== Expenses (egresos) ====================
+
+  // Same rule as the app's recurring expenses: full expenses access, not the ":own" partner profiles.
+  const canExpenses = (scope) => hasPermission(scope.perms, 'expenses:view') && !hasOwnOnly(scope.perms, 'deposits:view');
+
+  /** Expenses of the user's venues, or of their organizations when the expense has no venue. */
+  function expenseScopeWhere(scope, venueId) {
+    if (venueId) return { venue_id: venueFilter(scope, venueId) };
+    if (scope.venueIds === null) return {};
+    return { OR: [{ venue_id: { in: scope.venueIds } }, { venue_id: null, organization_id: { in: scope.orgIds } }] };
+  }
+
+  async function findExpense(id, scope) {
+    if (!/^[0-9a-f-]{36}$/i.test(id || '')) return null;
+    return prisma.expenses.findFirst({ where: { AND: [{ id }, expenseScopeWhere(scope)] } });
+  }
+
+  async function findRecurring(id, scope) {
+    if (!/^[0-9a-f-]{36}$/i.test(id || '')) return null;
+    return prisma.recurring_expenses.findFirst({ where: { id, venue_id: venueFilter(scope) } });
+  }
+
+  const expenseCategories = () => prisma.expense_categories.findMany({
+    where: { is_active: true }, select: { id: true, name: true }, orderBy: { name: 'asc' }
+  });
+
+  /** A provider of the venue's organization by name (exact, else the only partial match). */
+  async function findProvider(name, venue) {
+    const providers = await prisma.providers.findMany({
+      where: { OR: [{ organization_id: venue.organization || undefined }, { organization_id: null }] },
+      select: { id: true, name: true }
+    });
+    return findByName(providers, name);
+  }
+
+  /**
+   * Link an expense (data, or the existing one) to a recurring expense and the
+   * period it pays: the given one, or the due date closest to the expense date.
+   */
+  async function linkRecurring(data, recurringId, period, existing = null) {
+    if (period) {
+      if (!validDay(period)) return 'period debe ser YYYY-MM-DD.';
+      const def = await prisma.recurring_expenses.findUnique({ where: { id: recurringId } });
+      if (def && !recurringSchedule.occurrencesBetween(def, validDay(period), validDay(period)).length) {
+        return `${period} no es una fecha de pago de "${def.name}". Revisa los períodos con recurring_expenses.`;
+      }
+    }
+    Object.assign(data, { recurring_expense_id: recurringId, recurring_period: period ? validDay(period) : null });
+    const error = await applyRecurringLink(data, existing);
+    if (error) return error;
+    if (!data.recurring_period) return 'Ese egreso recurrente no tiene una fecha de pago cerca de la fecha del gasto.';
+    return null;
+  }
+
+  function describeExpense(e, venueNames, bookingMap) {
+    const booking = e.accommodation_id ? bookingMap[e.accommodation_id] : null;
+    return {
+      id: e.id,
+      date: isoDay(e.expense_date),
+      amount: money(e.amount),
+      category: e.category?.name || null,
+      description: e.description,
+      provider: e.provider?.name || null,
+      venue: venueNames[e.venue_id] || null,
+      booking: booking ? { id: booking.id, label: `${booking.date} · ${booking.customer || 'sin cliente'}`, link: booking.link } : (e.accommodation_id ? { id: e.accommodation_id } : null),
+      recurring: e.recurring_expense
+        ? { id: e.recurring_expense.id, name: e.recurring_expense.name, period: e.recurring_period ? isoDay(e.recurring_period) : null }
+        : null,
+      notes: e.notes || null,
+      link: `/business/expenses/${e.id}/edit`
+    };
+  }
+
+  const FREQUENCY_LABELS = { weekly: 'semanal', biweekly: 'quincenal', monthly: 'mensual', bimonthly: 'bimestral', yearly: 'anual' };
+
+  function describeRecurring(r) {
+    return {
+      id: r.id,
+      name: r.name,
+      venue: r.venue_data?.name || null,
+      category: r.category?.name || null,
+      frequency: FREQUENCY_LABELS[r.frequency] || r.frequency,
+      due_day: r.due_day,
+      expected: r.expected_amount != null ? money(r.expected_amount) : null,
+      active: r.is_active,
+      status: r.status,
+      current_period: r.current_period,
+      overdue_periods: r.overdue_periods,
+      next_due: r.next_due,
+      skipped_periods: r.skipped_periods,
+      last_payment: r.last_expense ? { date: isoDay(r.last_expense.expense_date), amount: money(r.last_expense.amount) } : null,
+      start_date: isoDay(r.start_date),
+      end_date: r.end_date ? isoDay(r.end_date) : null
+    };
+  }
+
+  // ==================== Booking profit ====================
+
+  const COMMISSION_STATUS = { pending: 'pendiente', paid: 'pagada', estimated: 'estimada (aún no registrada)' };
+
+  /**
+   * The booking's profit as the app shows it, for whoever may see it there:
+   * analytics viewers or users who see every booking and its payments, never the
+   * commission agent who sold it.
+   */
+  async function bookingProfit(booking, scope) {
+    if (!computeBookingProfit || !canViewProfits?.(scope.perms)) return undefined;
+    if ((await getAgentAccommodationIds(scope.userId)).has(booking.id)) return undefined;
+    const p = (await computeBookingProfit([booking.id], { detail: true })).get(booking.id);
+    if (!p) return undefined;
+    const c = p.costs.commission;
+    return {
+      income: money(p.income.total),
+      payments: money(p.income.payments),
+      deposit_kept: p.income.deposit_kept ? money(p.income.deposit_kept) : null,
+      expenses: (p.costs.expenses || []).map(e => ({ id: e.id, description: e.description, category: e.category, amount: money(e.amount), date: e.date ? isoDay(e.date) : null })),
+      expenses_total: money(p.costs.expenses_total),
+      payment_fees: money(p.costs.gateway_fees),
+      commission: c.amount ? `${money(c.amount)} ${COMMISSION_STATUS[c.status] || c.status}${c.agent_name ? ` (${c.agent_name})` : ''}` : 'sin comisión',
+      costs_total: money(p.costs.total),
+      profit: money(p.profit),
+      margin: p.margin != null ? `${p.margin}%` : null,
+      projected_profit: p.projected_profit != null ? money(p.projected_profit) : null,
+      note: 'Ganancia = pagos verificados + depósito retenido − gastos del alquiler − comisión − comisiones de pago. projected_profit: si se cobra el saldo pendiente.'
+    };
+  }
 
   /** An active commission agent of the venue (or its organization) by id or name. */
   async function findCommissionAgent(value, venue) {
@@ -1109,6 +1735,16 @@ const people = (args) => ({
   children: Math.max(0, Math.min(500, parseInt(args.children, 10) || 0))
 });
 const plain = (text) => String(text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const isNone = (v) => v === null || ['', 'ninguno', 'ninguna', 'none', 'null'].includes(plain(v).trim());
+/** A row by name, without accents or case: exact match, else the only one containing the text. */
+const findByName = (rows, text) => {
+  const q = plain(text).trim();
+  if (!q) return null;
+  const exact = rows.find(r => plain(r.name) === q);
+  if (exact) return exact;
+  const partial = rows.filter(r => plain(r.name).includes(q));
+  return partial.length === 1 ? partial[0] : null;
+};
 // "19:30", "7:30 pm", "7pm", "12 am" -> "HH:MM"
 const validTime = (v) => {
   const m = String(v || '').trim().toLowerCase().replace(/\./g, '').match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|a m|p m)?$/);
