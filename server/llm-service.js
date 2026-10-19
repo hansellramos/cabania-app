@@ -348,8 +348,10 @@ function buildSystemPrompt(venue, context, contactInfo = null) {
   const currentDateStr = `${currentDay} de ${monthNames[now.getMonth()]} de ${currentYear}`;
   const isoDate = now.toISOString().split('T')[0];
   
-  const contactSection = contactInfo 
-    ? `\nINFORMACIÓN DEL CLIENTE:\n- Tipo de contacto: ${contactInfo.type === 'whatsapp' ? 'WhatsApp' : 'Instagram'}\n- Contacto: ${contactInfo.value}\n`
+  const contactSection = contactInfo
+    ? `\nINFORMACIÓN DEL CLIENTE:\n`
+      + (contactInfo.value ? `- Tipo de contacto: ${contactInfo.type === 'whatsapp' ? 'WhatsApp' : 'Instagram'}\n- Contacto: ${contactInfo.value}\n` : '')
+      + (contactInfo.name ? `- Nombre: ${contactInfo.name} (ya lo sabes, no se lo preguntes)\n` : '')
     : '';
   
   return `Eres un asistente virtual amable y servicial de "${venue.name || 'la Cabaña'}". Tu trabajo es responder preguntas de clientes potenciales y huéspedes sobre la propiedad.
