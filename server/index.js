@@ -2,6 +2,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 const { uploadImage, deleteImage, extractPublicId } = require('./upload-service');
@@ -11274,7 +11275,7 @@ REGLAS:
           }
         }
         if (contract && contract.status !== 'signed') {
-          contractUrl = `${appBaseUrl()}/#/contract/${contract.qr_token}`;
+          contractUrl = `${appBaseUrl()}/contract/${contract.qr_token}`;
         }
         console.log('[bold] Contract', { accommodation: result.accommodationId, contract: contract?.id || null });
       } catch (err) {
@@ -16767,6 +16768,105 @@ Responde con JSON EXACTAMENTE en este formato:
   // deploy is picked up right away; hashed /assets files are immutable. Source maps
   // are uploaded to PostHog at build time and never served.
   const distPath = path.join(__dirname, '..', 'dist');
+
+  // ---------- Link previews for links we share with guests ----------
+  // WhatsApp, Instagram and Facebook never see what comes after "#", so a hash link
+  // (cabania.app/#/p/casabaluna) always previews as CabanIA. The shared links are
+  // paths instead (cabania.app/p/casabaluna): the server answers with the app's
+  // index.html carrying the venue's title, description and photo, and an inline
+  // script moves the browser to the hash route the app understands.
+  const escapeHtml = (text) => String(text ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /** A Cloudinary photo cropped to the 1200×630 previews use; other URLs as they are. */
+  function previewImage(url) {
+    if (!url) return `${appBaseUrl()}/icon-1024.png`;
+    const absolute = url.startsWith('http') ? url : `${appBaseUrl()}${url.startsWith('/') ? '' : '/'}${url}`;
+    return absolute.includes('res.cloudinary.com') && absolute.includes('/upload/')
+      ? absolute.replace('/upload/', '/upload/c_fill,w_1200,h_630,q_auto,f_jpg/')
+      : absolute;
+  }
+
+  async function venuePreview(venueId) {
+    const [venue, image] = await Promise.all([
+      prisma.venues.findUnique({ where: { id: venueId }, select: { name: true, city: true, department: true, logo_url: true } }),
+      prisma.venue_images.findFirst({ where: { venue_id: venueId }, orderBy: [{ is_cover: 'desc' }, { sort_order: 'asc' }], select: { image_url: true } })
+    ]);
+    if (!venue) return null;
+    const place = [venue.city, venue.department].filter(Boolean).join(', ');
+    return { name: venue.name || 'la cabaña', place, image: previewImage(image?.image_url || venue.logo_url) };
+  }
+
+  function sendPreviewPage(req, res, preview) {
+    let html;
+    try {
+      html = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+    } catch {
+      return res.status(404).end();
+    }
+    const url = `${appBaseUrl()}${req.originalUrl}`;
+    const tags = preview ? [
+      `<meta property="og:type" content="website">`,
+      `<meta property="og:site_name" content="${escapeHtml(preview.siteName)}">`,
+      `<meta property="og:title" content="${escapeHtml(preview.title)}">`,
+      `<meta property="og:description" content="${escapeHtml(preview.description)}">`,
+      `<meta property="og:image" content="${escapeHtml(preview.image)}">`,
+      `<meta property="og:url" content="${escapeHtml(url)}">`,
+      `<meta name="twitter:card" content="summary_large_image">`
+    ].join('\n    ') : '';
+    // Before the app loads: /p/casabaluna?x=1 -> /#/p/casabaluna?x=1
+    const redirect = `<script>if(!location.hash)history.replaceState(null,'','/#'+location.pathname+location.search)</script>`;
+    if (preview) {
+      // Drop the default CabanIA preview tags and use the venue's.
+      html = html
+        .replace(/\s*<meta (property="og:[^"]*"|name="twitter:[^"]*")[^>]*>/g, '')
+        .replace(/<title>[^<]*<\/title>/, `<title>${escapeHtml(preview.title)}</title>`)
+        .replace(/<meta name="description"[^>]*>/, `<meta name="description" content="${escapeHtml(preview.description)}" />`);
+    }
+    html = html.replace('</head>', `    ${tags}\n    ${redirect}\n  </head>`);
+    res.setHeader('Cache-Control', 'no-cache');
+    res.type('html').send(html);
+  }
+
+  app.get('/p/:slug', async (req, res) => {
+    try {
+      const venue = await prisma.venues.findUnique({ where: { slug: req.params.slug }, select: { id: true, is_public: true } });
+      const info = venue?.is_public ? await venuePreview(venue.id) : null;
+      sendPreviewPage(req, res, info && {
+        siteName: info.name,
+        title: info.place ? `${info.name} · ${info.place}` : info.name,
+        description: `Conoce ${info.name}${info.place ? ` en ${info.place}` : ''}: planes, precios y disponibilidad. Reserva en línea.`,
+        image: info.image
+      });
+    } catch (err) {
+      console.error('[preview] Venue page', err.message);
+      sendPreviewPage(req, res, null);
+    }
+  });
+
+  const contractPreview = (kind) => async (req, res) => {
+    try {
+      const token = UUID_RE.test(req.params.token) ? req.params.token : null;
+      const doc = token && await (kind === 'amendment' ? prisma.contract_amendments : prisma.contracts)
+        .findUnique({ where: { qr_token: token }, select: { accommodation_id: true } });
+      const acc = doc && await prisma.accommodations.findUnique({ where: { id: doc.accommodation_id }, select: { venue: true } });
+      const info = acc?.venue ? await venuePreview(acc.venue) : null;
+      const what = kind === 'amendment' ? 'Otrosí del contrato' : 'Contrato de alquiler';
+      sendPreviewPage(req, res, info && {
+        siteName: info.name,
+        title: `${what} · ${info.name}`,
+        description: kind === 'amendment'
+          ? `Revisa y firma el otrosí de tu contrato con ${info.name}.`
+          : `Revisa y firma tu contrato de alquiler con ${info.name}.`,
+        image: info.image
+      });
+    } catch (err) {
+      console.error('[preview] Contract page', err.message);
+      sendPreviewPage(req, res, null);
+    }
+  };
+  app.get('/contract/amendment/:token', contractPreview('amendment'));
+  app.get('/contract/:token', contractPreview('contract'));
   app.use((req, res, next) => (req.path.endsWith('.map') ? res.status(404).end() : next()));
   app.use(express.static(distPath, {
     setHeaders(res, filePath) {

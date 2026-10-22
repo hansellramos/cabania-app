@@ -44,6 +44,17 @@
 
               <CButton color="info" size="sm" class="ms-2" @click="viewUpcoming(venue)">Próximos</CButton>
               <CButton color="dark" size="sm" class="ms-2" @click="viewChat(venue)">Chat IA</CButton>
+              <CButton
+                v-if="publicVenueUrl(venue)"
+                as="a"
+                :href="publicVenueUrl(venue)"
+                target="_blank"
+                rel="noopener"
+                color="info"
+                variant="outline"
+                size="sm"
+                class="ms-2"
+              >Vista pública</CButton>
               <CButton color="danger" size="sm" class="ms-2" @click="onDelete(venue)">Eliminar</CButton>
             </CTableDataCell>
           </CTableRow>
@@ -57,6 +68,7 @@
 import { ref, onMounted, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { fetchVenues, deleteVenue } from '@/services/venueService'
+import { publicVenueUrl } from '@/utils/contactLinks'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
 import { useModules } from '@/composables/useModules'

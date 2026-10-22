@@ -398,7 +398,8 @@ async function loadTemplates() {
 
 const publicUrl = computed(() => {
   if (!contract.value?.qr_token) return ''
-  return `${window.location.origin}/#/contract/${contract.value.qr_token}`
+  // A path, not a hash link: WhatsApp then previews it with the venue's name and photo.
+  return `${window.location.origin}/contract/${contract.value.qr_token}`
 })
 
 const sections = computed(() => {
@@ -449,7 +450,7 @@ const venuePlans = ref([])
 const before = ref({ date: '', plan_id: '', adults: 0, children: 0, agreed_price: 0 })
 
 function amendmentUrl(a) {
-  return `${window.location.origin}/#/contract/amendment/${a.qr_token}`
+  return `${window.location.origin}/contract/amendment/${a.qr_token}`
 }
 
 async function openAmendment() {

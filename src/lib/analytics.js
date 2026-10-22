@@ -26,12 +26,12 @@ export function appEnv() {
   return 'development'
 }
 
-// Capability tokens travel in hash URLs (#/contract/<token>, ?token=...). Replace
-// them before anything leaves the browser.
+// Capability tokens travel in URLs (/contract/<token>, #/contract/<token>,
+// ?token=...). Replace them before anything leaves the browser.
 const TOKEN_PATTERNS = [
-  [/(#\/contract\/amendment\/)[^/?#&"\s]+/g, '$1:token'],
-  [/(#\/contract\/code\/)[^/?#&"\s]+/g, '$1:id'],
-  [/(#\/contract\/)(?!amendment\/|code\/)[^/?#&"\s]+/g, '$1:token'],
+  [/(\/contract\/amendment\/)[^/?#&"\s]+/g, '$1:token'],
+  [/(\/contract\/code\/)[^/?#&"\s]+/g, '$1:id'],
+  [/(\/contract\/)(?!amendment\/|code\/)[^/?#&"\s]+/g, '$1:token'],
   [/([?&]token=)[^&#"\s]+/g, '$1:token'],
   [/([?&](?:code|email|phone)=)[^&#"\s]+/g, '$1:redacted'],
 ]

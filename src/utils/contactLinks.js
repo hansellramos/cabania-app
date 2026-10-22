@@ -34,3 +34,13 @@ export async function copyText(text) {
     return false
   }
 }
+
+/**
+ * Public page of a venue, as a path (not a hash link) so WhatsApp and Instagram
+ * preview it with the venue's name and photo. Null while it is not published.
+ */
+export function publicVenueUrl(venue) {
+  if (!venue?.is_public || !venue.slug) return null
+  const base = (import.meta.env.VITE_APP_URL || window.location.origin).replace(/\/$/, '')
+  return `${base}/p/${venue.slug}`
+}

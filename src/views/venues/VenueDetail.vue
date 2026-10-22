@@ -35,6 +35,9 @@
             <RouterLink :to="`/venues/${venue.id}/chat`">
               <CButton color="dark" size="sm">Chat IA</CButton>
             </RouterLink>
+            <CButton v-if="publicUrl" as="a" :href="publicUrl" target="_blank" rel="noopener" color="info" size="sm" variant="outline">
+              Vista pública
+            </CButton>
             <CButton color="danger" size="sm" @click="onDelete">Eliminar</CButton>
             <RouterLink to="/business/venues">
               <CButton color="secondary" size="sm" variant="outline">Volver</CButton>
@@ -66,6 +69,17 @@
               <CTabPane :visible="activeTab === 0">
                 <p class="d-none"><strong>ID:</strong> <span class="text-body-secondary">{{ venue.id }}</span></p>
                 <p><strong>Nombre:</strong> <span class="text-body-secondary">{{ venue.name }}</span></p>
+                <p class="d-flex flex-wrap align-items-center gap-2">
+                  <strong>Página pública:</strong>
+                  <template v-if="publicUrl">
+                    <a :href="publicUrl" target="_blank" rel="noopener" class="text-break">{{ publicUrl }} <CIcon icon="cil-external-link" size="sm" class="ms-1" /></a>
+                    <CButton color="secondary" size="sm" variant="outline" @click="copyPublicUrl">{{ copied ? 'Copiado' : 'Copiar' }}</CButton>
+                  </template>
+                  <span v-else class="text-body-secondary">
+                    No está publicada.
+                    <RouterLink :to="`/business/venues/${venue.id}/edit`">Actívala en Editar</RouterLink>
+                  </span>
+                </p>
                 <p><strong>WhatsApp:</strong> <span class="text-body-secondary">{{ venue.whatsapp }}</span></p>
                 <p><strong>Instagram:</strong> <span class="text-body-secondary"><a :href="instagramUrl" target="_blank" rel="noopener noreferrer">{{ instagramDisplay }} <CIcon icon="cil-external-link" size="sm" class="ms-1" /></a></span></p>
                 <p><strong>Dirección:</strong> <span class="text-body-secondary">{{ venue.address }}</span></p>
@@ -175,6 +189,7 @@ import { CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CSpinner, CBadge, C
 import { CIcon } from '@coreui/icons-vue'
 import { getVenueById, deleteVenue } from '@/services/venueService'
 import { useModules } from '@/composables/useModules'
+import { publicVenueUrl, copyText } from '@/utils/contactLinks'
 import { useBreadcrumbStore } from '@/stores/breadcrumb.js'
 import mapboxgl from 'mapbox-gl'
 import 'mapbox-gl/dist/mapbox-gl.css'
@@ -202,6 +217,14 @@ const instagramDisplay = computed(() => {
   const ig = venue.value?.instagram || ''
   return ig.startsWith('@') ? ig.slice(1) : ig
 })
+
+const publicUrl = computed(() => publicVenueUrl(venue.value))
+const copied = ref(false)
+const copyPublicUrl = async () => {
+  if (!(await copyText(publicUrl.value))) return
+  copied.value = true
+  setTimeout(() => { copied.value = false }, 2000)
+}
 
 const coverImage = computed(() => {
   return venueImages.value.find(img => img.is_cover) || venueImages.value[0] || null
