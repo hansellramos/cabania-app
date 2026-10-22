@@ -394,7 +394,7 @@
     <div class="mb-3" v-if="form.is_public">
       <CFormLabel for="venueSlug">URL Pública (slug)</CFormLabel>
       <CInputGroup>
-        <CInputGroupText class="text-muted" style="font-size: 0.85rem;">{{ publicHost }}/#/p/</CInputGroupText>
+        <CInputGroupText class="text-muted" style="font-size: 0.85rem;">{{ publicHost }}/p/</CInputGroupText>
         <CFormInput
           id="venueSlug"
           :model-value="form.slug"
@@ -484,7 +484,8 @@ const exampleFollowupTime = computed(() => {
 })
 
 const publicVenueUrl = computed(() => {
-  return `${publicBaseUrl}/#/p/${form.value.slug || ''}`
+  // A path, not a hash link: WhatsApp then previews it with the venue's name and photo.
+  return `${publicBaseUrl}/p/${form.value.slug || ''}`
 })
 
 const locationChanged = computed(() => {
