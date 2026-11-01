@@ -24,6 +24,8 @@ import {
   cibCcApplePay,
   cibCcAmex,
   cibWhatsapp,
+  cibTelegramPlane,
+  cibMessenger,
 } from '@coreui/icons'
 import { cifUs, cifBr, cifIn, cifFr, cifEs, cifPl } from '@coreui/icons'
 import {
@@ -76,6 +78,9 @@ import {
   cilSettings,
   cilShieldAlt,
   cilSpeech,
+  cilCommentBubble,
+  cilPhone,
+  cilAt,
   cilSpeedometer,
   cilStar,
   cilSun,
@@ -180,6 +185,9 @@ export const iconsSet = Object.assign(
     cilSettings,
     cilShieldAlt,
     cilSpeech,
+    cilCommentBubble,
+    cilPhone,
+    cilAt,
     cilSpeedometer,
     cilStar,
     cilSun,
@@ -263,5 +271,7 @@ export const iconsSet = Object.assign(
     cibCcApplePay,
     cibCcAmex,
     cibWhatsapp,
+    cibTelegramPlane,
+    cibMessenger,
   },
 )

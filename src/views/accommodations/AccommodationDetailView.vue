@@ -208,8 +208,9 @@
                 <CCol :xs="12">
                   <h6 class="text-muted">Contacto del Cliente</h6>
                   <p v-if="accommodation.customer_data.whatsapp">
-                    <a :href="whatsappUrl(accommodation.customer_data.whatsapp)" target="_blank" class="text-success text-decoration-none">
-                      <CIcon icon="cib-whatsapp" /> {{ accommodation.customer_data.whatsapp }}
+                    <a :href="channelUrl(phoneChannel, accommodation.customer_data)" target="_blank" :class="`text-${CONTACT_CHANNELS[phoneChannel].color} text-decoration-none`">
+                      <CIcon :icon="CONTACT_CHANNELS[phoneChannel].icon" /> {{ accommodation.customer_data.whatsapp }}
+                      <small v-if="phoneChannel !== 'whatsapp'" class="text-body-secondary">({{ CONTACT_CHANNELS[phoneChannel].label }})</small>
                     </a>
                   </p>
                   <p v-if="whatsappUsernameUrl(accommodation.customer_data.whatsapp_username)">
@@ -220,6 +221,11 @@
                   <p v-if="instagramDmUrl(accommodation.customer_data.instagram)">
                     <a :href="instagramDmUrl(accommodation.customer_data.instagram)" target="_blank" class="text-decoration-none" style="color: #d6249f">
                       <CIcon icon="cib-instagram" /> {{ accommodation.customer_data.instagram }}
+                    </a>
+                  </p>
+                  <p v-if="facebookMessengerUrl(accommodation.customer_data.facebook)">
+                    <a :href="facebookMessengerUrl(accommodation.customer_data.facebook)" target="_blank" class="text-primary text-decoration-none">
+                      <CIcon icon="cibMessenger" /> {{ accommodation.customer_data.facebook }}
                     </a>
                   </p>
                   <p v-if="accommodation.customer_data.user_data?.email">
@@ -902,7 +908,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import { CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
 import MessageSuggestions from '@/components/accommodations/MessageSuggestions.vue'
-import { whatsappUrl, whatsappUsernameUrl, instagramDmUrl } from '@/utils/contactLinks'
+import { whatsappUsernameUrl, instagramDmUrl, facebookMessengerUrl, channelUrl, CONTACT_CHANNELS } from '@/utils/contactLinks'
 import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
 import AccommodationContractTab from '@/components/accommodations/AccommodationContractTab.vue'
 import CollectBalanceModal from '@/components/accommodations/CollectBalanceModal.vue'
@@ -914,6 +920,8 @@ import { useModules } from '@/composables/useModules'
 const route = useRoute()
 const router = useRouter()
 const accommodation = ref(null)
+// How to open the guest's phone: WhatsApp unless the host chose Telegram or SMS for them.
+const phoneChannel = computed(() => (["telegram", "sms"].includes(accommodation.value?.customer_data?.contact_channel) ? accommodation.value.customer_data.contact_channel : "whatsapp"))
 
 // No-show and courtesy reschedule
 const todayIso = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' })

@@ -56,7 +56,7 @@
                 {{ contact.fullname }}
               </RouterLink>
             </CTableDataCell>
-            <CTableDataCell>{{ contact.whatsapp || (contact.whatsapp_username ? `@${contact.whatsapp_username}` : '') }}</CTableDataCell>
+            <CTableDataCell>{{ channelValue(initialChannel(contact), contact) }}</CTableDataCell>
             <CTableDataCell>{{ contact.country }}</CTableDataCell>
             <CTableDataCell>{{ contact.state }}</CTableDataCell>
             <CTableDataCell>{{ contact.city }}</CTableDataCell>
@@ -95,6 +95,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { fetchContacts, deleteContact } from '@/services/contactService'
+import { channelValue, initialChannel } from '@/utils/contactLinks'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
 

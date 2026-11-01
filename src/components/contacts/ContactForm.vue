@@ -21,38 +21,26 @@
         <CFormLabel for="contactFullname">Nombre Completo *</CFormLabel>
         <CFormInput id="contactFullname" v-model="form.fullname" type="text" placeholder="Ingresa el nombre completo" required />
       </div>
-      <CRow class="g-3 mb-3">
-        <CCol :md="6">
-          <CFormLabel for="contactWhatsapp">Número de WhatsApp</CFormLabel>
-          <CFormInput
-            id="contactWhatsapp"
-            v-model="form.whatsapp"
-            type="text"
-            inputmode="tel"
-            placeholder="Ej: 3001234567"
-            :invalid="!!whatsappError"
-            :feedback-invalid="whatsappError"
-            @input="moveUsernameFromNumber"
-          />
-        </CCol>
-        <CCol :md="6">
-          <CFormLabel for="contactWhatsappUsername">Usuario de WhatsApp</CFormLabel>
-          <CFormInput
-            id="contactWhatsappUsername"
-            v-model="form.whatsapp_username"
-            type="text"
-            autocapitalize="off"
-            placeholder="@usuario"
-            :invalid="!!usernameError"
-            :feedback-invalid="usernameError"
-          />
-        </CCol>
-        <div class="form-text mt-1">Si el cliente no dio su número, escribe su usuario de WhatsApp.</div>
-      </CRow>
       <div class="mb-3">
-        <CFormLabel for="contactInstagram">Instagram</CFormLabel>
-        <CFormInput id="contactInstagram" v-model="form.instagram" type="text" placeholder="@usuario de Instagram" />
+        <CFormLabel for="contactChannel">Medio de contacto principal</CFormLabel>
+        <ContactChannelPicker :key="form.id || 'new'" v-model="form" input-id="contactChannel" />
+        <div class="form-text">Por aquí se abren los mensajes y los envíos de contrato.</div>
       </div>
+      <CRow class="g-3 mb-3">
+        <CCol v-for="other in otherFields" :key="other.field" :md="6">
+          <CFormLabel :for="`contact-${other.field}`">{{ other.label }}</CFormLabel>
+          <CFormInput
+            :id="`contact-${other.field}`"
+            v-model="form[other.field]"
+            type="text"
+            :inputmode="other.field === 'whatsapp' ? 'tel' : 'text'"
+            autocapitalize="off"
+            :placeholder="other.placeholder"
+            :invalid="!!fieldErrors[other.field]"
+            :feedback-invalid="fieldErrors[other.field]"
+          />
+        </CCol>
+      </CRow>
       <div class="mb-3">
         <CFormLabel for="contactEmail">Correo</CFormLabel>
         <CFormInput id="contactEmail" v-model="form.email" type="email" placeholder="correo@ejemplo.com" />
@@ -116,7 +104,7 @@
         </div>
       </div>
 
-      <CButton type="submit" color="primary" class="me-2" :disabled="(!form.organizationId && !isEdit) || !!whatsappError || !!usernameError">{{ isEdit ? 'Actualizar' : 'Crear' }}</CButton>
+      <CButton type="submit" color="primary" class="me-2" :disabled="(!form.organizationId && !isEdit) || hasErrors">{{ isEdit ? 'Actualizar' : 'Crear' }}</CButton>
       <CButton color="secondary" variant="outline" @click="onCancel">Cancelar</CButton>
     </fieldset>
   </CForm>
@@ -124,7 +112,8 @@
 
 <script setup>
 import { ref, computed, watch, defineProps, defineEmits, onMounted } from 'vue'
-import { whatsappNumberError, whatsappUsernameError, looksLikeWhatsappUsername } from '@/utils/contactLinks'
+import { CONTACT_CHANNELS, channelError, initialChannel } from '@/utils/contactLinks'
+import ContactChannelPicker from '@/components/contacts/ContactChannelPicker.vue'
 import { fetchCountries, fetchStatesByCountry } from '@/services/contactService'
 import { fetchOrganizations } from '@/services/organizationService'
 
@@ -139,17 +128,18 @@ watch(() => props.modelValue, val => {
   if (val) form.value = { ...val }
 }, { deep: true, immediate: true })
 
-// The number and the username are checked separately: either one can be empty.
-const whatsappError = computed(() => whatsappNumberError(form.value.whatsapp))
-const usernameError = computed(() => whatsappUsernameError(form.value.whatsapp_username))
-
-/** A username typed or pasted in the number field goes to its own field. */
-function moveUsernameFromNumber() {
-  const value = String(form.value.whatsapp || '').trim()
-  if (!looksLikeWhatsappUsername(value) || form.value.whatsapp_username) return
-  form.value.whatsapp_username = value
-  form.value.whatsapp = ''
-}
+// Every way to reach the contact, each one checked on its own (any can be empty).
+// The principal one is in the picker; the rest are listed below it.
+const FIELDS = [
+  { field: 'whatsapp', channel: 'whatsapp', label: 'Teléfono', placeholder: 'Ej: 3001234567' },
+  { field: 'whatsapp_username', channel: 'whatsapp_user', label: 'Usuario de WhatsApp', placeholder: '@usuario' },
+  { field: 'instagram', channel: 'instagram', label: 'Instagram', placeholder: '@usuario' },
+  { field: 'facebook', channel: 'facebook', label: 'Facebook', placeholder: 'Usuario o enlace del perfil' },
+]
+const principalField = computed(() => CONTACT_CHANNELS[initialChannel(form.value)].field)
+const otherFields = computed(() => FIELDS.filter(f => f.field !== principalField.value))
+const fieldErrors = computed(() => Object.fromEntries(FIELDS.map(f => [f.field, channelError(f.channel, form.value[f.field])])))
+const hasErrors = computed(() => Object.values(fieldErrors.value).some(Boolean))
 
 const organizations = ref([])
 const countries = ref([])
@@ -258,8 +248,11 @@ watch(() => form.value.country, async (newCountry) => {
 })
 
 function handleSubmit() {
-  if (whatsappError.value || usernameError.value) return
-  emit('submit', { ...form.value })
+  if (hasErrors.value) return
+  // Save the principal channel only when it has its data; otherwise the first one available is used.
+  const channel = initialChannel(form.value)
+  const hasData = String(form.value[CONTACT_CHANNELS[channel].field] || '').trim()
+  emit('submit', { ...form.value, contact_channel: hasData ? channel : null })
 }
 function onCancel() { emit('cancel') }
 </script>

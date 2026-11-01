@@ -6,7 +6,7 @@
     </CCardHeader>
     <CCardBody>
       <div v-if="!customerChannel" class="text-muted text-center py-3">
-        El cliente no tiene número ni usuario de WhatsApp, ni Instagram registrado
+        El cliente no tiene teléfono ni usuario de WhatsApp, Instagram o Facebook registrado
       </div>
       <div v-else-if="loadingTemplates" class="text-center py-3">
         <CSpinner size="sm" color="primary" class="me-2" />
@@ -79,12 +79,12 @@
 
             <div class="d-flex flex-column flex-sm-row gap-2 align-items-start">
               <CButton
-                :color="customerChannel.channel === 'instagram' ? 'danger' : 'success'"
+                :color="customerChannel.color"
                 size="sm"
                 class="flex-shrink-0"
                 @click="openWhatsApp(getState(template.id).message)"
               >
-                <CIcon :icon="customerChannel.channel === 'instagram' ? 'cib-instagram' : 'cib-whatsapp'" class="me-1" />
+                <CIcon :icon="customerChannel.icon" class="me-1" />
                 Enviar por {{ customerChannel.label }}
               </CButton>
 
@@ -154,7 +154,7 @@ const categoryColors = {
 const categoryLabel = (category) => categoryLabels[category] || category
 const categoryColor = (category) => categoryColors[category] || 'secondary'
 
-// WhatsApp by number or username when the guest has one; otherwise their Instagram DM.
+// The guest's preferred channel, else WhatsApp (number or username), Instagram or Facebook.
 const customerChannel = computed(() => contactChannel(props.accommodation?.customer_data))
 
 function getState(templateId) {
@@ -251,8 +251,8 @@ function regenerateMessage(template) {
 async function openWhatsApp(text) {
   const target = contactChannel(props.accommodation?.customer_data, text)
   if (!target) return
-  // Instagram cannot prefill the message: copy it to paste in the DM.
-  if (target.channel === 'instagram') await copyText(text)
+  // Instagram, Facebook and Telegram cannot prefill the message: copy it to paste in the chat.
+  if (!target.prefill) await copyText(text)
   window.open(target.url, '_blank')
 }
 

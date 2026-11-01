@@ -1,5 +1,6 @@
-// How a contact can be reached: a WhatsApp number, a WhatsApp username or an
-// Instagram @username. Each one is validated on its own, so having one never
+// How a contact can be reached: a phone number (WhatsApp, Telegram or SMS), a
+// WhatsApp username, an Instagram @username or a Facebook username, plus the
+// channel the host prefers. Each one is validated on its own, so having one never
 // relaxes the rules of the other.
 
 /**
@@ -13,13 +14,40 @@ function cleanPhone(value) {
   return digits.length >= 8 && digits.length <= 15 ? digits : null;
 }
 
-/** An Instagram @username (not a numeric IGSID). */
+/** An Instagram @username (not a numeric IGSID), also from a profile link. */
 function cleanInstagram(value) {
-  const text = String(value || '').trim();
+  const text = String(value || '').trim()
+    .replace(/^https?:\/\//i, '').replace(/^(www\.)?(instagram\.com|ig\.me\/m)\//i, '')
+    .split(/[/?#]/)[0];
   return /^@?[A-Za-z0-9._]{1,30}$/.test(text) && !/^\d+$/.test(text.replace('@', ''))
     ? (text.startsWith('@') ? text : `@${text}`)
     : null;
 }
+
+/**
+ * A Facebook username (5 to 50 letters, digits or periods) or numeric profile id,
+ * also from a profile or m.me link, or null.
+ */
+function cleanFacebook(value) {
+  let text = String(value || '').trim();
+  const id = text.match(/profile\.php\?id=(\d{5,20})/);
+  if (id) return id[1];
+  text = text.replace(/^https?:\/\//i, '')
+    .replace(/^(www\.|m\.|web\.)?(facebook\.com|fb\.com|m\.me)\//i, '')
+    .replace(/^@/, '').split(/[/?#]/)[0];
+  if (!/^[A-Za-z0-9.]{5,50}$/.test(text) || text.startsWith('.') || text.endsWith('.')) return null;
+  return text;
+}
+
+/** Channels a host can prefer, and the contact field each one needs. */
+const CONTACT_CHANNELS = {
+  whatsapp: 'whatsapp',
+  telegram: 'whatsapp',
+  sms: 'whatsapp',
+  whatsapp_user: 'whatsapp_username',
+  instagram: 'instagram',
+  facebook: 'facebook',
+};
 
 /**
  * A WhatsApp username in lowercase and without the @, or null. WhatsApp's rules:
@@ -45,7 +73,7 @@ function contactWhatsappFields(body) {
     if (!raw) out.whatsapp = null;
     else {
       const digits = cleanPhone(raw);
-      if (!digits) throw Object.assign(new Error('El número de WhatsApp no es válido: escribe solo el número, con o sin indicativo.'), { statusCode: 400 });
+      if (!digits) throw Object.assign(new Error('El número de teléfono no es válido: escribe solo el número, con o sin indicativo.'), { statusCode: 400 });
       out.whatsapp = digits;
     }
   }
@@ -58,7 +86,40 @@ function contactWhatsappFields(body) {
       out.whatsapp_username = user;
     }
   }
+  if (body.instagram !== undefined) {
+    const raw = String(body.instagram ?? '').trim();
+    if (!raw || raw === '@') out.instagram = null;
+    else {
+      const handle = cleanInstagram(raw);
+      if (!handle) throw badRequest('El usuario de Instagram no es válido: hasta 30 letras, números, puntos o guiones bajos.');
+      out.instagram = handle;
+    }
+  }
+  if (body.facebook !== undefined) {
+    const raw = String(body.facebook ?? '').trim();
+    if (!raw || raw === '@') out.facebook = null;
+    else {
+      const user = cleanFacebook(raw);
+      if (!user) throw badRequest('El usuario de Facebook no es válido: de 5 a 50 letras, números o puntos, o el enlace del perfil.');
+      out.facebook = user;
+    }
+  }
+  if (body.contact_channel !== undefined) {
+    const channel = body.contact_channel || null;
+    if (channel && !CONTACT_CHANNELS[channel]) throw badRequest('El medio de contacto no es válido.');
+    // The preferred channel needs its field filled in, when the form sends that field.
+    const field = channel && CONTACT_CHANNELS[channel];
+    if (field && field in out && !out[field]) throw badRequest('Escribe el dato del medio de contacto elegido.');
+    out.contact_channel = channel;
+  }
   return out;
 }
 
-module.exports = { cleanPhone, cleanInstagram, cleanWhatsappUsername, contactWhatsappFields };
+function badRequest(message) {
+  return Object.assign(new Error(message), { statusCode: 400 });
+}
+
+module.exports = {
+  cleanPhone, cleanInstagram, cleanFacebook, cleanWhatsappUsername, contactWhatsappFields,
+  contactChannelFields: contactWhatsappFields, CONTACT_CHANNELS,
+};

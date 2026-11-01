@@ -102,20 +102,12 @@
                         <CIcon icon="cilZoom" size="sm" class="me-1" />Detalles
                       </router-link>
                       <a 
-                        v-if="contactWhatsappUrl(item.customer_data)" 
-                        :href="contactWhatsappUrl(item.customer_data)" 
+                        v-if="contactChannel(item.customer_data)" 
+                        :href="contactChannel(item.customer_data).url" 
                         target="_blank" 
-                        :class="['btn', 'btn-sm', colorMode === 'dark' ? 'btn-outline-success' : 'btn-success', colorMode !== 'dark' ? 'text-white' : '']"
+                        :class="['btn', 'btn-sm', colorMode === 'dark' ? `btn-outline-${contactChannel(item.customer_data).color}` : `btn-${contactChannel(item.customer_data).color}`, colorMode !== 'dark' ? 'text-white' : '']"
                       >
-                        <CIcon icon="cibWhatsapp" size="sm" class="me-1" />WhatsApp
-                      </a>
-                      <a 
-                        v-else-if="instagramDmUrl(item.customer_data?.instagram)" 
-                        :href="instagramDmUrl(item.customer_data.instagram)" 
-                        target="_blank" 
-                        :class="['btn', 'btn-sm', colorMode === 'dark' ? 'btn-outline-danger' : 'btn-danger', colorMode !== 'dark' ? 'text-white' : '']"
-                      >
-                        <CIcon icon="cibInstagram" size="sm" class="me-1" />Instagram
+                        <CIcon :icon="contactChannel(item.customer_data).icon" size="sm" class="me-1" />{{ contactChannel(item.customer_data).label }}
                       </a>
                     </div>
                   </div>
@@ -136,7 +128,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { CCard, CCardBody, CInputGroup, CFormInput, CButton, useColorModes } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
-import { contactWhatsappUrl, instagramDmUrl } from '@/utils/contactLinks'
+import { contactChannel } from '@/utils/contactLinks'
 import { useAuth } from '@/composables/useAuth'
 import RecurringExpensesPendingCard from '@/components/expenses/RecurringExpensesPendingCard.vue'
 
