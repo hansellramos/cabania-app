@@ -357,8 +357,10 @@ function createAgentTools(deps) {
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
     findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission,
     notify, notifier, computeBookingProfit, canViewProfits,
-    withRecurringStatus, applyRecurringLink, recurringExpenseData, bogotaNow
+    withRecurringStatus, applyRecurringLink, recurringExpenseData, bogotaNow, airbudget
   } = deps;
+  // Incomes and expenses reported to AirBudget (services/airbudgetSync.js).
+  const emitMovement = (db, movement) => (airbudget ? airbudget.emitMovement(db, movement) : null);
 
   /**
    * What this user may see, resolved once per request. Like the rest of the
@@ -1011,7 +1013,12 @@ function createAgentTools(deps) {
       }
       if (!changed.length) return { error: 'No indicaste nada para cambiar.' };
 
-      const updated = await prisma.accommodations.update({ where: { id: booking.id }, data });
+      const updated = await prisma.$transaction(async (tx) => {
+        const row = await tx.accommodations.update({ where: { id: booking.id }, data });
+        // Its incomes are described with the venue and plan.
+        if (airbudget && (row.venue !== booking.venue || row.plan_id !== booking.plan_id)) await airbudget.emitBookingIncomes(tx, row.id);
+        return row;
+      });
       let commission = agent && plan ? await recordCommission(updated, agent, plan, scope) : null;
       // Price or people changed: a commission not yet paid follows the new values.
       if (!agent && plan && updated.commission_agent_id && (data.adults !== undefined || data.agreed_price !== undefined || data.plan_id)) {
@@ -1264,9 +1271,13 @@ function createAgentTools(deps) {
         const error = await linkRecurring(data, def.id, args.period);
         if (error) return { error };
       }
-      const expense = await prisma.expenses.create({
-        data,
-        include: { category: { select: { name: true } }, provider: { select: { name: true } }, recurring_expense: { select: { id: true, name: true } } }
+      const expense = await prisma.$transaction(async (tx) => {
+        const created = await tx.expenses.create({
+          data,
+          include: { category: { select: { name: true } }, provider: { select: { name: true } }, recurring_expense: { select: { id: true, name: true } } }
+        });
+        await emitMovement(tx, { kind: 'expense', id: created.id });
+        return created;
       });
       analytics.track('expense_created', {
         userId: scope.userId,
@@ -1334,10 +1345,14 @@ function createAgentTools(deps) {
         changed.push('egreso recurrente');
       }
       if (!changed.length) return { error: 'No indicaste nada para cambiar.' };
-      const expense = await prisma.expenses.update({
-        where: { id: existing.id },
-        data: { ...data, updated_at: new Date(), updated_by: scope.userId },
-        include: { category: { select: { name: true } }, provider: { select: { name: true } }, recurring_expense: { select: { id: true, name: true } } }
+      const expense = await prisma.$transaction(async (tx) => {
+        const updated = await tx.expenses.update({
+          where: { id: existing.id },
+          data: { ...data, updated_at: new Date(), updated_by: scope.userId },
+          include: { category: { select: { name: true } }, provider: { select: { name: true } }, recurring_expense: { select: { id: true, name: true } } }
+        });
+        await emitMovement(tx, { kind: 'expense', id: updated.id });
+        return updated;
       });
       const bookings = expense.accommodation_id
         ? await describeBookings(await prisma.accommodations.findMany({ where: { id: expense.accommodation_id } }))
@@ -1392,7 +1407,10 @@ function createAgentTools(deps) {
         const link = { organization_id: source.organization_id };
         const linkError = await linkRecurring(link, def.id, null, source);
         if (!linkError) {
-          await prisma.expenses.update({ where: { id: source.id }, data: { ...link, updated_at: new Date(), updated_by: scope.userId } });
+          await prisma.$transaction(async (tx) => {
+            await tx.expenses.update({ where: { id: source.id }, data: { ...link, updated_at: new Date(), updated_by: scope.userId } });
+            await emitMovement(tx, { kind: 'expense', id: source.id });
+          });
           linked = `El egreso del ${isoDay(source.expense_date)} quedó como el pago del período ${isoDay(link.recurring_period)}.`;
         }
       }
