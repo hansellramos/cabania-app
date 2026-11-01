@@ -54,7 +54,7 @@ function buildPlaceholders({ accommodation, customer, venue, organization, plan,
     // Customer
     customer_name: customer?.fullname || '—',
     customer_id: customer?.whatsapp || '—',
-    customer_phone: customer?.whatsapp || '—',
+    customer_phone: customer?.whatsapp || (customer?.whatsapp_username ? `WhatsApp @${customer.whatsapp_username}` : '—'),
     customer_email: customer?.email || '—',
     customer_instagram: customer?.instagram || '—',
 

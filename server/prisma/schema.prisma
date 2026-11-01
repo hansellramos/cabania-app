@@ -80,6 +80,7 @@ model contacts {
   created_at DateTime @default(now()) @db.Timestamptz(6)
   fullname   String?  @db.VarChar
   whatsapp   Decimal? @db.Decimal
+  whatsapp_username String? @db.VarChar(35)
   instagram  String?  @db.VarChar
   email      String?  @db.VarChar(255)
   city       String?  @db.VarChar

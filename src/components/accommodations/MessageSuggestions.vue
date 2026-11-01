@@ -6,7 +6,7 @@
     </CCardHeader>
     <CCardBody>
       <div v-if="!customerChannel" class="text-muted text-center py-3">
-        El cliente no tiene WhatsApp ni Instagram registrado
+        El cliente no tiene número ni usuario de WhatsApp, ni Instagram registrado
       </div>
       <div v-else-if="loadingTemplates" class="text-center py-3">
         <CSpinner size="sm" color="primary" class="me-2" />
@@ -154,7 +154,7 @@ const categoryColors = {
 const categoryLabel = (category) => categoryLabels[category] || category
 const categoryColor = (category) => categoryColors[category] || 'secondary'
 
-// WhatsApp when the guest has a number; otherwise their Instagram DM.
+// WhatsApp by number or username when the guest has one; otherwise their Instagram DM.
 const customerChannel = computed(() => contactChannel(props.accommodation?.customer_data))
 
 function getState(templateId) {

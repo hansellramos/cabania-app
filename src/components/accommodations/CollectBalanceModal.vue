@@ -126,7 +126,7 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import { CIcon } from '@coreui/icons-vue'
-import { whatsappUrl } from '@/utils/contactLinks'
+import { contactWhatsappUrl } from '@/utils/contactLinks'
 import { copyImage } from '@/utils/clipboardImage'
 
 const props = defineProps({
@@ -178,7 +178,7 @@ const qrSecondsLeft = computed(() => breBQr.value
   : 0)
 const countdown = computed(() => `${Math.floor(qrSecondsLeft.value / 60)}:${String(qrSecondsLeft.value % 60).padStart(2, '0')}`)
 const imageFileName = computed(() => `qr-pago-${(props.accommodation?.venue_data?.name || 'cabania').toLowerCase().replace(/\s+/g, '-')}.png`)
-const whatsappLink = computed(() => whatsappUrl(props.accommodation?.customer_data?.whatsapp, message.value))
+const whatsappLink = computed(() => contactWhatsappUrl(props.accommodation?.customer_data, message.value))
 
 const money = (v) => `$${Math.round(Number(v) || 0).toLocaleString('es-CO')}`
 const formatDateTime = (d) => new Date(d).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })

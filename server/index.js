@@ -18,6 +18,7 @@ const metaWhatsApp = require('./services/metaWhatsApp');
 const metaInstagram = require('./services/metaInstagram');
 const bold = require('./services/bold');
 const analytics = require('./lib/analytics');
+const { cleanPhone, cleanInstagram, contactWhatsappFields } = require('./lib/contactFields');
 
 // Chat source → analytics channel (Meta Cloud API and Baileys are both WhatsApp).
 const chatChannel = (source) => (['cloud_api', 'whatsapp', 'baileys'].includes(source) ? 'whatsapp' : source || 'web');
@@ -1673,7 +1674,7 @@ async function startServer() {
     try {
       const { organizationId, ...contactData } = req.body;
       const contact = await prisma.contacts.create({
-        data: contactData
+        data: { ...contactData, ...contactWhatsappFields(contactData) }
       });
       
       if (organizationId) {
@@ -1688,7 +1689,7 @@ async function startServer() {
       
       res.json(contact);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      res.status(error.statusCode || 500).json({ error: error.message });
     }
   });
 
@@ -1696,11 +1697,11 @@ async function startServer() {
     try {
       const contact = await prisma.contacts.update({
         where: { id: req.params.id },
-        data: req.body
+        data: { ...req.body, ...contactWhatsappFields(req.body) }
       });
       res.json(contact);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      res.status(error.statusCode || 500).json({ error: error.message });
     }
   });
 
@@ -6462,25 +6463,6 @@ Para la referencia, busca el numero de factura, tiquete, o comprobante (NO el CU
    * @param {object} [db=prisma] - Prisma client or interactive transaction
    * @returns {Promise<object>} the accommodation
    */
-  /**
-   * Digits of a phone number, or null. A WhatsApp BSUID ("CO.123...") and Instagram
-   * ids are not phone numbers; copied numbers can carry invisible direction marks.
-   */
-  function cleanPhone(value) {
-    const text = String(value || '').replace(/[\u200e\u200f\u202a-\u202e]/g, '').trim();
-    if (!text || !/^\+?[\d\s().-]+$/.test(text)) return null;
-    const digits = text.replace(/\D/g, '');
-    return digits.length >= 8 && digits.length <= 15 ? digits : null;
-  }
-
-  /** An Instagram @username (not a numeric IGSID). */
-  function cleanInstagram(value) {
-    const text = String(value || '').trim();
-    return /^@?[A-Za-z0-9._]{1,30}$/.test(text) && !/^\d+$/.test(text.replace('@', ''))
-      ? (text.startsWith('@') ? text : `@${text}`)
-      : null;
-  }
-
   /**
    * Contact the booking can be reached at outside this chat, for the confirmation
    * and the contract: a WhatsApp number, an Instagram @username or an email.

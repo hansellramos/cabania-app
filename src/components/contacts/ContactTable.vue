@@ -56,7 +56,7 @@
                 {{ contact.fullname }}
               </RouterLink>
             </CTableDataCell>
-            <CTableDataCell>{{ contact.whatsapp }}</CTableDataCell>
+            <CTableDataCell>{{ contact.whatsapp || (contact.whatsapp_username ? `@${contact.whatsapp_username}` : '') }}</CTableDataCell>
             <CTableDataCell>{{ contact.country }}</CTableDataCell>
             <CTableDataCell>{{ contact.state }}</CTableDataCell>
             <CTableDataCell>{{ contact.city }}</CTableDataCell>

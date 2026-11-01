@@ -21,10 +21,34 @@
         <CFormLabel for="contactFullname">Nombre Completo *</CFormLabel>
         <CFormInput id="contactFullname" v-model="form.fullname" type="text" placeholder="Ingresa el nombre completo" required />
       </div>
-      <div class="mb-3">
-        <CFormLabel for="contactWhatsapp">WhatsApp</CFormLabel>
-        <CFormInput id="contactWhatsapp" v-model="form.whatsapp" type="text" placeholder="Ingresa el número de WhatsApp" />
-      </div>
+      <CRow class="g-3 mb-3">
+        <CCol :md="6">
+          <CFormLabel for="contactWhatsapp">Número de WhatsApp</CFormLabel>
+          <CFormInput
+            id="contactWhatsapp"
+            v-model="form.whatsapp"
+            type="text"
+            inputmode="tel"
+            placeholder="Ej: 3001234567"
+            :invalid="!!whatsappError"
+            :feedback-invalid="whatsappError"
+            @input="moveUsernameFromNumber"
+          />
+        </CCol>
+        <CCol :md="6">
+          <CFormLabel for="contactWhatsappUsername">Usuario de WhatsApp</CFormLabel>
+          <CFormInput
+            id="contactWhatsappUsername"
+            v-model="form.whatsapp_username"
+            type="text"
+            autocapitalize="off"
+            placeholder="@usuario"
+            :invalid="!!usernameError"
+            :feedback-invalid="usernameError"
+          />
+        </CCol>
+        <div class="form-text mt-1">Si el cliente no dio su número, escribe su usuario de WhatsApp.</div>
+      </CRow>
       <div class="mb-3">
         <CFormLabel for="contactInstagram">Instagram</CFormLabel>
         <CFormInput id="contactInstagram" v-model="form.instagram" type="text" placeholder="@usuario de Instagram" />
@@ -92,14 +116,15 @@
         </div>
       </div>
 
-      <CButton type="submit" color="primary" class="me-2" :disabled="!form.organizationId && !isEdit">{{ isEdit ? 'Actualizar' : 'Crear' }}</CButton>
+      <CButton type="submit" color="primary" class="me-2" :disabled="(!form.organizationId && !isEdit) || !!whatsappError || !!usernameError">{{ isEdit ? 'Actualizar' : 'Crear' }}</CButton>
       <CButton color="secondary" variant="outline" @click="onCancel">Cancelar</CButton>
     </fieldset>
   </CForm>
 </template>
 
 <script setup>
-import { ref, watch, defineProps, defineEmits, onMounted } from 'vue'
+import { ref, computed, watch, defineProps, defineEmits, onMounted } from 'vue'
+import { whatsappNumberError, whatsappUsernameError, looksLikeWhatsappUsername } from '@/utils/contactLinks'
 import { fetchCountries, fetchStatesByCountry } from '@/services/contactService'
 import { fetchOrganizations } from '@/services/organizationService'
 
@@ -113,6 +138,18 @@ const form = ref({ ...props.modelValue })
 watch(() => props.modelValue, val => {
   if (val) form.value = { ...val }
 }, { deep: true, immediate: true })
+
+// The number and the username are checked separately: either one can be empty.
+const whatsappError = computed(() => whatsappNumberError(form.value.whatsapp))
+const usernameError = computed(() => whatsappUsernameError(form.value.whatsapp_username))
+
+/** A username typed or pasted in the number field goes to its own field. */
+function moveUsernameFromNumber() {
+  const value = String(form.value.whatsapp || '').trim()
+  if (!looksLikeWhatsappUsername(value) || form.value.whatsapp_username) return
+  form.value.whatsapp_username = value
+  form.value.whatsapp = ''
+}
 
 const organizations = ref([])
 const countries = ref([])
@@ -220,6 +257,9 @@ watch(() => form.value.country, async (newCountry) => {
   }
 })
 
-function handleSubmit() { emit('submit', { ...form.value }) }
+function handleSubmit() {
+  if (whatsappError.value || usernameError.value) return
+  emit('submit', { ...form.value })
+}
 function onCancel() { emit('cancel') }
 </script>
