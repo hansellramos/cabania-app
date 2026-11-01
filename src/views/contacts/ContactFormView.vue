@@ -6,6 +6,7 @@
           <strong>{{ isEdit ? 'Editar' : 'Crear' }} Contacto</strong>
         </CCardHeader>
         <CCardBody>
+          <CAlert v-if="saveError" color="danger" class="py-2 small">{{ saveError }}</CAlert>
           <ContactForm
             v-model="form"
             :isEdit="isEdit"
@@ -26,8 +27,9 @@ import { getContactById, createContact, updateContact } from '@/services/contact
 
 const route = useRoute()
 const router = useRouter()
-let form = ref({ fullname: '', whatsapp: '', instagram: '', city: '', state: '', country: '', organizationId: '' })
+let form = ref({ fullname: '', whatsapp: '', whatsapp_username: '', instagram: '', city: '', state: '', country: '', organizationId: '' })
 const isEdit = computed(() => !!route.params.id)
+const saveError = ref('')
 
 onMounted(async () => {
   if (isEdit.value) {
@@ -40,13 +42,18 @@ async function handleSubmit(data) {
   const contactData = { ...data }
   delete contactData.users
   
-  if (isEdit.value) {
-    delete contactData.organizationId
-    await updateContact(route.params.id, contactData)
-  } else {
-    await createContact(contactData)
+  saveError.value = ''
+  try {
+    if (isEdit.value) {
+      delete contactData.organizationId
+      await updateContact(route.params.id, contactData)
+    } else {
+      await createContact(contactData)
+    }
+    router.push('/business/contacts')
+  } catch (err) {
+    saveError.value = err.message
   }
-  router.push('/business/contacts')
 }
 
 function handleCancel() {

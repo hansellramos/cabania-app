@@ -102,8 +102,8 @@
                         <CIcon icon="cilZoom" size="sm" class="me-1" />Detalles
                       </router-link>
                       <a 
-                        v-if="item.customer_data?.whatsapp" 
-                        :href="whatsappUrl(item.customer_data.whatsapp)" 
+                        v-if="contactWhatsappUrl(item.customer_data)" 
+                        :href="contactWhatsappUrl(item.customer_data)" 
                         target="_blank" 
                         :class="['btn', 'btn-sm', colorMode === 'dark' ? 'btn-outline-success' : 'btn-success', colorMode !== 'dark' ? 'text-white' : '']"
                       >
@@ -136,7 +136,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { CCard, CCardBody, CInputGroup, CFormInput, CButton, useColorModes } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
-import { whatsappUrl, instagramDmUrl } from '@/utils/contactLinks'
+import { contactWhatsappUrl, instagramDmUrl } from '@/utils/contactLinks'
 import { useAuth } from '@/composables/useAuth'
 import RecurringExpensesPendingCard from '@/components/expenses/RecurringExpensesPendingCard.vue'
 

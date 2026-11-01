@@ -212,6 +212,11 @@
                       <CIcon icon="cib-whatsapp" /> {{ accommodation.customer_data.whatsapp }}
                     </a>
                   </p>
+                  <p v-if="whatsappUsernameUrl(accommodation.customer_data.whatsapp_username)">
+                    <a :href="whatsappUsernameUrl(accommodation.customer_data.whatsapp_username)" target="_blank" class="text-success text-decoration-none">
+                      <CIcon icon="cib-whatsapp" /> @{{ accommodation.customer_data.whatsapp_username }}
+                    </a>
+                  </p>
                   <p v-if="instagramDmUrl(accommodation.customer_data.instagram)">
                     <a :href="instagramDmUrl(accommodation.customer_data.instagram)" target="_blank" class="text-decoration-none" style="color: #d6249f">
                       <CIcon icon="cib-instagram" /> {{ accommodation.customer_data.instagram }}
@@ -897,7 +902,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { CIcon } from '@coreui/icons-vue'
 import { CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
 import MessageSuggestions from '@/components/accommodations/MessageSuggestions.vue'
-import { whatsappUrl, instagramDmUrl } from '@/utils/contactLinks'
+import { whatsappUrl, whatsappUsernameUrl, instagramDmUrl } from '@/utils/contactLinks'
 import CommissionCalculator from '@/components/commissions/CommissionCalculator.vue'
 import AccommodationContractTab from '@/components/accommodations/AccommodationContractTab.vue'
 import CollectBalanceModal from '@/components/accommodations/CollectBalanceModal.vue'

@@ -36,7 +36,8 @@ export async function createContact(data) {
     if (response.status === 401) {
       throw new Error('No autorizado. Inicia sesión para continuar.');
     }
-    throw new Error('Error al crear contacto');
+    const body = await response.json().catch(() => ({}));
+    throw new Error(response.status === 400 && body.error ? body.error : 'Error al crear contacto');
   }
   return response.json();
 }
@@ -52,7 +53,8 @@ export async function updateContact(id, data) {
     if (response.status === 401) {
       throw new Error('No autorizado. Inicia sesión para continuar.');
     }
-    throw new Error('Error al actualizar contacto');
+    const body = await response.json().catch(() => ({}));
+    throw new Error(response.status === 400 && body.error ? body.error : 'Error al actualizar contacto');
   }
   return response.json();
 }

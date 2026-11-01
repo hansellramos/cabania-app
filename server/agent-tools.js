@@ -11,6 +11,7 @@
 const analytics = require('./lib/analytics');
 const modules = require('./modules');
 const recurringSchedule = require('./services/recurringExpenses');
+const { cleanWhatsappUsername } = require('./lib/contactFields');
 
 const TIMEZONE = 'America/Bogota';
 const MAX_TOOL_ROUNDS = 6;
@@ -141,7 +142,7 @@ const DEFINITIONS = [
     name: 'create_booking',
     write: true,
     http: { method: 'POST', path: '/bookings' },
-    description: 'Crea un alquiler confirmado en una fecha libre. Usa un contacto existente (customer_contact_id de find_contacts) o crea uno con customer_name y whatsapp/email. Revisa antes la fecha con check_dates.',
+    description: 'Crea un alquiler confirmado en una fecha libre. Usa un contacto existente (customer_contact_id de find_contacts) o crea uno con customer_name y whatsapp, whatsapp_username o email. Revisa antes la fecha con check_dates.',
     properties: {
       venue_id: { type: 'string', description: 'ID de la cabaña.' },
       date: { type: 'string', description: 'Fecha (YYYY-MM-DD).' },
@@ -151,6 +152,7 @@ const DEFINITIONS = [
       customer_contact_id: { type: 'string', description: 'ID de un contacto existente.' },
       customer_name: { type: 'string', description: 'Nombre, para crear el contacto si no existe.' },
       whatsapp: { type: 'string', description: 'WhatsApp con indicativo, para el contacto nuevo.' },
+      whatsapp_username: { type: 'string', description: 'Usuario de WhatsApp (ej: @maria.perez), para el contacto nuevo que no dio su número.' },
       email: { type: 'string', description: 'Correo, para el contacto nuevo.' },
       agreed_price: { type: 'number', description: 'Precio acordado total, si es distinto al del plan.' },
       start_time: { type: 'string', description: 'Hora de llegada HH:MM en 24 h (ej: 19:30). Por defecto la del plan.' },
@@ -486,7 +488,7 @@ function createAgentTools(deps) {
       ]);
       return {
         ...summary,
-        customer_contact: customer ? { whatsapp: customer.whatsapp ? String(customer.whatsapp) : null, instagram: customer.instagram, email: customer.email } : null,
+        customer_contact: customer ? { whatsapp: customer.whatsapp ? String(customer.whatsapp) : null, whatsapp_username: customer.whatsapp_username || null, instagram: customer.instagram, email: customer.email } : null,
         payments: payments.map(p => ({ date: p.payment_date ? isoDay(p.payment_date) : null, amount: money(p.amount), method: p.payment_method, verified: p.verified })),
         deposit: deposit ? { amount: money(deposit.amount), status: deposit.status, refund: deposit.refund_amount ? money(deposit.refund_amount) : null } : null,
         contract: contract ? {
@@ -755,6 +757,7 @@ function createAgentTools(deps) {
           OR: [
             { fullname: { contains: q, mode: 'insensitive' } },
             { instagram: { contains: q.replace(/^@/, ''), mode: 'insensitive' } },
+            { whatsapp_username: { contains: q.replace(/^@/, ''), mode: 'insensitive' } },
             { email: { contains: q, mode: 'insensitive' } },
             ...(digits.length >= 6 ? [{ whatsapp: { equals: Number(digits) } }] : [])
           ]
@@ -772,6 +775,7 @@ function createAgentTools(deps) {
           id: c.id,
           name: c.fullname,
           whatsapp: c.whatsapp ? String(c.whatsapp) : null,
+          whatsapp_username: c.whatsapp_username || null,
           instagram: c.instagram,
           email: c.email,
           bookings: cm[c.id] || 0,
@@ -1714,14 +1718,18 @@ function createAgentTools(deps) {
     const name = String(args.customer_name || '').trim().slice(0, 255);
     if (!name) return { id: null, created: false };
     const whatsapp = cleanPhone(args.whatsapp);
+    const whatsappUsername = cleanWhatsappUsername(args.whatsapp_username);
+    if (args.whatsapp_username && !whatsappUsername) return { error: 'whatsapp_username no válido: de 3 a 35 letras, números, puntos o guiones bajos, con al menos una letra.' };
     const email = validEmail(args.email);
-    if (whatsapp) {
-      const existing = await prisma.contacts.findFirst({ where: { whatsapp: Number(whatsapp) } });
+    if (whatsapp || whatsappUsername) {
+      const existing = await prisma.contacts.findFirst({
+        where: whatsapp ? { whatsapp: Number(whatsapp) } : { whatsapp_username: whatsappUsername }
+      });
       if (existing && await contactAllowed(existing.id, scope)) return { id: existing.id, created: false };
     }
     if (!hasPermission(scope.perms, 'contacts:create')) return { error: 'Sin permiso para crear contactos: usa customer_contact_id.' };
     const contact = await prisma.contacts.create({
-      data: { fullname: name, whatsapp: whatsapp ? Number(whatsapp) : null, email }
+      data: { fullname: name, whatsapp: whatsapp ? Number(whatsapp) : null, whatsapp_username: whatsappUsername, email }
     });
     if (venue.organization) {
       await prisma.contact_organization.create({

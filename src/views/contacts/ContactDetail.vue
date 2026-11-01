@@ -10,6 +10,7 @@
             <div class="ph-no-capture">
               <p><strong>Nombre:</strong> <span class="text-body-secondary">{{ contact.fullname }}</span></p>
               <p><strong>WhatsApp:</strong> <span class="text-body-secondary">{{ contact.whatsapp }}</span></p>
+              <p v-if="contact.whatsapp_username"><strong>Usuario de WhatsApp:</strong> <span class="text-body-secondary">@{{ contact.whatsapp_username }}</span></p>
               <p v-if="contact.instagram"><strong>Instagram:</strong> <span class="text-body-secondary">{{ contact.instagram }}</span></p>
               <p v-if="contact.email"><strong>Correo:</strong> <span class="text-body-secondary">{{ contact.email }}</span></p>
               <p><strong>País:</strong> <span class="text-body-secondary">{{ contact.country }}</span></p>
