@@ -1384,3 +1384,53 @@ model contract_attachments {
 
   @@index([contract_id])
 }
+
+// ========================================
+// AIRBUDGET INTEGRATION
+// ========================================
+
+// An organization reports its incomes and expenses to AirBudget (the owner's
+// personal finance app) through a signed webhook. The secret is stored
+// encrypted (lib/secretBox.js) and never returned by the API.
+model airbudget_integrations {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization_id  String    @unique @db.Uuid
+  webhook_url      String    @db.Text
+  secret_encrypted String    @db.Text
+  enabled          Boolean   @default(false)
+  // Why it was turned off automatically (AirBudget answered 410).
+  disabled_reason  String?   @db.Text
+  created_by       String?   @db.VarChar(255)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime? @db.Timestamptz(6)
+  updated_by       String?   @db.VarChar(255)
+}
+
+// Transactional outbox of webhook events for AirBudget. Rows are written in the
+// same transaction as the income or expense change; a worker sends them in order.
+model airbudget_deliveries {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Insertion order. created_at is the transaction start, equal for every row
+  // written in one transaction, so it cannot order them.
+  seq              BigInt    @default(autoincrement())
+  organization_id  String    @db.Uuid
+  // webhook-id header (msg_<uuid>), the same on every attempt.
+  event_id         String    @unique @db.VarChar(64)
+  // movement.upserted | movement.deleted | ping
+  type             String    @db.VarChar(40)
+  // income:<id> | expense:<id>; null for ping.
+  external_id      String?   @db.VarChar(100)
+  payload          Json      @db.JsonB
+  // pending | delivered | failed
+  status           String    @default("pending") @db.VarChar(20)
+  attempts         Int       @default(0)
+  next_attempt_at  DateTime  @default(now()) @db.Timestamptz(6)
+  last_status_code Int?
+  last_error       String?   @db.Text
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  delivered_at     DateTime? @db.Timestamptz(6)
+
+  @@index([status, next_attempt_at])
+  @@index([external_id, seq])
+  @@index([organization_id, seq])
+}

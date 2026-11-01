@@ -42,6 +42,12 @@ function trackBookingCreated(acc, source, userId) {
 const recurringSchedule = require('./services/recurringExpenses');
 const { createNotifier, typeCatalog, TYPES: NOTIFICATION_TYPES, CHANNELS: NOTIFICATION_CHANNELS } = require('./services/notifications');
 const membership = require('./services/membership');
+const airbudgetSync = require('./services/airbudgetSync');
+const secretBox = require('./lib/secretBox');
+
+// Incomes and expenses reported to AirBudget. Every change to one calls
+// airbudget.emitMovement() inside the same transaction (outbox).
+const airbudget = airbudgetSync.createAirbudgetSync({ prisma });
 
 /**
  * Calculate the next resume time at given hour in America/Bogota timezone.
@@ -620,6 +626,152 @@ async function startServer() {
     } catch (error) {
       console.error('Error updating organization modules:', error);
       res.status(500).json({ error: 'Error al guardar los módulos' });
+    }
+  });
+
+  // ==================== Integración con AirBudget ====================
+  // Incomes and expenses go to AirBudget through a signed webhook
+  // (services/airbudgetSync.js). Only the organization's admins see or change it;
+  // the secret is write-only.
+
+  async function airbudgetAdmin(req, res) {
+    const org = await prisma.organizations.findUnique({ where: { id: req.params.id }, select: { id: true } });
+    if (!org) { res.status(404).json({ error: 'Organización no encontrada' }); return null; }
+    const access = await moduleAccess(req, org.id);
+    if (!access.canEdit) { res.status(403).json({ error: 'Solo un administrador de la organización puede ver o cambiar esta integración' }); return null; }
+    return org;
+  }
+
+  async function airbudgetPayload(orgId) {
+    const integration = await prisma.airbudget_integrations.findUnique({ where: { organization_id: orgId } });
+    const deliveries = await prisma.airbudget_deliveries.findMany({
+      where: { organization_id: orgId },
+      orderBy: { seq: 'desc' },
+      take: 50
+    });
+    return {
+      encryption_ready: secretBox.isConfigured(),
+      integration: integration && {
+        webhook_url: integration.webhook_url,
+        has_secret: !!integration.secret_encrypted,
+        enabled: integration.enabled,
+        disabled_reason: integration.disabled_reason,
+        updated_at: integration.updated_at || integration.created_at
+      },
+      deliveries: deliveries.map(d => ({
+        id: d.id,
+        type: d.type,
+        external_id: d.external_id,
+        kind: d.payload?.data?.kind || null,
+        concept: d.payload?.data?.concept || null,
+        amount: d.payload?.data?.amount ?? null,
+        date: d.payload?.data?.date || null,
+        status: d.status,
+        attempts: d.attempts,
+        last_status_code: d.last_status_code,
+        last_error: d.last_error,
+        next_attempt_at: d.status === 'pending' ? d.next_attempt_at : null,
+        created_at: d.created_at,
+        delivered_at: d.delivered_at
+      }))
+    };
+  }
+
+  app.get('/api/organizations/:id/airbudget', isAuthenticated, async (req, res) => {
+    try {
+      const org = await airbudgetAdmin(req, res);
+      if (!org) return;
+      res.json(await airbudgetPayload(org.id));
+    } catch (error) {
+      console.error('[airbudget] Load failed:', error.message);
+      res.status(500).json({ error: 'Error al cargar la integración' });
+    }
+  });
+
+  // Body: { webhook_url?, secret?, enabled? }. The secret is never sent back.
+  app.put('/api/organizations/:id/airbudget', isAuthenticated, async (req, res) => {
+    try {
+      const org = await airbudgetAdmin(req, res);
+      if (!org) return;
+      const { webhook_url, secret, enabled } = req.body || {};
+      const existing = await prisma.airbudget_integrations.findUnique({ where: { organization_id: org.id } });
+      const data = { updated_at: new Date(), updated_by: String(req.user.claims?.sub) };
+      if (webhook_url !== undefined) {
+        const error = airbudgetSync.urlError(webhook_url);
+        if (error) return res.status(400).json({ error });
+        data.webhook_url = String(webhook_url).trim();
+      }
+      if (secret !== undefined && secret !== '') {
+        const error = airbudgetSync.secretError(secret);
+        if (error) return res.status(400).json({ error });
+        if (!secretBox.isConfigured()) return res.status(500).json({ error: 'Falta SECRETS_ENCRYPTION_KEY en el servidor: no se puede guardar el secreto' });
+        data.secret_encrypted = secretBox.encrypt(String(secret).trim(), org.id);
+      }
+      if (enabled !== undefined) {
+        data.enabled = enabled === true;
+        if (data.enabled) data.disabled_reason = null;
+      }
+      if (!existing && (!data.webhook_url || !data.secret_encrypted)) {
+        return res.status(400).json({ error: 'Indica la URL del webhook y el secreto' });
+      }
+      if (existing) {
+        await prisma.airbudget_integrations.update({ where: { organization_id: org.id }, data });
+      } else {
+        await prisma.airbudget_integrations.create({
+          data: { ...data, organization_id: org.id, created_by: data.updated_by, updated_at: null, updated_by: null }
+        });
+      }
+      res.json(await airbudgetPayload(org.id));
+    } catch (error) {
+      console.error('[airbudget] Save failed:', error.message);
+      res.status(500).json({ error: 'Error al guardar la integración' });
+    }
+  });
+
+  // "Probar conexión": a ping, sent now.
+  app.post('/api/organizations/:id/airbudget/ping', isAuthenticated, async (req, res) => {
+    try {
+      const org = await airbudgetAdmin(req, res);
+      if (!org) return;
+      const result = await airbudget.ping(org.id);
+      res.json({ ...result, ...(await airbudgetPayload(org.id)) });
+    } catch (error) {
+      console.error('[airbudget] Ping failed:', error.message);
+      res.status(500).json({ error: 'Error al probar la conexión' });
+    }
+  });
+
+  // "Enviar desde…": queue every income and expense dated on or after `since`.
+  app.post('/api/organizations/:id/airbudget/backfill', isAuthenticated, async (req, res) => {
+    try {
+      const org = await airbudgetAdmin(req, res);
+      if (!org) return;
+      const since = String(req.body?.since || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(since) || Number.isNaN(Date.parse(since))) {
+        return res.status(400).json({ error: 'Indica la fecha como AAAA-MM-DD' });
+      }
+      const result = await airbudget.backfill(org.id, since);
+      if (result.error) return res.status(400).json({ error: result.error });
+      airbudget.processDue().catch(err => console.error('[airbudget] Worker error:', err.message));
+      res.json({ ...result, ...(await airbudgetPayload(org.id)) });
+    } catch (error) {
+      console.error('[airbudget] Backfill failed:', error.message);
+      res.status(500).json({ error: 'Error al encolar los movimientos' });
+    }
+  });
+
+  app.post('/api/organizations/:id/airbudget/deliveries/:deliveryId/retry', isAuthenticated, async (req, res) => {
+    try {
+      const org = await airbudgetAdmin(req, res);
+      if (!org) return;
+      if (!(await airbudget.retry(org.id, req.params.deliveryId))) {
+        return res.status(400).json({ error: 'Solo se pueden reintentar envíos fallidos de movimientos' });
+      }
+      airbudget.processDue().catch(err => console.error('[airbudget] Worker error:', err.message));
+      res.json(await airbudgetPayload(org.id));
+    } catch (error) {
+      console.error('[airbudget] Retry failed:', error.message);
+      res.status(500).json({ error: 'Error al reintentar' });
     }
   });
 
@@ -2018,6 +2170,7 @@ async function startServer() {
           cancel_refund_expense_id: expense?.id || null
         }
       });
+      if (expense) await airbudget.emitMovement(tx, { kind: 'expense', id: expense.id });
       return { accommodation, refund_expense: expense };
     });
   }
@@ -2054,8 +2207,12 @@ async function startServer() {
         }
       }
       const updated = await prisma.$transaction(async (tx) => {
-        if (acc.cancel_refund_expense_id) {
-          await tx.expenses.deleteMany({ where: { id: acc.cancel_refund_expense_id, accommodation_id: acc.id } });
+        const refund = acc.cancel_refund_expense_id
+          ? await tx.expenses.findFirst({ where: { id: acc.cancel_refund_expense_id, accommodation_id: acc.id } })
+          : null;
+        if (refund) {
+          await tx.expenses.delete({ where: { id: refund.id } });
+          await airbudget.emitMovement(tx, { kind: 'expense', id: refund.id, deleted: true, row: refund });
         }
         await tx.commission_payments.updateMany({
           where: { accommodation_id: acc.id, status: 'cancelled' },
@@ -2116,9 +2273,14 @@ async function startServer() {
         data.commission_agent_id = commission_agent_id || null;
       }
 
-      const accommodation = await prisma.accommodations.update({
-        where: { id: req.params.id },
-        data
+      const accommodation = await prisma.$transaction(async (tx) => {
+        const before = await tx.accommodations.findUnique({ where: { id: req.params.id }, select: { venue: true, plan_id: true } });
+        const updated = await tx.accommodations.update({ where: { id: req.params.id }, data });
+        // Its incomes are described with the venue and plan.
+        if (before && (before.venue !== updated.venue || before.plan_id !== updated.plan_id)) {
+          await airbudget.emitBookingIncomes(tx, updated.id);
+        }
+        return updated;
       });
       res.json(accommodation);
     } catch (error) {
@@ -2470,16 +2632,17 @@ async function startServer() {
           accrual_date: accommodation?.date || null
         };
         
-        await prisma.incomes.upsert({
-          where: { payment_id: paymentId },
-          update: incomeData,
-          create: { payment_id: paymentId, ...incomeData }
+        await prisma.$transaction(async (tx) => {
+          const income = await tx.incomes.upsert({
+            where: { payment_id: paymentId },
+            update: incomeData,
+            create: { payment_id: paymentId, ...incomeData }
+          });
+          await airbudget.emitMovement(tx, { kind: 'income', id: income.id });
         });
       } else if (verified === false) {
         // Remove income record when payment is unverified
-        await prisma.incomes.deleteMany({
-          where: { payment_id: paymentId }
-        });
+        await removePaymentIncome(paymentId);
       }
 
       // The team hears about a payment that just became verified.
@@ -2533,10 +2696,23 @@ async function startServer() {
     }
   });
 
+  /** A payment stops counting as income (unverified or deleted). */
+  async function removePaymentIncome(paymentId, tx = null) {
+    const run = async (db) => {
+      const income = await db.incomes.findUnique({ where: { payment_id: paymentId } });
+      if (!income) return;
+      await db.incomes.delete({ where: { id: income.id } });
+      await airbudget.emitMovement(db, { kind: 'income', id: income.id, deleted: true, row: income });
+    };
+    return tx ? run(tx) : prisma.$transaction(run);
+  }
+
   app.delete('/api/payments/:id', isAuthenticated, async (req, res) => {
     try {
-      await prisma.payments.delete({
-        where: { id: req.params.id }
+      // Its income goes with it (it used to stay behind and keep counting).
+      await prisma.$transaction(async (tx) => {
+        await removePaymentIncome(req.params.id, tx);
+        await tx.payments.delete({ where: { id: req.params.id } });
       });
       res.json({ success: true });
     } catch (error) {
@@ -5019,7 +5195,11 @@ async function startServer() {
       const recurringError = await applyRecurringLink(data);
       if (recurringError) return res.status(400).json({ error: recurringError });
 
-      const expense = await prisma.expenses.create({ data });
+      const expense = await prisma.$transaction(async (tx) => {
+        const created = await tx.expenses.create({ data });
+        await airbudget.emitMovement(tx, { kind: 'expense', id: created.id });
+        return created;
+      });
       analytics.track('expense_created', {
         userId,
         organizationId: expense.organization_id || null,
@@ -5062,9 +5242,14 @@ async function startServer() {
         const recurringError = await applyRecurringLink(updateData, existing);
         if (recurringError) return res.status(400).json({ error: recurringError });
       }
-      const expense = await prisma.expenses.update({
-        where: { id: req.params.id },
-        data: updateData
+      const expense = await prisma.$transaction(async (tx) => {
+        const updated = await tx.expenses.update({ where: { id: req.params.id }, data: updateData });
+        // Moved to another organization: it leaves the old one's AirBudget.
+        if ((existing.organization_id || null) !== (updated.organization_id || null)) {
+          await airbudget.emitMovement(tx, { kind: 'expense', id: existing.id, deleted: true, row: existing });
+        }
+        await airbudget.emitMovement(tx, { kind: 'expense', id: updated.id });
+        return updated;
       });
       res.json(expense);
     } catch (error) {
@@ -5090,8 +5275,9 @@ async function startServer() {
         }
       }
       
-      await prisma.expenses.delete({
-        where: { id: req.params.id }
+      await prisma.$transaction(async (tx) => {
+        await tx.expenses.delete({ where: { id: req.params.id } });
+        await airbudget.emitMovement(tx, { kind: 'expense', id: existing.id, deleted: true, row: existing });
       });
       res.json({ success: true });
     } catch (error) {
@@ -11125,11 +11311,12 @@ REGLAS:
             date: now,
             accrual_date: accommodation?.date || null
           };
-          await tx.incomes.upsert({
+          const income = await tx.incomes.upsert({
             where: { payment_id: payment.id },
             update: incomeData,
             create: { payment_id: payment.id, ...incomeData }
           });
+          await airbudget.emitMovement(tx, { kind: 'income', id: income.id });
         }
 
         // Bold keeps its fee from the deposit and the API does not report it:
@@ -11141,7 +11328,7 @@ REGLAS:
             || await tx.expense_categories.create({
               data: { name: categoryName, description: 'Comisiones de pasarelas de pago (Bold)', is_system: true }
             });
-          await tx.expenses.create({
+          const feeExpense = await tx.expenses.create({
             data: {
               organization_id: venue?.organization || null,
               venue_id: venueId,
@@ -11157,6 +11344,7 @@ REGLAS:
               created_by: 'system:bold'
             }
           });
+          await airbudget.emitMovement(tx, { kind: 'expense', id: feeExpense.id });
         }
 
         await tx.bold_payment_links.update({
@@ -11505,7 +11693,7 @@ REGLAS:
     prisma, hasPermission, hasOwnOnly, getAccessibleVenueIds, getAgentAccommodationIds,
     findBookingConflict, cleanPhone, cleanInstagram, cancelAccommodation, computeCommission,
     notify, notifier, computeBookingProfit, canViewProfits,
-    withRecurringStatus, applyRecurringLink, recurringExpenseData, bogotaNow
+    withRecurringStatus, applyRecurringLink, recurringExpenseData, bogotaNow, airbudget
   };
   require('./assistant')(app, { ...agentToolDeps, llmService, isAuthenticated, logAICall });
 
@@ -15010,6 +15198,7 @@ REGLAS:
             where: { id: payment.id },
             data: { expense_id: expense.id }
           });
+          await airbudget.emitMovement(tx, { kind: 'expense', id: expense.id });
 
           return { ...payment, expense_id: expense.id };
         }
@@ -15072,6 +15261,7 @@ REGLAS:
             }
           });
           await tx.commission_payments.update({ where: { id: req.params.id }, data: { expense_id: expense.id } });
+          await airbudget.emitMovement(tx, { kind: 'expense', id: expense.id });
           return { ...updated, expense_id: expense.id };
         }
 
@@ -16944,6 +17134,9 @@ Responde con JSON EXACTAMENTE en este formato:
       console.error('[membership] Notice error:', err.message));
     setTimeout(runMembershipNotices, 2 * 60 * 1000);
     setInterval(runMembershipNotices, 60 * 60 * 1000);
+
+    // Incomes and expenses queued for AirBudget, every 10 s (in order, with retries).
+    airbudget.start(10 * 1000);
 
     // WhatsApp connections restore and auto-resume are handled by the external microservice
   });

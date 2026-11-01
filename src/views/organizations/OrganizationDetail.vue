@@ -24,6 +24,11 @@
                   Módulos
                 </CNavLink>
               </CNavItem>
+              <CNavItem v-if="orgModules?.can_edit">
+                <CNavLink href="javascript:void(0)" :active="activeTab === 3" @click="activeTab = 3">
+                  Integraciones
+                </CNavLink>
+              </CNavItem>
             </CNav>
 
             <CTabContent>
@@ -215,6 +220,12 @@
                   </CListGroup>
                 </template>
               </CTabPane>
+
+              <!-- Tab Integraciones (solo administradores) -->
+              <CTabPane v-if="orgModules?.can_edit" :visible="activeTab === 3">
+                <h6 class="mb-2">AirBudget</h6>
+                <AirbudgetIntegration :organization-id="organization.id" />
+              </CTabPane>
             </CTabContent>
           </template>
           <template v-else>
@@ -233,6 +244,7 @@ import { getOrganizationById, deleteOrganization } from '@/services/organization
 import { fetchUsersByOrganization, removeUserFromOrganization } from '@/services/userOrganizationService'
 import { useAuth } from '@/composables/useAuth'
 import { resetAuthState } from '@/router'
+import AirbudgetIntegration from '@/components/organizations/AirbudgetIntegration.vue'
 
 const route = useRoute()
 const router = useRouter()
