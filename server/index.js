@@ -17000,6 +17000,11 @@ Responde con JSON EXACTAMENTE en este formato:
     res.type('html').send(html);
   }
 
+  // Printed signs with a QR: CRUD under /api/venues/:id/signs and the public /q/:code redirect.
+  require('./services/venueSigns').registerVenueSignRoutes(app, {
+    prisma, isAuthenticated, hasPermission, getAccessibleVenueIds, analytics, appBaseUrl
+  });
+
   app.get('/p/:slug', async (req, res) => {
     try {
       const venue = await prisma.venues.findUnique({ where: { slug: req.params.slug }, select: { id: true, is_public: true } });
