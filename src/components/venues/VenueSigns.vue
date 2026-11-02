@@ -34,6 +34,36 @@
       </CCardBody>
     </CCard>
 
+    <!-- Logo and brand colors: the signs and the public page use them -->
+    <CCard class="mb-3">
+      <CCardBody class="py-2">
+        <div class="row g-2 align-items-center">
+          <div class="col-12 col-md">
+            <strong class="small d-block">Logo y colores de la cabaña</strong>
+            <small class="text-body-secondary">Los avisos y la página pública usan este logo y este degradado.</small>
+          </div>
+          <div class="col-auto d-flex align-items-center gap-2">
+            <img v-if="brand.logo_url" :src="brand.logo_url" alt="Logo de la cabaña" class="brand-logo" />
+            <CButton color="primary" variant="outline" size="sm" :disabled="busy === 'logo'" @click="logoInput?.click()">
+              <CSpinner v-if="busy === 'logo'" size="sm" class="me-1" />{{ brand.logo_url ? 'Cambiar logo' : 'Subir logo' }}
+            </CButton>
+            <CButton v-if="brand.logo_url" color="danger" variant="ghost" size="sm" @click="brand.logo_url = ''">Quitar</CButton>
+            <input ref="logoInput" type="file" accept="image/png,image/jpeg,image/webp" class="d-none" @change="uploadLogo" />
+          </div>
+          <div class="col-auto d-flex align-items-center gap-1">
+            <input v-model="brand.primary" type="color" class="form-control form-control-color form-control-sm" title="Color principal" aria-label="Color principal" />
+            <input v-model="brand.secondary" type="color" class="form-control form-control-color form-control-sm" title="Color secundario" aria-label="Color secundario" />
+            <div class="brand-swatch rounded" :style="{ background: `linear-gradient(135deg, ${brand.primary}, ${brand.secondary})` }" />
+          </div>
+          <div class="col-auto">
+            <CButton color="primary" size="sm" :disabled="busy === 'brand' || !brandChanged" @click="saveBrand">
+              {{ brandSaved ? 'Guardado' : 'Guardar' }}
+            </CButton>
+          </div>
+        </div>
+      </CCardBody>
+    </CCard>
+
     <div v-if="loading" class="text-center py-4"><CSpinner size="sm" color="primary" /></div>
     <div v-else-if="!signs.length" class="text-center text-body-secondary py-4">
       Todavía no hay avisos. Crea el primero: un pasacalles para la vía, un aviso de mesa o la tarjeta del WiFi.
@@ -119,9 +149,51 @@
               <CFormLabel for="signUrl">Dirección</CFormLabel>
               <CFormInput id="signUrl" v-model="form.target" type="url" placeholder="https://" />
             </div>
+            <div v-if="venueInfo.ai_available" class="ai-box rounded p-2 mb-3">
+              <CFormLabel for="signIdea" class="small fw-semibold mb-1">
+                <CIcon icon="cilLightbulb" size="sm" class="me-1" />Escribir con IA
+              </CFormLabel>
+              <div class="d-flex gap-1">
+                <CFormInput
+                  id="signIdea"
+                  v-model="aiIdea"
+                  size="sm"
+                  maxlength="500"
+                  placeholder="Ej: domicilios al 300 123 4567, de 8 a.m. a 9 p.m."
+                  @keydown.enter.prevent="suggest"
+                />
+                <CButton color="primary" size="sm" class="text-nowrap" :disabled="busy === 'ai'" @click="suggest">
+                  <CSpinner v-if="busy === 'ai'" size="sm" class="me-1" />{{ form.headline ? 'Otra idea' : 'Sugerir' }}
+                </CButton>
+              </div>
+              <div class="form-text">Escribe qué quieres decir (o déjalo vacío) y la IA propone el texto grande y el adicional.</div>
+              <div v-if="aiError" class="small text-danger mt-1">{{ aiError }}</div>
+            </div>
             <div class="mb-3">
               <CFormLabel for="signHeadline">Texto grande</CFormLabel>
               <CFormInput id="signHeadline" v-model="form.headline" maxlength="80" :placeholder="SIGN_KINDS[form.kind].headline" />
+            </div>
+            <div class="mb-3">
+              <CFormLabel for="signBody">Texto adicional <span class="text-body-secondary fw-normal">(opcional)</span></CFormLabel>
+              <CFormTextarea id="signBody" v-model="form.body" rows="2" maxlength="300" placeholder="Ej: Domicilios 300 123 4567&#10;Todos los días de 8 a.m. a 9 p.m." />
+              <div class="form-text">Va debajo del QR. Cada renglón que escribas sale en su propia línea.</div>
+            </div>
+            <div class="mb-3">
+              <CFormLabel class="d-block">Fondo</CFormLabel>
+              <CButtonGroup size="sm" role="group" aria-label="Fondo del aviso">
+                <CButton
+                  v-for="(meta, style) in SIGN_STYLES"
+                  :key="style"
+                  type="button"
+                  color="primary"
+                  :variant="form.style === style ? undefined : 'outline'"
+                  :aria-pressed="form.style === style"
+                  @click="form.style = style"
+                >{{ meta.label }}</CButton>
+              </CButtonGroup>
+              <div v-if="!venueInfo.logo_url || !venueInfo.colors?.primary" class="form-text">
+                {{ brandHint }}
+              </div>
             </div>
             <div class="mb-1">
               <CFormLabel for="signSize">Tamaño</CFormLabel>
@@ -179,12 +251,12 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import {
-  CAlert, CBadge, CButton, CCard, CCardBody, CCol, CForm, CFormInput, CFormLabel, CFormSelect, CFormTextarea,
+  CAlert, CBadge, CButton, CButtonGroup, CCard, CCardBody, CCol, CForm, CFormInput, CFormLabel, CFormSelect, CFormTextarea,
   CModal, CModalBody, CModalFooter, CModalHeader, CModalTitle, CRow, CSpinner,
   CTable, CTableBody, CTableDataCell, CTableHead, CTableHeaderCell, CTableRow,
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
-import { SIGN_KINDS, SIGN_SIZES, signSvg, printSign, downloadSign } from '@/utils/signArtwork'
+import { SIGN_KINDS, SIGN_SIZES, SIGN_STYLES, signSvg, printSign, downloadSign, logoDataUrl } from '@/utils/signArtwork'
 import { copyText } from '@/utils/contactLinks'
 
 const props = defineProps({
@@ -212,13 +284,19 @@ async function api(method, path, body) {
   return data
 }
 
-const artwork = (sign) => signSvg({
-  sign,
+const logo = ref(null)
+
+/** What every sign of the venue shares: name, colors, logo, contact data. */
+const venueArt = (wifiFallback = {}) => ({
   venueName: venueInfo.value.name || '',
-  qrText: sign.qr_text,
-  shortUrl: sign.short_url,
-  wifi: { ssid: venueInfo.value.wifi_ssid, password: venueInfo.value.wifi_password },
+  colors: venueInfo.value.colors,
+  logo: logo.value,
+  whatsapp: venueInfo.value.whatsapp_display,
+  instagram: venueInfo.value.instagram_handle,
+  wifi: { ssid: venueInfo.value.wifi_ssid || wifiFallback.ssid, password: venueInfo.value.wifi_password || wifiFallback.password },
 })
+
+const artwork = (sign) => signSvg({ ...venueArt(), sign, qrText: sign.qr_text, shortUrl: sign.short_url })
 
 /** The sign scaled to its box for the screen (the printed file keeps its size in mm). */
 const fit = (svg) => String(svg || '').replace(/ width="[\d.]+mm" height="[\d.]+mm"/, ' width="100%" height="100%"')
@@ -232,8 +310,10 @@ async function load() {
   error.value = ''
   try {
     const data = await api('GET', '/signs')
+    if (data.venue.logo_url !== venueInfo.value.logo_url) logo.value = await logoDataUrl(data.venue.logo_url)
     venueInfo.value = data.venue
     signs.value = data.signs
+    resetBrand()
     wifi.ssid = data.venue.wifi_ssid || ''
     wifi.password = data.venue.wifi_password || ''
     await renderPreviews()
@@ -252,6 +332,64 @@ function problem(sign) {
   if (sign.kind === 'whatsapp') return 'La cabaña no tiene número de WhatsApp: agrégalo en Editar cabaña.'
   if (sign.kind === 'instagram') return 'La cabaña no tiene Instagram: agrégalo en Editar cabaña.'
   return 'Revisa la dirección del aviso.'
+}
+
+// Logo and brand colors
+const DEFAULT_COLORS = { primary: '#10b981', secondary: '#0ea5e9' }
+const brand = reactive({ logo_url: '', primary: DEFAULT_COLORS.primary, secondary: DEFAULT_COLORS.secondary })
+const brandSaved = ref(false)
+const logoInput = ref(null)
+const brandChanged = computed(() => {
+  const v = venueInfo.value
+  return (brand.logo_url || '') !== (v.logo_url || '')
+    || brand.primary !== (v.colors?.primary || DEFAULT_COLORS.primary)
+    || brand.secondary !== (v.colors?.secondary || DEFAULT_COLORS.secondary)
+})
+function resetBrand() {
+  brand.logo_url = venueInfo.value.logo_url || ''
+  brand.primary = venueInfo.value.colors?.primary || DEFAULT_COLORS.primary
+  brand.secondary = venueInfo.value.colors?.secondary || DEFAULT_COLORS.secondary
+}
+async function uploadLogo(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  if (file.size > 5 * 1024 * 1024) { error.value = 'El logo no puede pesar más de 5 MB.'; return }
+  busy.value = 'logo'
+  error.value = ''
+  try {
+    const body = new FormData()
+    body.append('file', file)
+    body.append('type', 'venue')
+    const res = await fetch('/api/uploads/image', { method: 'POST', credentials: 'include', body })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok || !data.imageUrl) throw new Error(data.error || 'No se pudo subir el logo')
+    brand.logo_url = data.imageUrl
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    busy.value = null
+  }
+}
+async function saveBrand() {
+  busy.value = 'brand'
+  error.value = ''
+  try {
+    const res = await fetch(`/api/venues/${props.venueId}`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ logo_url: brand.logo_url || null, brand_color_primary: brand.primary, brand_color_secondary: brand.secondary }),
+    })
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'No se pudo guardar el logo y los colores')
+    await load()
+    brandSaved.value = true
+    setTimeout(() => { brandSaved.value = false }, 2000)
+  } catch (e) {
+    error.value = e.message
+  } finally {
+    busy.value = null
+  }
 }
 
 // WiFi network
@@ -280,7 +418,7 @@ async function saveWifi() {
 }
 
 // Create / edit
-const emptyForm = () => ({ id: null, name: '', kind: 'public_page', headline: '', target: '', size: 'letter' })
+const emptyForm = () => ({ id: null, name: '', kind: 'public_page', headline: '', body: '', target: '', size: 'letter', style: 'gradient' })
 const form = ref(emptyForm())
 const formOpen = ref(false)
 const formError = ref('')
@@ -296,10 +434,36 @@ const kindHelp = computed(() => ({
 
 function openForm(sign) {
   form.value = sign
-    ? { id: sign.id, name: sign.name, kind: sign.kind, headline: sign.headline || '', target: sign.target || '', size: sign.size }
+    ? { id: sign.id, name: sign.name, kind: sign.kind, headline: sign.headline || '', body: sign.body || '', target: sign.target || '', size: sign.size, style: sign.style || 'gradient' }
     : emptyForm()
   formError.value = ''
+  aiIdea.value = ''
+  aiError.value = ''
   formOpen.value = true
+}
+
+const brandHint = computed(() => {
+  const missing = [!venueInfo.value.logo_url && 'el logo', !venueInfo.value.colors?.primary && 'los colores de marca'].filter(Boolean)
+  return `Sube ${missing.join(' y ')} de la cabaña en la pestaña de avisos para que salgan aquí.`
+})
+
+// AI copy
+const aiIdea = ref('')
+const aiError = ref('')
+async function suggest() {
+  busy.value = 'ai'
+  aiError.value = ''
+  try {
+    const f = form.value
+    const copy = await api('POST', '/signs/suggest', { kind: f.kind, size: f.size, idea: aiIdea.value, headline: f.headline, body: f.body })
+    f.headline = copy.headline
+    f.body = copy.body
+    if (!f.name.trim()) f.name = copy.headline.slice(0, 100)
+  } catch (e) {
+    aiError.value = e.message
+  } finally {
+    busy.value = null
+  }
 }
 
 watch(form, async (f) => {
@@ -309,11 +473,10 @@ watch(form, async (f) => {
     : (saved?.qr_text || `${window.location.origin}/q/ejemplo`)
   const shortUrl = f.kind === 'wifi' ? null : (saved?.short_url || `${window.location.origin}/q/ejemplo`)
   formPreview.value = await signSvg({
+    ...venueArt({ ssid: 'Nombre de la red', password: '' }),
     sign: f,
-    venueName: venueInfo.value.name || '',
     qrText: sample,
     shortUrl,
-    wifi: { ssid: venueInfo.value.wifi_ssid || 'Nombre de la red', password: venueInfo.value.wifi_password || '' },
   })
 }, { deep: true })
 
@@ -396,6 +559,21 @@ onMounted(load)
   justify-content: center;
   padding: 12px;
   aspect-ratio: 4 / 3;
+}
+.brand-logo {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--cui-border-color);
+}
+.brand-swatch {
+  width: 44px;
+  height: 28px;
+}
+.ai-box {
+  background: var(--cui-tertiary-bg);
 }
 .sign-preview.banner {
   aspect-ratio: 3 / 1.4;

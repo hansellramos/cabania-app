@@ -28,7 +28,7 @@ test('WiFi payload escapes special characters', () => {
 
 test('sign form checks', () => {
   assert.deepStrictEqual(signFields({ name: ' Pasacalles ', kind: 'public_page', size: 'banner_3x1', headline: '' }),
-    { name: 'Pasacalles', kind: 'public_page', size: 'banner_3x1', headline: null });
+    { name: 'Pasacalles', kind: 'public_page', size: 'banner_3x1', style: 'gradient', headline: null });
   assert.throws(() => signFields({ name: '', kind: 'wifi' }), { statusCode: 400 });
   assert.throws(() => signFields({ name: 'X', kind: 'fax' }), { statusCode: 400 });
   assert.throws(() => signFields({ name: 'X', kind: 'url', target: 'youtube.com' }), { statusCode: 400, message: /https/ });
@@ -40,4 +40,33 @@ test('codes and devices', () => {
   assert.strictEqual(deviceOf('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)'), 'ios');
   assert.strictEqual(deviceOf('Mozilla/5.0 (Linux; Android 15; SM-A556E)'), 'android');
   assert.strictEqual(deviceOf('Mozilla/5.0 (Macintosh)'), 'other');
+});
+
+const { displayPhone, instagramHandle, parseSignCopy, signCopyPrompt } = require('../services/venueSigns');
+
+test('free text and style are checked', () => {
+  const f = signFields({ name: 'Mesa', kind: 'whatsapp', body: '  Domicilios 300 123 4567 \r\n\n\n\nTodos los días ', style: 'light' });
+  assert.equal(f.body, 'Domicilios 300 123 4567\n\nTodos los días');
+  assert.equal(f.style, 'light');
+  assert.equal(signFields({ name: 'x', kind: 'url', target: 'https://a.co' }).style, 'gradient');
+  assert.throws(() => signFields({ name: 'x', kind: 'wifi', style: 'neon' }), /estilo/);
+  assert.throws(() => signFields({ name: 'x', kind: 'wifi', body: 'a'.repeat(301) }), /300/);
+});
+
+test('phone and instagram as printed', () => {
+  assert.equal(displayPhone('573001234567'), '300 123 4567');
+  assert.equal(displayPhone('3001234567'), '300 123 4567');
+  assert.equal(displayPhone(null), null);
+  assert.equal(instagramHandle('https://instagram.com/el.mirador/?hl=es'), 'el.mirador');
+  assert.equal(instagramHandle('@cabana_x'), 'cabana_x');
+});
+
+test('AI copy is parsed and trimmed', () => {
+  assert.deepEqual(parseSignCopy('Claro:\n{"headline": " Pide tu domicilio ", "body": "Llama al 300 123 4567\\nTodos los días"}'),
+    { headline: 'Pide tu domicilio', body: 'Llama al 300 123 4567\nTodos los días' });
+  assert.throws(() => parseSignCopy('no sé'), /IA/);
+  const { system, user } = signCopyPrompt({ venue: { name: 'El Mirador', city: 'Guatapé' }, kind: 'whatsapp', size: 'banner_3x1', idea: 'domicilios 300' });
+  assert.match(system, /El Mirador \(Guatapé\)/);
+  assert.match(system, /pasacalles/);
+  assert.match(user, /domicilios 300/);
 });

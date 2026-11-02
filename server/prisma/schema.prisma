@@ -1452,6 +1452,10 @@ model venue_signs {
   /// public_page | whatsapp | instagram | url | wifi
   kind       String   @db.VarChar(20)
   headline   String?  @db.VarChar(80)
+  /// Free text printed on the sign (delivery numbers, opening hours...).
+  body       String?  @db.VarChar(300)
+  /// gradient (the venue's brand colors) | light (white, saves ink)
+  style      String   @default("gradient") @db.VarChar(20)
   /// First WhatsApp message (kind whatsapp) or the address (kind url).
   target     String?
   /// letter | half_letter | a3 | banner_3x1

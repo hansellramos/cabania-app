@@ -7,6 +7,7 @@ const crypto = require('crypto');
 
 const KINDS = ['public_page', 'whatsapp', 'instagram', 'url', 'wifi'];
 const SIZES = ['letter', 'half_letter', 'a3', 'banner_3x1'];
+const STYLES = ['gradient', 'light'];
 // No 0/o, 1/l/i: the code is also printed under the QR and may be typed by hand.
 const CODE_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz';
 // Link previews and crawlers fetch the URL too; they are not people scanning.
@@ -48,8 +49,8 @@ function signDestination(sign, venue, baseUrl) {
       return `https://wa.me/${number}?text=${encodeURIComponent(text)}`;
     }
     case 'instagram': {
-      const handle = String(venue.instagram || '').trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').split(/[/?#]/)[0];
-      return /^[A-Za-z0-9._]{1,30}$/.test(handle) ? `https://www.instagram.com/${handle}/` : null;
+      const handle = instagramHandle(venue.instagram);
+      return handle ? `https://www.instagram.com/${handle}/` : null;
     }
     case 'url':
       return /^https?:\/\/\S+$/i.test(sign.target || '') ? sign.target : null;
@@ -84,7 +85,17 @@ function signFields(body, { partial = false } = {}) {
     if (!SIZES.includes(size)) throw bad('El tamaño del aviso no es válido.');
     out.size = size;
   }
+  if (!partial || body.style !== undefined) {
+    const style = body.style || 'gradient';
+    if (!STYLES.includes(style)) throw bad('El estilo del aviso no es válido.');
+    out.style = style;
+  }
   if (body.headline !== undefined) out.headline = String(body.headline || '').trim().slice(0, 80) || null;
+  if (body.body !== undefined) {
+    const text = String(body.body || '').replace(/\r/g, '').split('\n').map(l => l.trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    if (text.length > 300) throw bad('El texto adicional es muy largo: máximo 300 caracteres.');
+    out.body = text || null;
+  }
   if (body.target !== undefined) {
     const target = String(body.target || '').trim() || null;
     if (body.kind === 'url' && !/^https?:\/\/\S+$/i.test(target || '')) throw bad('Escribe una dirección completa, que empiece por https://');
@@ -93,7 +104,70 @@ function signFields(body, { partial = false } = {}) {
   return out;
 }
 
-function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, getAccessibleVenueIds, analytics, appBaseUrl }) {
+/** "@handle" from whatever the venue saved as its Instagram, or null. */
+function instagramHandle(value) {
+  const handle = String(value || '').trim().replace(/^@/, '').replace(/^https?:\/\/(www\.)?instagram\.com\//i, '').split(/[/?#]/)[0];
+  return /^[A-Za-z0-9._]{1,30}$/.test(handle) ? handle : null;
+}
+
+/** The venue's WhatsApp as people read it: "300 123 4567". */
+function displayPhone(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return null;
+  const local = digits.length === 12 && digits.startsWith('57') ? digits.slice(2) : digits;
+  return local.length === 10 ? `${local.slice(0, 3)} ${local.slice(3, 6)} ${local.slice(6)}` : `+${digits}`;
+}
+
+/** Prompt for the AI that writes a sign's headline and free text. */
+function signCopyPrompt({ venue, kind, size, idea, headline, body }) {
+  const kinds = {
+    public_page: 'lleva a la página web de la cabaña, donde se ven planes, precios y disponibilidad y se reserva',
+    whatsapp: 'abre un chat de WhatsApp con la cabaña',
+    instagram: 'abre el perfil de Instagram de la cabaña',
+    url: 'abre un enlace',
+    wifi: 'conecta el celular a la red WiFi de la cabaña (es para los huéspedes que ya están adentro)',
+  };
+  const sizes = {
+    letter: 'hoja carta pegada en una pared o puerta',
+    half_letter: 'aviso pequeño de mesa',
+    a3: 'póster A3',
+    banner_3x1: 'pasacalles de 3 × 1 metros en la vía, que se lee desde un carro en movimiento',
+  };
+  const system = `Escribes el texto de avisos impresos con un código QR para una cabaña de alquiler en Colombia.
+Cabaña: ${venue.name || '—'}${venue.city ? ` (${venue.city})` : ''}.
+El QR ${kinds[kind] || kinds.url}. Formato: ${sizes[size] || sizes.letter}.
+
+Responde SOLO con JSON, sin nada más: {"headline": "...", "body": "..."}
+- headline: el texto grande. Corto y llamativo, máximo 6 palabras y 40 caracteres, sin emojis. Si el usuario da una idea, el texto grande dice ESA idea (por ejemplo, si habla de domicilios: "Pide tu domicilio"), no otra cosa. No empieces con "Escanea": eso ya va impreso junto al QR.
+- body: texto adicional opcional, máximo 3 líneas cortas separadas por \n y 150 caracteres en total. Vacío ("") si no hace falta.${size === 'banner_3x1' ? ' En un pasacalles casi siempre va vacío o con una sola línea muy corta.' : ''}${kind === 'wifi' ? ' En el aviso del WiFi va vacío o con una bienvenida corta, sin hablar de la velocidad ni la señal.' : ''}
+- Español de Colombia, cálido y claro, tuteando.
+- Usa SOLO datos que estén aquí o en la idea del usuario. Nunca inventes teléfonos, precios, horarios, direcciones, servicios ni promesas (como "buena señal" o "los mejores precios"). Si el usuario da números o datos (por ejemplo un número de domicilios o un horario), cópialos en body tal como los escribió, ordenados en renglones claros.
+- No repitas el nombre de la cabaña: ya va impreso arriba. No pongas el enlace ni la clave del WiFi: ya van impresos.`;
+  const user = [
+    idea ? `Idea del usuario: ${idea}` : 'El usuario no dio una idea: propón el mejor texto.',
+    headline ? `Texto grande actual: ${headline}` : '',
+    body ? `Texto adicional actual: ${body}` : '',
+  ].filter(Boolean).join('\n');
+  return { system, user };
+}
+
+/** {headline, body} from the AI answer, trimmed to what fits on the sign. */
+function parseSignCopy(text) {
+  const match = String(text || '').match(/\{[\s\S]*\}/);
+  if (!match) throw Object.assign(new Error('La IA no devolvió un texto válido. Intenta de nuevo.'), { statusCode: 502 });
+  let data;
+  try { data = JSON.parse(match[0]); } catch {
+    // Models sometimes put real line breaks inside the strings: read the fields one by one.
+    const field = (name) => match[0].match(new RegExp(`"${name}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`))?.[1];
+    data = { headline: field('headline'), body: field('body') };
+  }
+  const headline = String(data.headline || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const body = String(data.body || '').replace(/\\n/g, '\n').split('\n').map(l => l.trim()).filter(Boolean).join('\n').slice(0, 300);
+  if (!headline) throw Object.assign(new Error('La IA no devolvió un texto válido. Intenta de nuevo.'), { statusCode: 502 });
+  return { headline, body };
+}
+
+function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, getAccessibleVenueIds, analytics, appBaseUrl, llmService, logAICall }) {
   async function canAccessVenue(req, venueId, permission) {
     if (req.userPermissions?.isSuperAdmin) return true;
     if (permission && !hasPermission(req.userPermissions, permission)) return false;
@@ -136,7 +210,7 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     };
   }
 
-  const VENUE_SELECT = { id: true, name: true, slug: true, is_public: true, whatsapp: true, instagram: true, wifi_ssid: true, wifi_password: true };
+  const VENUE_SELECT = { id: true, name: true, city: true, slug: true, is_public: true, whatsapp: true, instagram: true, wifi_ssid: true, wifi_password: true, logo_url: true, brand_color_primary: true, brand_color_secondary: true };
 
   const handle = (fn) => async (req, res) => {
     try {
@@ -156,7 +230,14 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     const signs = await prisma.venue_signs.findMany({ where: { venue_id: venue.id }, orderBy: { created_at: 'asc' } });
     const counts = await scanCounts(signs.map(s => s.id));
     res.json({
-      venue: { name: venue.name, is_public: venue.is_public, has_whatsapp: !!venue.whatsapp, has_instagram: !!venue.instagram, wifi_ssid: venue.wifi_ssid, wifi_password: venue.wifi_password },
+      venue: {
+        name: venue.name, is_public: venue.is_public, has_whatsapp: !!venue.whatsapp, has_instagram: !!venue.instagram,
+        whatsapp_display: displayPhone(venue.whatsapp), instagram_handle: instagramHandle(venue.instagram),
+        wifi_ssid: venue.wifi_ssid, wifi_password: venue.wifi_password,
+        logo_url: venue.logo_url || null,
+        colors: { primary: venue.brand_color_primary || null, secondary: venue.brand_color_secondary || null },
+        ai_available: !!llmService,
+      },
       signs: signs.map(s => signPayload(s, venue, counts))
     });
   }));
@@ -193,6 +274,42 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     const { count } = await prisma.venue_signs.deleteMany({ where: { id: req.params.signId, venue_id: req.params.id } });
     if (!count) return res.status(404).json({ error: 'Aviso no encontrado' });
     res.json({ ok: true });
+  }));
+
+  // POST /api/venues/:id/signs/suggest — the AI writes the headline and the free text
+  app.post('/api/venues/:id/signs/suggest', isAuthenticated, handle(async (req, res) => {
+    if (!(await canAccessVenue(req, req.params.id, 'venues:edit'))) return res.status(403).json({ error: 'No tienes permiso para editar esta cabaña' });
+    if (!llmService) return res.status(503).json({ error: 'El asistente de IA no está disponible' });
+    const venue = await prisma.venues.findUnique({ where: { id: req.params.id }, select: VENUE_SELECT });
+    if (!venue) return res.status(404).json({ error: 'Cabaña no encontrada' });
+    const clip = (v, n) => String(v || '').trim().slice(0, n);
+    const kind = KINDS.includes(req.body.kind) ? req.body.kind : 'public_page';
+    const size = SIZES.includes(req.body.size) ? req.body.size : 'letter';
+    const { system, user } = signCopyPrompt({
+      venue, kind, size, idea: clip(req.body.idea, 500), headline: clip(req.body.headline, 80), body: clip(req.body.body, 300),
+    });
+    const setting = await prisma.ai_settings.findUnique({ where: { setting_key: 'customer_chat' } }).catch(() => null);
+    const providerCode = setting?.provider_code || 'anthropic_claude';
+    const started = Date.now();
+    let result;
+    try {
+      result = await llmService.callLLMByCode(providerCode, [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ], { maxTokens: 300, temperature: 0.8, model: setting?.model || undefined });
+    } catch (error) {
+      console.error('[signs] AI copy failed:', error.message);
+      return res.status(502).json({ error: 'La IA no respondió. Intenta de nuevo en un momento.' });
+    }
+    if (logAICall) {
+      logAICall({
+        venue_id: venue.id, feature: 'sign_copy', provider_code: providerCode, model: result.model || providerCode,
+        system_prompt: system, user_prompt: user, response_content: result.content,
+        input_tokens: result.usage?.prompt_tokens, output_tokens: result.usage?.completion_tokens,
+        response_time_ms: Date.now() - started, user_id: req.user?.id, metadata: { kind, size },
+      });
+    }
+    res.json(parseSignCopy(result.content));
   }));
 
   // GET /api/venues/:id/signs/:signId/scans?days=30 — scans per day (Bogotá time) and per phone
@@ -242,4 +359,4 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
   });
 }
 
-module.exports = { registerVenueSignRoutes, signDestination, wifiPayload, signFields, newCode, deviceOf };
+module.exports = { registerVenueSignRoutes, signDestination, wifiPayload, signFields, newCode, deviceOf, displayPhone, instagramHandle, signCopyPrompt, parseSignCopy };
