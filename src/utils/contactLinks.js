@@ -1,6 +1,6 @@
-// Links to reach a guest on the channel they have: WhatsApp by number or by
-// username, otherwise an Instagram DM. Instagram links cannot prefill a message,
-// so callers copy the text to the clipboard first.
+// Links to reach a guest on the channel they have: WhatsApp, Telegram or SMS by
+// phone; WhatsApp, Instagram or Facebook by username. Links that cannot prefill a
+// message (Instagram, Facebook, Telegram) make callers copy the text first.
 
 /** WhatsApp link for a Colombian number stored with or without the 57 prefix. */
 export function whatsappUrl(phone, text) {
@@ -69,12 +69,103 @@ export function instagramDmUrl(handle) {
   return /^[A-Za-z0-9._]{1,30}$/.test(user) && !/^\d+$/.test(user) ? `https://ig.me/m/${user}` : null
 }
 
-/** The best way to message a contact: { channel, url, label } or null. */
+/** An Instagram @username (with the @) from a handle or a profile link, or null. */
+export function cleanInstagramHandle(value) {
+  const text = String(value || '').trim()
+    .replace(/^https?:\/\//i, '').replace(/^(www\.)?(instagram\.com|ig\.me\/m)\//i, '')
+    .split(/[/?#]/)[0]
+  const user = text.replace(/^@/, '')
+  return /^[A-Za-z0-9._]{1,30}$/.test(user) && !/^\d+$/.test(user) ? `@${user}` : null
+}
+
+/**
+ * A Facebook username (5 to 50 letters, digits or periods) or numeric profile id,
+ * also from a profile or m.me link, or null. Same rule as the server.
+ */
+export function cleanFacebook(value) {
+  let text = String(value || '').trim()
+  const id = text.match(/profile\.php\?id=(\d{5,20})/)
+  if (id) return id[1]
+  text = text.replace(/^https?:\/\//i, '')
+    .replace(/^(www\.|m\.|web\.)?(facebook\.com|fb\.com|m\.me)\//i, '')
+    .replace(/^@/, '').split(/[/?#]/)[0]
+  if (!/^[A-Za-z0-9.]{5,50}$/.test(text) || text.startsWith('.') || text.endsWith('.')) return null
+  return text
+}
+
+/** Messenger link for a Facebook username or profile id. */
+export function facebookMessengerUrl(value) {
+  const user = cleanFacebook(value)
+  return user ? `https://m.me/${user}` : null
+}
+
+/** International digits of a phone stored with or without the Colombian 57 prefix. */
+function internationalDigits(phone) {
+  const digits = String(phone || '').replace(/\D/g, '')
+  if (!digits) return null
+  return digits.length === 10 ? `57${digits}` : digits
+}
+
+/** Telegram chat by phone number (opens it when the guest allows being found by number). */
+export function telegramPhoneUrl(phone) {
+  const number = internationalDigits(phone)
+  return number ? `https://t.me/+${number}` : null
+}
+
+/** Text message (SMS) link, with the text prefilled. */
+export function smsUrl(phone, text) {
+  const number = internationalDigits(phone)
+  return number ? `sms:+${number}${text ? `?&body=${encodeURIComponent(text)}` : ''}` : null
+}
+
+/**
+ * Ways to message a guest. `kind` groups them in the form (by phone or by
+ * username), `field` is the contact field each one uses and `prefill` says whether
+ * the link carries the text (otherwise callers copy it to the clipboard first).
+ */
+export const CONTACT_CHANNELS = {
+  whatsapp: { kind: 'phone', field: 'whatsapp', label: 'WhatsApp', icon: 'cibWhatsapp', color: 'success', prefill: true },
+  telegram: { kind: 'phone', field: 'whatsapp', label: 'Telegram', icon: 'cibTelegramPlane', color: 'info', prefill: false },
+  sms: { kind: 'phone', field: 'whatsapp', label: 'SMS', icon: 'cilCommentBubble', color: 'secondary', prefill: true },
+  whatsapp_user: { kind: 'user', field: 'whatsapp_username', label: 'WhatsApp', icon: 'cibWhatsapp', color: 'success', prefill: true },
+  instagram: { kind: 'user', field: 'instagram', label: 'Instagram', icon: 'cibInstagram', color: 'danger', prefill: false },
+  facebook: { kind: 'user', field: 'facebook', label: 'Facebook', icon: 'cibMessenger', color: 'primary', prefill: false },
+}
+
+/** Link to message a contact on one channel, or null when the contact lacks that data. */
+export function channelUrl(channel, contact, text) {
+  switch (channel) {
+    case 'whatsapp': return whatsappUrl(contact?.whatsapp || contact?.phone, text)
+    case 'telegram': return telegramPhoneUrl(contact?.whatsapp || contact?.phone)
+    case 'sms': return smsUrl(contact?.whatsapp || contact?.phone, text)
+    case 'whatsapp_user': return whatsappUsernameUrl(contact?.whatsapp_username, text)
+    case 'instagram': return instagramDmUrl(contact?.instagram)
+    case 'facebook': return facebookMessengerUrl(contact?.facebook)
+    default: return null
+  }
+}
+
+/** The value a contact has for a channel, as shown to the host (e.g. "@user"). */
+export function channelValue(channel, contact) {
+  const meta = CONTACT_CHANNELS[channel]
+  const value = meta && contact?.[meta.field]
+  if (!value) return ''
+  if (meta.kind === 'phone') return String(value)
+  return channel === 'facebook' ? String(value) : `@${String(value).replace(/^@/, '')}`
+}
+
+/**
+ * The way to message a contact: the channel the host chose for them, else WhatsApp
+ * (number, then username), Instagram or Facebook. Returns
+ * { channel, url, label, icon, color, prefill } or null.
+ */
 export function contactChannel(contact, text) {
-  const wa = contactWhatsappUrl(contact, text)
-  if (wa) return { channel: 'whatsapp', url: wa, label: 'WhatsApp' }
-  const ig = instagramDmUrl(contact?.instagram)
-  if (ig) return { channel: 'instagram', url: ig, label: 'Instagram' }
+  const order = [contact?.contact_channel, 'whatsapp', 'whatsapp_user', 'instagram', 'facebook']
+  for (const channel of order) {
+    if (!CONTACT_CHANNELS[channel]) continue
+    const url = channelUrl(channel, contact, text)
+    if (url) return { channel, url, ...CONTACT_CHANNELS[channel] }
+  }
   return null
 }
 
@@ -96,4 +187,26 @@ export function publicVenueUrl(venue) {
   if (!venue?.is_public || !venue.slug) return null
   const base = (import.meta.env.VITE_APP_URL || window.location.origin).replace(/\/$/, '')
   return `${base}/p/${venue.slug}`
+}
+
+/** Why a value typed for a channel is not valid, or '' when it is valid or empty. */
+export function channelError(channel, value) {
+  const text = String(value || '').trim()
+  if (!text || text === '@') return ''
+  const kind = CONTACT_CHANNELS[channel]?.kind
+  if (kind === 'phone') return whatsappNumberError(text)
+  if (channel === 'whatsapp_user') return whatsappUsernameError(text)
+  if (channel === 'instagram') return cleanInstagramHandle(text) ? '' : 'Hasta 30 letras, números, puntos o guiones bajos, o el enlace del perfil.'
+  if (channel === 'facebook') return cleanFacebook(text) ? '' : 'De 5 a 50 letras, números o puntos, o el enlace del perfil.'
+  return ''
+}
+
+/** The channel to preselect for a contact: the saved one, else the first one with data. */
+export function initialChannel(contact) {
+  if (CONTACT_CHANNELS[contact?.contact_channel]) return contact.contact_channel
+  if (contact?.whatsapp) return 'whatsapp'
+  if (contact?.whatsapp_username) return 'whatsapp_user'
+  if (contact?.instagram) return 'instagram'
+  if (contact?.facebook) return 'facebook'
+  return 'whatsapp'
 }

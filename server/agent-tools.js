@@ -488,7 +488,7 @@ function createAgentTools(deps) {
       ]);
       return {
         ...summary,
-        customer_contact: customer ? { whatsapp: customer.whatsapp ? String(customer.whatsapp) : null, whatsapp_username: customer.whatsapp_username || null, instagram: customer.instagram, email: customer.email } : null,
+        customer_contact: customer ? { whatsapp: customer.whatsapp ? String(customer.whatsapp) : null, whatsapp_username: customer.whatsapp_username || null, instagram: customer.instagram, facebook: customer.facebook || null, contact_channel: customer.contact_channel || null, email: customer.email } : null,
         payments: payments.map(p => ({ date: p.payment_date ? isoDay(p.payment_date) : null, amount: money(p.amount), method: p.payment_method, verified: p.verified })),
         deposit: deposit ? { amount: money(deposit.amount), status: deposit.status, refund: deposit.refund_amount ? money(deposit.refund_amount) : null } : null,
         contract: contract ? {
@@ -777,6 +777,8 @@ function createAgentTools(deps) {
           whatsapp: c.whatsapp ? String(c.whatsapp) : null,
           whatsapp_username: c.whatsapp_username || null,
           instagram: c.instagram,
+          facebook: c.facebook || null,
+          contact_channel: c.contact_channel || null,
           email: c.email,
           bookings: cm[c.id] || 0,
           link: `/business/contacts/${c.id}`

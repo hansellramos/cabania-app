@@ -61,9 +61,9 @@
                 <div class="fs-4 fw-bold font-monospace">{{ contract.access_code }}</div>
               </div>
               <div class="d-flex gap-2 mt-3">
-                <CButton :color="shareChannel === 'instagram' ? 'danger' : 'success'" @click="shareWhatsApp">
-                  <CIcon :name="shareChannel === 'instagram' ? 'cibInstagram' : 'cibWhatsapp'" class="me-1" />
-                  Compartir por {{ shareChannel === 'instagram' ? 'Instagram' : 'WhatsApp' }}
+                <CButton :color="shareChannel.color" @click="shareWhatsApp">
+                  <CIcon :name="shareChannel.icon" class="me-1" />
+                  Compartir por {{ shareChannel.label }}
                 </CButton>
               </div>
               <div v-if="copyMsg" class="small text-success mt-2">{{ copyMsg }}</div>
@@ -159,8 +159,8 @@
               </div>
               <div class="d-flex gap-2">
                 <CButton size="sm" color="secondary" variant="outline" @click="openAmendmentPage(a)">Ver</CButton>
-                <CButton v-if="a.status !== 'signed'" size="sm" :color="shareChannel === 'instagram' ? 'danger' : 'success'" @click="shareAmendment(a)">
-                  Enviar por {{ shareChannel === 'instagram' ? 'Instagram' : 'WhatsApp' }}
+                <CButton v-if="a.status !== 'signed'" size="sm" :color="shareChannel.color" @click="shareAmendment(a)">
+                  Enviar por {{ shareChannel.label }}
                 </CButton>
                 <CButton v-if="a.status !== 'signed'" size="sm" color="danger" variant="ghost" @click="deleteAmendment(a)">Borrar</CButton>
               </div>
@@ -507,9 +507,9 @@ async function shareAmendment(a) {
   const message = `Hola ${customerName}, te comparto el Otrosí No. ${a.number} a tu contrato de reserva en ${venueName}, `
     + `con los cambios que acordamos. Por favor léelo y fírmalo aquí:\n${amendmentUrl(a)}`
   const target = contactChannel(props.accommodation?.customer_data, message)
-  if (target?.channel === 'instagram') {
+  if (target && !target.prefill) {
     amendmentMsgClass.value = 'text-success'
-    amendmentMsg.value = (await copyText(message)) ? 'Mensaje copiado: pégalo en el chat de Instagram.' : ''
+    amendmentMsg.value = (await copyText(message)) ? `Mensaje copiado: pégalo en el chat de ${target.label}.` : ''
   }
   window.open(target?.url || `https://wa.me/?text=${encodeURIComponent(message)}`, '_blank')
 }
@@ -634,8 +634,8 @@ async function copyLink() {
   }
 }
 
-// WhatsApp when the guest has a number; otherwise their Instagram DM.
-const shareChannel = computed(() => contactChannel(props.accommodation?.customer_data)?.channel || 'whatsapp')
+// The guest's preferred channel, else WhatsApp (number or username), Instagram or Facebook.
+const shareChannel = computed(() => contactChannel(props.accommodation?.customer_data) || { label: 'WhatsApp', color: 'success', icon: 'cibWhatsapp' })
 
 async function shareWhatsApp() {
   const customerName = props.accommodation?.customer_data?.fullname || 'cliente'
@@ -645,11 +645,11 @@ async function shareWhatsApp() {
     `Link: ${publicUrl.value}\n` +
     `Codigo de acceso: ${contract.value.access_code}`
   const target = contactChannel(props.accommodation?.customer_data, message)
-  if (target?.channel === 'instagram') {
-    // Instagram cannot prefill the message: copy it to paste in the DM.
+  if (target && !target.prefill) {
+    // Instagram, Facebook and Telegram cannot prefill the message: copy it to paste in the chat.
     copyMsg.value = (await copyText(message))
-      ? 'Mensaje copiado: pégalo en el chat de Instagram.'
-      : 'Copia el link y el código de arriba para enviarlos por Instagram.'
+      ? `Mensaje copiado: pégalo en el chat de ${target.label}.`
+      : `Copia el link y el código de arriba para enviarlos por ${target.label}.`
   }
   window.open(target?.url || `https://wa.me/?text=${encodeURIComponent(message)}`, '_blank')
 }

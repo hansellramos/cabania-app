@@ -18,7 +18,7 @@ const metaWhatsApp = require('./services/metaWhatsApp');
 const metaInstagram = require('./services/metaInstagram');
 const bold = require('./services/bold');
 const analytics = require('./lib/analytics');
-const { cleanPhone, cleanInstagram, contactWhatsappFields } = require('./lib/contactFields');
+const { cleanPhone, cleanInstagram, contactChannelFields } = require('./lib/contactFields');
 
 // Chat source → analytics channel (Meta Cloud API and Baileys are both WhatsApp).
 const chatChannel = (source) => (['cloud_api', 'whatsapp', 'baileys'].includes(source) ? 'whatsapp' : source || 'web');
@@ -1674,7 +1674,7 @@ async function startServer() {
     try {
       const { organizationId, ...contactData } = req.body;
       const contact = await prisma.contacts.create({
-        data: { ...contactData, ...contactWhatsappFields(contactData) }
+        data: { ...contactData, ...contactChannelFields(contactData) }
       });
       
       if (organizationId) {
@@ -1697,7 +1697,7 @@ async function startServer() {
     try {
       const contact = await prisma.contacts.update({
         where: { id: req.params.id },
-        data: { ...req.body, ...contactWhatsappFields(req.body) }
+        data: { ...req.body, ...contactChannelFields(req.body) }
       });
       res.json(contact);
     } catch (error) {

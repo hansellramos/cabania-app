@@ -92,15 +92,14 @@
               </div>
               <CFormTextarea v-model="message" rows="9" class="small" />
               <CButton
-                v-if="whatsappLink"
-                color="success"
+                v-if="customerChannel"
+                :color="customerChannel.color"
                 variant="outline"
                 size="sm"
                 class="mt-2"
-                :href="whatsappLink"
-                target="_blank"
+                @click="openChat"
               >
-                <CIcon icon="cib-whatsapp" class="me-1" />Abrir chat con el mensaje
+                <CIcon :icon="customerChannel.icon" class="me-1" />{{ customerChannel.prefill ? `Abrir ${customerChannel.label} con el mensaje` : `Copiar mensaje y abrir ${customerChannel.label}` }}
               </CButton>
               <small class="d-block text-body-secondary mt-2">
                 Copia la imagen, pégala en el chat y envía el mensaje.
@@ -126,7 +125,7 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import QRCode from 'qrcode'
 import { CIcon } from '@coreui/icons-vue'
-import { contactWhatsappUrl } from '@/utils/contactLinks'
+import { contactChannel, copyText } from '@/utils/contactLinks'
 import { copyImage } from '@/utils/clipboardImage'
 
 const props = defineProps({
@@ -178,7 +177,15 @@ const qrSecondsLeft = computed(() => breBQr.value
   : 0)
 const countdown = computed(() => `${Math.floor(qrSecondsLeft.value / 60)}:${String(qrSecondsLeft.value % 60).padStart(2, '0')}`)
 const imageFileName = computed(() => `qr-pago-${(props.accommodation?.venue_data?.name || 'cabania').toLowerCase().replace(/\s+/g, '-')}.png`)
-const whatsappLink = computed(() => contactWhatsappUrl(props.accommodation?.customer_data, message.value))
+// The guest's preferred channel, else WhatsApp (number or username), Instagram or Facebook.
+const customerChannel = computed(() => contactChannel(props.accommodation?.customer_data, message.value))
+
+async function openChat() {
+  const target = customerChannel.value
+  if (!target) return
+  if (!target.prefill) await copyText(message.value)
+  window.open(target.url, '_blank')
+}
 
 const money = (v) => `$${Math.round(Number(v) || 0).toLocaleString('es-CO')}`
 const formatDateTime = (d) => new Date(d).toLocaleString('es-CO', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Bogota' })

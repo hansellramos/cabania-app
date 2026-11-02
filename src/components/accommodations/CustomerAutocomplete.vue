@@ -9,7 +9,7 @@
     />
     <ul v-if="showDropdown && (filteredContacts.length || query)" class="list-group position-absolute w-100 mt-1" style="z-index:10;max-height:220px;overflow-y:auto;">
       <li v-for="contact in filteredContacts" :key="contact.id" class="list-group-item list-group-item-action" style="cursor:pointer;" @mousedown.prevent="selectContact(contact)">
-        {{ contact.fullname }} <span class="text-muted">{{ contact.whatsapp || (contact.whatsapp_username && `@${contact.whatsapp_username}`) || contact.user?.email }}</span>
+        {{ contact.fullname }} <span class="text-muted">{{ contactLabel(contact) }}</span>
       </li>
       <li v-if="query && !filteredContacts.length && !showCreateForm" class="list-group-item list-group-item-action text-primary" style="cursor:pointer;" @mousedown.prevent="startCreateCustomer">
         + Crear nuevo cliente "{{ query }}"
@@ -25,29 +25,10 @@
           <CFormLabel>Nombre completo</CFormLabel>
           <CFormInput v-model="newCustomer.fullname" placeholder="Nombre del cliente" required />
         </div>
-        <div class="mb-3">
-          <CFormLabel>Número de WhatsApp</CFormLabel>
-          <CFormInput
-            v-model="newCustomer.whatsapp"
-            placeholder="Ej: 3001234567"
-            type="tel"
-            :invalid="!!whatsappError"
-            :feedback-invalid="whatsappError"
-            @input="cleanWhatsapp"
-            @paste="onPasteWhatsapp"
-          />
-        </div>
         <div class="mb-1">
-          <CFormLabel>Usuario de WhatsApp</CFormLabel>
-          <CFormInput
-            v-model="newCustomer.whatsapp_username"
-            placeholder="@usuario"
-            autocapitalize="off"
-            :invalid="!!usernameError"
-            :feedback-invalid="usernameError"
-          />
+          <CFormLabel for="newCustomerChannel">¿Cómo le escribimos?</CFormLabel>
+          <ContactChannelPicker v-model="newCustomer" input-id="newCustomerChannel" required />
         </div>
-        <div class="form-text">Escribe el número o, si el cliente no lo dio, su usuario de WhatsApp.</div>
         <CAlert v-if="createError" color="danger" class="py-2 small mt-3 mb-0">{{ createError }}</CAlert>
       </CModalBody>
       <CModalFooter>
@@ -61,7 +42,8 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { CModal, CModalHeader, CModalTitle, CModalBody, CModalFooter, CButton, CFormInput, CFormLabel, CAlert } from '@coreui/vue'
-import { cleanWhatsappNumber, cleanWhatsappUsername, whatsappNumberError, whatsappUsernameError, looksLikeWhatsappUsername } from '@/utils/contactLinks'
+import { CONTACT_CHANNELS, channelError, channelValue, initialChannel } from '@/utils/contactLinks'
+import ContactChannelPicker from '@/components/contacts/ContactChannelPicker.vue'
 import { fetchContacts, createContact } from '@/services/contactService'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
@@ -76,17 +58,15 @@ const query = ref('')
 const showDropdown = ref(false)
 const contacts = ref([])
 const showCreateForm = ref(false)
-const emptyCustomer = () => ({ fullname: '', whatsapp: '', whatsapp_username: '' })
+const emptyCustomer = () => ({ fullname: '', whatsapp: '', whatsapp_username: '', instagram: '', facebook: '', contact_channel: 'whatsapp' })
 const newCustomer = ref(emptyCustomer())
 const createError = ref('')
 
-// Number or username: at least one, and each one valid on its own when filled in.
-const whatsappError = computed(() => whatsappNumberError(newCustomer.value.whatsapp))
-const usernameError = computed(() => whatsappUsernameError(newCustomer.value.whatsapp_username))
+// One way to reach the guest is enough: the phone or a username on the chosen channel.
+const chosenChannel = computed(() => initialChannel(newCustomer.value))
+const chosenValue = computed(() => String(newCustomer.value[CONTACT_CHANNELS[chosenChannel.value].field] || '').trim())
 const canCreate = computed(() =>
-  !!newCustomer.value.fullname.trim()
-  && !whatsappError.value && !usernameError.value
-  && !!(cleanWhatsappNumber(newCustomer.value.whatsapp) || cleanWhatsappUsername(newCustomer.value.whatsapp_username))
+  !!newCustomer.value.fullname.trim() && !!chosenValue.value && !channelError(chosenChannel.value, chosenValue.value)
 )
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
@@ -98,9 +78,16 @@ const filteredContacts = computed(() => {
     (c.fullname && c.fullname.toLowerCase().includes(q)) ||
     (c.whatsapp && String(c.whatsapp).includes(q)) ||
     (c.whatsapp_username && c.whatsapp_username.includes(q.replace(/^@/, ''))) ||
+    (c.instagram && c.instagram.toLowerCase().includes(q.replace(/^@/, ''))) ||
+    (c.facebook && c.facebook.toLowerCase().includes(q.replace(/^@/, ''))) ||
     (c.user && c.user.email && c.user.email.toLowerCase().includes(q))
   ).slice(0, 10)
 })
+
+/** Phone, username or email shown next to the name in the list. */
+function contactLabel(contact) {
+  return channelValue(initialChannel(contact), contact) || contact.user?.email || ''
+}
 
 function onInput() {
   showDropdown.value = true
@@ -117,7 +104,11 @@ function hideDropdownWithDelay() {
 }
 
 function startCreateCustomer() {
-  newCustomer.value = { ...emptyCustomer(), fullname: query.value }
+  // What was typed in the search goes to the name, or to the phone or WhatsApp user when it is one.
+  const typed = query.value.trim()
+  if (/^\+?[\d\s()-]{7,}$/.test(typed)) newCustomer.value = { ...emptyCustomer(), whatsapp: typed }
+  else if (typed.startsWith('@')) newCustomer.value = { ...emptyCustomer(), contact_channel: 'whatsapp_user', whatsapp_username: typed }
+  else newCustomer.value = { ...emptyCustomer(), fullname: typed }
   createError.value = ''
   showCreateForm.value = true
   showDropdown.value = false
@@ -128,39 +119,14 @@ function cancelCreate() {
   newCustomer.value = emptyCustomer()
 }
 
-/** A username typed or pasted in the number field goes to its own field. */
-function moveToUsername(text) {
-  if (!looksLikeWhatsappUsername(text)) return false
-  if (!newCustomer.value.whatsapp_username) newCustomer.value.whatsapp_username = text.trim()
-  newCustomer.value.whatsapp = ''
-  return true
-}
-
-function cleanWhatsapp() {
-  if (moveToUsername(newCustomer.value.whatsapp)) return
-  let val = newCustomer.value.whatsapp
-  val = val.replace(/\s+/g, '')
-  val = val.replace(/^\+57/, '')
-  val = val.replace(/[^\d]/g, '')
-  newCustomer.value.whatsapp = val
-}
-
-function onPasteWhatsapp(event) {
-  event.preventDefault()
-  let pasted = (event.clipboardData || window.clipboardData).getData('text')
-  if (moveToUsername(pasted)) return
-  pasted = pasted.replace(/[^\d+]/g, '')
-  pasted = pasted.replace(/^\+57/, '')
-  newCustomer.value.whatsapp = pasted
-}
-
 async function createCustomer() {
   try {
     createError.value = ''
+    const channel = chosenChannel.value
     const payload = {
       fullname: newCustomer.value.fullname,
-      whatsapp: cleanWhatsappNumber(newCustomer.value.whatsapp),
-      whatsapp_username: cleanWhatsappUsername(newCustomer.value.whatsapp_username)
+      contact_channel: channel,
+      [CONTACT_CHANNELS[channel].field]: chosenValue.value
     }
     if (props.organizationId) {
       payload.organizationId = props.organizationId

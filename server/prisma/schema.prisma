@@ -82,6 +82,10 @@ model contacts {
   whatsapp   Decimal? @db.Decimal
   whatsapp_username String? @db.VarChar(35)
   instagram  String?  @db.VarChar
+  facebook   String?  @db.VarChar(50)
+  /// Medio preferido para escribirle: whatsapp, telegram o sms (por teléfono);
+  /// whatsapp_user, instagram o facebook (por usuario). Null: el primero disponible.
+  contact_channel String? @db.VarChar(20)
   email      String?  @db.VarChar(255)
   city       String?  @db.VarChar
   state      String?  @db.VarChar

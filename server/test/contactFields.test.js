@@ -28,3 +28,25 @@ test('contactWhatsappFields validates each field separately', () => {
   assert.throws(() => contactWhatsappFields({ whatsapp: '@maria', whatsapp_username: 'maria' }), { statusCode: 400, message: /número/ });
   assert.throws(() => contactWhatsappFields({ whatsapp: '3001234567', whatsapp_username: '12' }), { statusCode: 400, message: /usuario/ });
 });
+
+const { cleanFacebook, cleanInstagram, contactChannelFields } = require('../lib/contactFields');
+
+test('Instagram and Facebook accept a handle or a profile link', () => {
+  assert.strictEqual(cleanInstagram('https://www.instagram.com/casa.baluna/?hl=es'), '@casa.baluna');
+  assert.strictEqual(cleanInstagram('casa_baluna'), '@casa_baluna');
+  assert.strictEqual(cleanInstagram('12345'), null, 'numeric ids are not handles');
+  assert.strictEqual(cleanFacebook('https://www.facebook.com/maria.perez.77?ref=x'), 'maria.perez.77');
+  assert.strictEqual(cleanFacebook('https://m.me/mariaperez'), 'mariaperez');
+  assert.strictEqual(cleanFacebook('https://facebook.com/profile.php?id=100012345678'), '100012345678');
+  assert.strictEqual(cleanFacebook('@ana'), null, 'too short');
+  assert.strictEqual(cleanFacebook('maria_perez'), null, 'no underscores on Facebook');
+});
+
+test('contactChannelFields checks the preferred channel', () => {
+  assert.deepStrictEqual(contactChannelFields({ contact_channel: 'telegram', whatsapp: '3001234567' }), { whatsapp: '3001234567', contact_channel: 'telegram' });
+  assert.deepStrictEqual(contactChannelFields({ contact_channel: 'facebook', facebook: 'facebook.com/maria.perez' }), { facebook: 'maria.perez', contact_channel: 'facebook' });
+  assert.deepStrictEqual(contactChannelFields({ contact_channel: '' }), { contact_channel: null });
+  assert.throws(() => contactChannelFields({ contact_channel: 'fax' }), { statusCode: 400 });
+  assert.throws(() => contactChannelFields({ contact_channel: 'instagram', instagram: '' }), { statusCode: 400, message: /medio de contacto/ });
+  assert.throws(() => contactChannelFields({ facebook: 'a b' }), { statusCode: 400, message: /Facebook/ });
+});

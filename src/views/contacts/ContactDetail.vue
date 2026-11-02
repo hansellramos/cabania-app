@@ -9,9 +9,11 @@
           <template v-if="contact">
             <div class="ph-no-capture">
               <p><strong>Nombre:</strong> <span class="text-body-secondary">{{ contact.fullname }}</span></p>
-              <p><strong>WhatsApp:</strong> <span class="text-body-secondary">{{ contact.whatsapp }}</span></p>
+              <p v-if="principal"><strong>Medio principal:</strong> <span class="text-body-secondary">{{ principal.label }}{{ principal.kind === 'phone' ? ' (teléfono)' : '' }}</span></p>
+              <p v-if="contact.whatsapp"><strong>Teléfono:</strong> <span class="text-body-secondary">{{ contact.whatsapp }}</span></p>
               <p v-if="contact.whatsapp_username"><strong>Usuario de WhatsApp:</strong> <span class="text-body-secondary">@{{ contact.whatsapp_username }}</span></p>
               <p v-if="contact.instagram"><strong>Instagram:</strong> <span class="text-body-secondary">{{ contact.instagram }}</span></p>
+              <p v-if="contact.facebook"><strong>Facebook:</strong> <span class="text-body-secondary">{{ contact.facebook }}</span></p>
               <p v-if="contact.email"><strong>Correo:</strong> <span class="text-body-secondary">{{ contact.email }}</span></p>
               <p><strong>País:</strong> <span class="text-body-secondary">{{ contact.country }}</span></p>
               <p><strong>Departamento:</strong> <span class="text-body-secondary">{{ contact.state }}</span></p>
@@ -44,13 +46,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { contactChannel } from '@/utils/contactLinks'
 import { useRoute, useRouter } from 'vue-router'
 import { getContactById, deleteContact } from '@/services/contactService'
 
 const route = useRoute()
 const router = useRouter()
 const contact = ref(null)
+const principal = computed(() => contactChannel(contact.value))
 
 const onDelete = async () => {
   if (confirm(`¿Estás seguro de eliminar el contacto "${contact.value.fullname}"?`)) {
