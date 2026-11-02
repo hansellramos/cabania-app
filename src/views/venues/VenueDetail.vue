@@ -62,6 +62,11 @@
                   Galería
                 </CNavLink>
               </CNavItem>
+              <CNavItem>
+                <CNavLink href="javascript:void(0)" :active="activeTab === 3" @click="activeTab = 3">
+                  Avisos y QR
+                </CNavLink>
+              </CNavItem>
             </CNav>
 
             <CTabContent>
@@ -170,6 +175,11 @@
                   </div>
                 </div>
               </CTabPane>
+
+              <!-- Tab Avisos y QR -->
+              <CTabPane :visible="activeTab === 3">
+                <VenueSigns v-if="activeTab === 3" :venue-id="venue.id" />
+              </CTabPane>
             </CTabContent>
           </template>
           <template v-else>
@@ -188,6 +198,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CSpinner, CBadge, CNav, CNavItem, CNavLink, CTabContent, CTabPane } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
 import { getVenueById, deleteVenue } from '@/services/venueService'
+import VenueSigns from '@/components/venues/VenueSigns.vue'
 import { useModules } from '@/composables/useModules'
 import { publicVenueUrl, copyText } from '@/utils/contactLinks'
 import { useBreadcrumbStore } from '@/stores/breadcrumb.js'
@@ -205,7 +216,7 @@ const mapContainer = ref(null)
 const token = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN
 const activeTab = ref(0)
 // The open tab lives in the URL (?tab=ubicacion), so it can be linked and survives a reload.
-useUrlState([urlTab(activeTab, ['informacion', 'ubicacion', 'galeria'])])
+useUrlState([urlTab(activeTab, ['informacion', 'ubicacion', 'galeria', 'avisos'])])
 const mapInitialized = ref(false)
 
 const instagramUrl = computed(() => {

@@ -42,6 +42,12 @@ export default defineConfig(() => {
           changeOrigin: true,
           secure: false,
         },
+        // Sign QR short links (/q/<code>); a regex so routes like /quotes stay in the SPA.
+        '^/q/': {
+          target: 'http://localhost:3000',
+          changeOrigin: true,
+          secure: false,
+        },
         '/objects': {
           target: 'http://localhost:3000',
           changeOrigin: true,

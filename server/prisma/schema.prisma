@@ -351,6 +351,7 @@ model venues {
   excluded_phones      Json      @default("[]") @db.Json
   venue_plans          venue_plans[]
   payment_methods      venue_payment_methods[]
+  signs                venue_signs[]
 }
 
 model sessions {
@@ -1438,4 +1439,40 @@ model airbudget_deliveries {
   @@index([status, next_attempt_at])
   @@index([external_id, seq])
   @@index([organization_id, seq])
+}
+
+/// Printed signs with a QR (banners, table signs, the WiFi card). Except for WiFi,
+/// the QR points at /q/<code>, which counts the scan and redirects to the current
+/// destination, so the destination can change without reprinting.
+model venue_signs {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  venue_id   String   @db.Uuid
+  code       String   @unique @db.VarChar(16)
+  name       String   @db.VarChar(100)
+  /// public_page | whatsapp | instagram | url | wifi
+  kind       String   @db.VarChar(20)
+  headline   String?  @db.VarChar(80)
+  /// First WhatsApp message (kind whatsapp) or the address (kind url).
+  target     String?
+  /// letter | half_letter | a3 | banner_3x1
+  size       String   @default("letter") @db.VarChar(20)
+  created_by String?  @db.Uuid
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+  updated_at DateTime @default(now()) @db.Timestamptz(6)
+  venue      venues   @relation(fields: [venue_id], references: [id], onDelete: Cascade)
+  scans      venue_sign_scans[]
+
+  @@index([venue_id])
+}
+
+/// One scan of a sign's QR. No IP or personal data: only when and the kind of phone.
+model venue_sign_scans {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sign_id    String      @db.Uuid
+  scanned_at DateTime    @default(now()) @db.Timestamptz(6)
+  /// ios | android | other
+  device     String      @db.VarChar(10)
+  sign       venue_signs @relation(fields: [sign_id], references: [id], onDelete: Cascade)
+
+  @@index([sign_id, scanned_at])
 }
