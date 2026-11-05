@@ -17002,7 +17002,7 @@ Responde con JSON EXACTAMENTE en este formato:
 
   // Printed signs with a QR: CRUD under /api/venues/:id/signs and the public /q/:code redirect.
   require('./services/venueSigns').registerVenueSignRoutes(app, {
-    prisma, isAuthenticated, hasPermission, getAccessibleVenueIds, analytics, appBaseUrl
+    prisma, isAuthenticated, hasPermission, getAccessibleVenueIds, analytics, appBaseUrl, llmService, logAICall
   });
 
   app.get('/p/:slug', async (req, res) => {
