@@ -19,7 +19,7 @@
           <div class="stat">
             <div class="stat-label">Gastos recurrentes</div>
             <div class="stat-value">{{ money(summary.total) }}</div>
-            <div class="stat-hint">{{ summary.paid_count + summary.pending_count }} pagos en el mes</div>
+            <div class="stat-hint">{{ summary.paid_count + toPayCount }} pagos<template v-if="summary.overdue?.count"> (con atrasados)</template></div>
           </div>
         </CCol>
         <CCol :xs="6" :lg="3">
@@ -31,10 +31,11 @@
         </CCol>
         <CCol :xs="6" :lg="3">
           <div class="stat">
-            <div class="stat-label">Pendiente</div>
-            <div class="stat-value text-warning">{{ money(summary.pending) }}</div>
+            <div class="stat-label">Por pagar</div>
+            <div class="stat-value text-warning">{{ money(toPay) }}</div>
             <div class="stat-hint">
-              {{ summary.pending_count }} {{ summary.pending_count === 1 ? 'pago' : 'pagos' }}
+              {{ toPayCount }} {{ toPayCount === 1 ? 'pago' : 'pagos' }}
+              <span v-if="summary.overdue?.count" class="text-danger"> · {{ money(summary.overdue.amount) }} atrasado</span>
               <template v-if="summary.pending_without_amount"> · {{ summary.pending_without_amount }} sin monto</template>
             </div>
           </div>
@@ -73,14 +74,22 @@
                 <template v-else>Faltan {{ money(-summary.balance) }} para cubrir los gastos</template>
               </div>
 
-              <div class="fw-semibold mt-4 mb-2 small">Pagado y pendiente</div>
+              <template v-if="summary.overdue?.count">
+                <div class="fw-semibold mt-4 mb-2 small text-danger">Atrasados de meses anteriores</div>
+                <div v-for="item in summary.overdue.items" :key="item.recurring_expense_id + item.due" class="d-flex justify-content-between small py-1 overdue-row">
+                  <span>{{ item.name }} <span class="text-body-secondary">· venció el {{ shortDate(item.due) }}</span></span>
+                  <strong class="text-danger">{{ item.amount === null ? 'sin monto' : money(item.amount) }}</strong>
+                </div>
+              </template>
+
+              <div class="fw-semibold mt-4 mb-2 small">Pagado y por pagar</div>
               <div class="split-track">
                 <div class="bg-success" :style="{ width: pct(summary.paid, summary.total) + '%' }"></div>
-                <div class="bg-warning" :style="{ width: pct(summary.pending, summary.total) + '%' }"></div>
+                <div class="bg-warning" :style="{ width: pct(toPay, summary.total) + '%' }"></div>
               </div>
               <div class="d-flex justify-content-between small text-body-secondary mt-1">
                 <span><span class="dot bg-success"></span>Pagado {{ pct(summary.paid, summary.total) }}%</span>
-                <span><span class="dot bg-warning"></span>Pendiente {{ pct(summary.pending, summary.total) }}%</span>
+                <span><span class="dot bg-warning"></span>Por pagar {{ pct(toPay, summary.total) }}%</span>
               </div>
             </CCardBody>
           </CCard>
@@ -126,6 +135,10 @@ const shift = (k) => {
 }
 
 const money = (n) => new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n || 0)
+const shortDate = (iso) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('es-CO', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+// What is still to pay: this month's due dates plus the ones carried from earlier months.
+const toPay = computed(() => (summary.value?.pending || 0) + (summary.value?.overdue?.amount || 0))
+const toPayCount = computed(() => (summary.value?.pending_count || 0) + (summary.value?.overdue?.count || 0))
 const pct = (part, whole) => (whole > 0 ? Math.min(100, Math.round((part / whole) * 100)) : 0)
 
 const covered = computed(() => summary.value && summary.value.income >= summary.value.total)
@@ -146,7 +159,7 @@ const categoryChart = computed(() => {
     plotOptions: { series: { stacking: 'normal', borderWidth: 0, borderRadius: 3 } },
     series: [
       { name: 'Pagado', data: cats.map(c => c.paid), color: '#2eb85c' },
-      { name: 'Pendiente', data: cats.map(c => c.pending), color: '#f9b115' },
+      { name: 'Por pagar', data: cats.map(c => c.pending), color: '#f9b115' },
     ],
     credits: { enabled: false },
   }
@@ -205,5 +218,6 @@ watch(() => [month.value, props.venueId, props.refreshKey], load, { immediate: t
   background: var(--cui-tertiary-bg);
 }
 .split-track > div { transition: width 0.4s; }
+.overdue-row + .overdue-row { border-top: 1px solid var(--cui-border-color); }
 .dot { display: inline-block; width: 0.6rem; height: 0.6rem; margin-right: 0.3rem; border-radius: 50%; }
 </style>

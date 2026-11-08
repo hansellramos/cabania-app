@@ -54,13 +54,13 @@
             <template v-else-if="item.next_due">{{ formatDate(item.next_due) }}</template>
             <span v-else class="text-body-secondary">—</span>
             <div v-if="item.overdue_periods?.length > 1" class="small text-danger">
-              {{ item.overdue_periods.length }} periodos sin registrar
+              {{ item.overdue_periods.length }} periodos atrasados
             </div>
           </CTableDataCell>
           <CTableDataCell>
             <CBadge :color="statusColor(item.status)">{{ statusLabel(item.status) }}</CBadge>
-            <div v-if="item.status === 'registrado' && item.last_expense" class="small text-body-secondary">
-              {{ formatCurrency(item.last_expense.amount) }} el {{ formatDate(item.last_expense.expense_date) }}
+            <div v-if="item.last_expense" class="small text-body-secondary">
+              Último pago: {{ formatCurrency(item.last_expense.amount) }} el {{ formatDate(item.last_expense.expense_date) }}<template v-if="item.last_expense.recurring_period"> (periodo {{ formatDate(item.last_expense.recurring_period) }})</template>
             </div>
             <div v-if="undoablePeriod(item)" class="small">
               <span class="text-body-secondary">Omitido el {{ formatDate(undoablePeriod(item)) }} · </span>

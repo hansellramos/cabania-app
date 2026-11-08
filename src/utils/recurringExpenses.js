@@ -1,8 +1,8 @@
 // Labels for recurring expenses (statuses come from GET /api/recurring-expenses).
 
 export const RECURRING_STATUS = {
-  vencido: { label: 'Vencido', color: 'danger' },
-  pendiente: { label: 'Pendiente', color: 'warning' },
+  vencido: { label: 'Atrasado', color: 'danger' },
+  pendiente: { label: 'Próximo a vencer', color: 'warning' },
   registrado: { label: 'Registrado', color: 'success' },
   omitido: { label: 'Omitido', color: 'secondary' },
   programado: { label: 'Programado', color: 'info' },

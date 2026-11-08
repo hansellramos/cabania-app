@@ -5470,17 +5470,21 @@ async function startServer() {
       if (venue_id) where.venue_id = venue_id;
       const defs = await prisma.recurring_expenses.findMany({ where, include: { category: true } });
       const ids = defs.map(d => d.id);
+      // The current month also carries the unpaid due dates of the past year.
+      const today = bogotaNow().date;
+      const carryFrom = today >= from && today <= to ? recurringSchedule.addDays(from, -365) : null;
+      const since = new Date(carryFrom || from);
       const [expenses, skips] = ids.length ? await Promise.all([
         prisma.expenses.findMany({
-          where: { recurring_expense_id: { in: ids }, recurring_period: { gte: new Date(from), lte: new Date(to) } },
+          where: { recurring_expense_id: { in: ids }, recurring_period: { gte: since, lte: new Date(to) } },
           select: { recurring_expense_id: true, recurring_period: true, amount: true }
         }),
         prisma.recurring_expense_periods.findMany({
-          where: { recurring_expense_id: { in: ids }, skipped_at: { not: null }, due_date: { gte: new Date(from), lte: new Date(to) } },
+          where: { recurring_expense_id: { in: ids }, skipped_at: { not: null }, due_date: { gte: since, lte: new Date(to) } },
           select: { recurring_expense_id: true, due_date: true }
         })
       ]) : [[], []];
-      const summary = recurringSchedule.monthSummary(defs, expenses, skips, month);
+      const summary = recurringSchedule.monthSummary(defs, expenses, skips, month, { carryFrom });
 
       // Income received in the month (cash basis, as Análisis Financiero by default).
       const incomeWhere = { date: { gte: new Date(from), lte: new Date(to) } };
@@ -11186,11 +11190,11 @@ REGLAS:
       organizationId: def.organization_id || null,
       venueId: venue?.id || null,
       data: {
-        title: `${reminder ? 'Recordatorio: g' : 'G'}asto recurrente vencido: ${def.name}`,
+        title: `${reminder ? 'Recordatorio: g' : 'G'}asto recurrente atrasado: ${def.name}`,
         body,
-        link: `/business/expenses?tab=recurrentes${venue ? `&venue_id=${venue.id}` : ''}`,
+        link: '/upcoming-payments',
         details: [['Gasto', def.name], ['Venció', date], ['Monto aproximado', def.expected_amount ? money(def.expected_amount) : '—']],
-        ctaLabel: 'Ver gastos recurrentes'
+        ctaLabel: 'Ver pagos y balance'
       }
     });
   }

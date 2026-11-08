@@ -57,3 +57,29 @@ test('a payment whose period is not a due date covers the due date of its month'
   const oct = monthSummary([def], [{ recurring_expense_id: 'j', recurring_period: '2026-10-15', amount: 550000 }], [], '2026-10');
   assert.strictEqual(oct.paid, 550000);
 });
+
+test('status speaks of the next due date: a late October salary does not mark November paid', () => {
+  const { periodStatus } = require('../services/recurringExpenses');
+  const def = { frequency: 'monthly', due_day: 30, start_date: '2026-10-01', is_active: true };
+  const s = periodStatus(def, '2026-11-08', new Set(['2026-10-30']), new Set());
+  assert.strictEqual(s.status, 'programado');
+  assert.strictEqual(s.current_period, '2026-11-30');
+  // Paid ahead (internet paid the 8th for the 10th): registrado.
+  const internet = { frequency: 'monthly', due_day: 10, start_date: '2026-10-01', is_active: true };
+  assert.strictEqual(periodStatus(internet, '2026-11-08', new Set(['2026-10-10', '2026-11-10']), new Set()).status, 'registrado');
+});
+
+test('the current month carries the unpaid due dates of earlier months', () => {
+  const luz = { ...base, id: 'l', frequency: 'monthly', due_day: 15, start_date: '2026-10-01', expected_amount: 400000, category: cat('c2', 'Servicios') };
+  const gas = { ...base, id: 'g', frequency: 'monthly', due_day: 10, start_date: '2026-10-01', expected_amount: 98000, category: cat('c2', 'Servicios') };
+  const internet = { ...base, id: 'i', frequency: 'monthly', due_day: 10, start_date: '2026-10-01', expected_amount: 100000, category: cat('c2', 'Servicios') };
+  const expenses = [{ recurring_expense_id: 'i', recurring_period: '2026-10-10', amount: 100000 }];
+  const skips = [{ recurring_expense_id: 'g', due_date: '2026-10-10' }];
+  const nov = monthSummary([luz, gas, internet], expenses, skips, '2026-11', { carryFrom: '2025-11-01' });
+  assert.deepStrictEqual(nov.overdue.items.map(i => [i.name, i.due]), [['l', '2026-10-15']].map(([, d]) => [luz.name, d]));
+  assert.strictEqual(nov.overdue.amount, 400000);
+  assert.strictEqual(nov.pending, 598000); // November's own: luz + gas + internet
+  assert.strictEqual(nov.total, 998000);
+  // Without carryFrom (past or future months) nothing is carried.
+  assert.strictEqual(monthSummary([luz], [], [], '2026-11').overdue.count, 0);
+});
