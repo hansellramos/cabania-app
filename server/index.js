@@ -5310,7 +5310,7 @@ async function startServer() {
     }
     const expenseDate = recurringSchedule.isoDate(data.expense_date || existing?.expense_date) || bogotaNow().date;
     const period = data.recurring_period
-      ? recurringSchedule.isoDate(data.recurring_period)
+      ? recurringSchedule.snapPeriod(def, recurringSchedule.isoDate(data.recurring_period))
       : recurringSchedule.closestOccurrence(def, expenseDate);
     data.recurring_period = period ? new Date(period) : null;
     return null;
@@ -5408,7 +5408,7 @@ async function startServer() {
 
     return defs.map(def => {
       const own = expenses.filter(e => e.recurring_expense_id === def.id);
-      const paid = new Set(own.map(e => recurringSchedule.isoDate(e.recurring_period)).filter(Boolean));
+      const paid = new Set(own.map(e => recurringSchedule.snapPeriod(def, recurringSchedule.isoDate(e.recurring_period))).filter(Boolean));
       const skipped = new Set(skips.filter(s => s.recurring_expense_id === def.id).map(s => recurringSchedule.isoDate(s.due_date)));
       return {
         ...def,
