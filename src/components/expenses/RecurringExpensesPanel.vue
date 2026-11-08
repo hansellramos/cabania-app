@@ -229,7 +229,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   CRow, CCol, CButton, CBadge, CSpinner, CAlert,
   CTable, CTableHead, CTableRow, CTableHeaderCell, CTableBody, CTableDataCell,
@@ -245,9 +245,11 @@ const props = defineProps({
   venues: { type: Array, default: () => [] },
   categories: { type: Array, default: () => [] }
 })
-const emit = defineEmits(['update:venueId'])
+// `loaded` fires after every (re)load, so the page can refresh its month summary.
+const emit = defineEmits(['update:venueId', 'loaded'])
 
 const router = useRouter()
+const route = useRoute()
 
 const items = ref([])
 const providers = ref([])
@@ -316,7 +318,10 @@ const load = async () => {
     const params = new URLSearchParams()
     if (props.venueId) params.append('venue_id', props.venueId)
     const response = await fetch(`/api/recurring-expenses${params.toString() ? '?' + params : ''}`, { credentials: 'include' })
-    if (response.ok) items.value = await response.json()
+    if (response.ok) {
+      items.value = await response.json()
+      emit('loaded')
+    }
   } catch (error) {
     console.error('Error loading recurring expenses:', error)
   } finally {
@@ -401,7 +406,7 @@ const save = async () => {
 const register = (item) => {
   router.push({
     path: '/business/expenses/create',
-    query: { venue_id: item.venue_id, recurring_expense_id: item.id, recurring_period: item.current_period }
+    query: { venue_id: item.venue_id, recurring_expense_id: item.id, recurring_period: item.current_period, return_to: route.fullPath }
   })
 }
 

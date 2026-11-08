@@ -5451,6 +5451,51 @@ async function startServer() {
     }
   });
 
+  // GET /api/recurring-expenses/summary?month=YYYY-MM — the month's recurring
+  // expenses (paid / pending, by category) against the month's income.
+  app.get('/api/recurring-expenses/summary', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id } = req.query;
+      const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(req.query.month || ''))
+        ? req.query.month
+        : bogotaNow().date.slice(0, 7);
+      const { from, to } = recurringSchedule.monthRange(month);
+      const orgIds = await recurringExpenseOrgIds(req);
+      if (orgIds !== null && orgIds.length === 0) {
+        return res.json({ ...recurringSchedule.monthSummary([], [], [], month), income: 0, balance: 0 });
+      }
+
+      const where = {};
+      if (orgIds !== null) where.organization_id = { in: orgIds };
+      if (venue_id) where.venue_id = venue_id;
+      const defs = await prisma.recurring_expenses.findMany({ where, include: { category: true } });
+      const ids = defs.map(d => d.id);
+      const [expenses, skips] = ids.length ? await Promise.all([
+        prisma.expenses.findMany({
+          where: { recurring_expense_id: { in: ids }, recurring_period: { gte: new Date(from), lte: new Date(to) } },
+          select: { recurring_expense_id: true, recurring_period: true, amount: true }
+        }),
+        prisma.recurring_expense_periods.findMany({
+          where: { recurring_expense_id: { in: ids }, skipped_at: { not: null }, due_date: { gte: new Date(from), lte: new Date(to) } },
+          select: { recurring_expense_id: true, due_date: true }
+        })
+      ]) : [[], []];
+      const summary = recurringSchedule.monthSummary(defs, expenses, skips, month);
+
+      // Income received in the month (cash basis, as Análisis Financiero by default).
+      const incomeWhere = { date: { gte: new Date(from), lte: new Date(to) } };
+      if (orgIds !== null) incomeWhere.organization_id = { in: orgIds };
+      if (venue_id) incomeWhere.venue_id = venue_id;
+      const incomeResult = await prisma.incomes.aggregate({ where: incomeWhere, _sum: { amount: true } });
+      const income = parseFloat(incomeResult._sum.amount) || 0;
+
+      res.json({ ...summary, income, balance: income - summary.total });
+    } catch (error) {
+      console.error('[recurring-expenses] Summary error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   app.get('/api/recurring-expenses/:id', isAuthenticated, async (req, res) => {
     try {
       const def = await prisma.recurring_expenses.findUnique({

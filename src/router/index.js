@@ -87,6 +87,12 @@ const routes = [
         meta: { breadcrumb: 'Disponibilidad' },
       },
       {
+        path: '/upcoming-payments',
+        name: 'UpcomingPayments',
+        component: () => import('@/views/expenses/UpcomingPaymentsView.vue'),
+        meta: { breadcrumb: 'Pagos y balance', permission: 'expenses:view' },
+      },
+      {
         path: '/module-disabled',
         name: 'ModuleDisabled',
         component: () => import('@/views/pages/ModuleDisabled.vue'),
