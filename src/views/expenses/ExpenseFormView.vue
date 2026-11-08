@@ -701,15 +701,17 @@ watch(() => form.value.venue_id, (newVenueId) => {
   }
 })
 
-const goBack = () => {
-  if (fromRecurring.value) {
-    router.push('/business/expenses?tab=recurrentes')
-  } else if (route.query.accommodation_id) {
-    router.push(`/business/accommodations/${route.query.accommodation_id}`)
-  } else {
-    router.push('/business/expenses')
-  }
+// Where to go after saving or cancelling: back to the screen that opened the form
+// (`return_to`, an in-app path), else the recurring tab, the stay or the expenses list.
+const returnPath = () => {
+  const to = route.query.return_to
+  if (typeof to === 'string' && to.startsWith('/') && !to.startsWith('//')) return to
+  if (fromRecurring.value) return '/business/expenses?tab=recurrentes'
+  if (route.query.accommodation_id) return `/business/accommodations/${route.query.accommodation_id}`
+  return '/business/expenses'
 }
+
+const goBack = () => router.push(returnPath())
 
 const onCategoryChange = () => {
   form.value.subcategory = ''
@@ -1351,13 +1353,7 @@ const saveExpense = async () => {
         }
         pendingInventoryItems.value = []
       }
-      if (fromRecurring.value) {
-        router.push('/business/expenses?tab=recurrentes')
-      } else if (route.query.accommodation_id) {
-        router.push(`/business/accommodations/${route.query.accommodation_id}`)
-      } else {
-        router.push('/business/expenses')
-      }
+      router.push(returnPath())
     } else {
       const error = await response.json()
       alert(error.error || 'Error al guardar el gasto')

@@ -1,0 +1,45 @@
+// Month summary of recurring expenses (services/recurringExpenses.js monthSummary).
+const test = require('node:test');
+const assert = require('node:assert');
+const { monthSummary, monthRange } = require('../services/recurringExpenses');
+
+const cat = (id, name) => ({ id, name, color: null });
+const base = { start_date: '2026-01-01', end_date: null, is_active: true, due_day: null };
+
+test('monthRange gives the first and last day', () => {
+  assert.deepStrictEqual(monthRange('2026-02'), { from: '2026-02-01', to: '2026-02-28' });
+  assert.deepStrictEqual(monthRange('2026-11'), { from: '2026-11-01', to: '2026-11-30' });
+});
+
+test('paid at the real amount, pending at the expected one, skipped left out', () => {
+  const defs = [
+    { ...base, id: 'a', frequency: 'monthly', due_day: 15, expected_amount: 500000, category: cat('c1', 'Nómina') },
+    { ...base, id: 'b', frequency: 'monthly', due_day: 5, expected_amount: 120000, category: cat('c2', 'Servicios') },
+    { ...base, id: 'c', frequency: 'biweekly', expected_amount: 100000, category: cat('c1', 'Nómina') },
+    { ...base, id: 'd', frequency: 'monthly', due_day: 10, expected_amount: null, category: null },
+    { ...base, id: 'e', frequency: 'monthly', due_day: 20, expected_amount: 90000, category: null, is_active: false },
+  ];
+  const expenses = [
+    { recurring_expense_id: 'b', recurring_period: '2026-11-05', amount: '130000' },
+    { recurring_expense_id: 'c', recurring_period: new Date('2026-11-15'), amount: 100000 },
+  ];
+  const skips = [{ recurring_expense_id: 'c', due_date: '2026-11-30' }];
+  const s = monthSummary(defs, expenses, skips, '2026-11');
+  assert.strictEqual(s.paid, 230000);
+  assert.strictEqual(s.paid_count, 2);
+  assert.strictEqual(s.pending, 500000); // a (c's 30th skipped, d has no amount, e inactive)
+  assert.strictEqual(s.pending_count, 2);
+  assert.strictEqual(s.pending_without_amount, 1);
+  assert.strictEqual(s.total, 730000);
+  assert.deepStrictEqual(s.categories.map(c => [c.name, c.paid, c.pending]), [
+    ['Nómina', 100000, 500000],
+    ['Servicios', 130000, 0],
+  ]);
+});
+
+test('weekly expenses count every due date in the month', () => {
+  const defs = [{ ...base, id: 'w', frequency: 'weekly', due_day: 1, expected_amount: 50000, category: null }];
+  const s = monthSummary(defs, [], [], '2026-11'); // Mondays: 2, 9, 16, 23, 30
+  assert.strictEqual(s.pending_count, 5);
+  assert.strictEqual(s.pending, 250000);
+});

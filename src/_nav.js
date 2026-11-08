@@ -6,13 +6,6 @@ export default [
   },
   {
     component: 'CNavItem',
-    name: 'Próximos',
-    to: '/next',
-    icon: 'cil-arrow-right',
-    permission: 'accommodations:view',
-  },
-  {
-    component: 'CNavItem',
     name: 'Disponibilidad',
     to: '/availability',
     icon: 'cil-check-circle',
@@ -24,6 +17,24 @@ export default [
     to: '/reseller',
     icon: 'cil-handshake',
     resellerOnly: true,
+  },
+  {
+    component: 'CNavTitle',
+    name: 'Próximos',
+  },
+  {
+    component: 'CNavItem',
+    name: 'Hospedajes',
+    to: '/next',
+    icon: 'cil-arrow-right',
+    permission: 'accommodations:view',
+  },
+  {
+    component: 'CNavItem',
+    name: 'Pagos y balance',
+    to: '/upcoming-payments',
+    icon: 'cil-arrow-right',
+    permission: 'expenses:view',
   },
   {
     component: 'CNavTitle',

@@ -36,8 +36,6 @@
       </div>
     </div>
     
-    <RecurringExpensesPendingCard />
-
     <div v-for="(groupedItems, date) in groupedAccommodations" :key="date" class="mb-4">
       <div class="day-header d-flex align-items-center mb-2">
         <div class="day-title">{{ formatDate(date) }}</div>
@@ -130,7 +128,6 @@ import { CIcon } from '@coreui/icons-vue'
 import { useSettingsStore } from '@/stores/settings'
 import { contactChannel } from '@/utils/contactLinks'
 import { useAuth } from '@/composables/useAuth'
-import RecurringExpensesPendingCard from '@/components/expenses/RecurringExpensesPendingCard.vue'
 
 const { colorMode } = useColorModes('coreui-free-vue-admin-template-theme')
 

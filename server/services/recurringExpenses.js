@@ -174,6 +174,66 @@ function periodStatus(def, today, paid, skipped) {
   return result;
 }
 
+/** First and last day ('YYYY-MM-DD') of a month given as 'YYYY-MM'. */
+function monthRange(month) {
+  const [y, m] = month.split('-').map(Number);
+  return { from: fmt(y, m, 1), to: fmt(y, m, daysInMonth(y, m)) };
+}
+
+/**
+ * What the recurring expenses cost in a month ('YYYY-MM').
+ *  - paid: expenses linked to a recurring expense whose period falls in the month
+ *    (their real amount).
+ *  - pending: due dates in the month with no expense and not skipped, at the
+ *    expected amount (active expenses only; `pending_without_amount` counts the
+ *    ones with no expected amount).
+ * Also split by category. `expenses` and `skips` are the rows of these defs.
+ */
+function monthSummary(defs, expenses, skips, month) {
+  const { from, to } = monthRange(month);
+  const inMonth = (d) => d && d >= from && d <= to;
+  const byCategory = new Map();
+  const bucket = (def) => {
+    const key = def.category?.id || 'none';
+    if (!byCategory.has(key)) {
+      byCategory.set(key, { id: def.category?.id || null, name: def.category?.name || 'Sin categoría', color: def.category?.color || null, paid: 0, pending: 0 });
+    }
+    return byCategory.get(key);
+  };
+  const totals = { paid: 0, pending: 0, paid_count: 0, pending_count: 0, pending_without_amount: 0 };
+
+  for (const def of defs) {
+    const own = expenses.filter(e => e.recurring_expense_id === def.id);
+    const paidPeriods = new Set();
+    for (const e of own) {
+      const period = isoDate(e.recurring_period);
+      if (!inMonth(period)) continue;
+      paidPeriods.add(period);
+      const amount = Number(e.amount) || 0;
+      totals.paid += amount;
+      totals.paid_count++;
+      bucket(def).paid += amount;
+    }
+    if (!def.is_active) continue;
+    const skipped = new Set(skips.filter(s => s.recurring_expense_id === def.id).map(s => isoDate(s.due_date)));
+    for (const due of occurrencesBetween(def, from, to)) {
+      if (paidPeriods.has(due) || skipped.has(due)) continue;
+      totals.pending_count++;
+      if (def.expected_amount === null || def.expected_amount === undefined) {
+        totals.pending_without_amount++;
+        continue;
+      }
+      const amount = Number(def.expected_amount) || 0;
+      totals.pending += amount;
+      bucket(def).pending += amount;
+    }
+  }
+  const categories = [...byCategory.values()]
+    .filter(c => c.paid || c.pending)
+    .sort((a, b) => (b.paid + b.pending) - (a.paid + a.pending));
+  return { month, from, to, ...totals, total: totals.paid + totals.pending, categories };
+}
+
 module.exports = {
   FREQUENCIES,
   isoDate,
@@ -182,5 +242,7 @@ module.exports = {
   previousOccurrence,
   nextOccurrence,
   closestOccurrence,
-  periodStatus
+  periodStatus,
+  monthRange,
+  monthSummary
 };
