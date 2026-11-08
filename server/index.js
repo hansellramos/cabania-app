@@ -18,7 +18,7 @@ const metaWhatsApp = require('./services/metaWhatsApp');
 const metaInstagram = require('./services/metaInstagram');
 const bold = require('./services/bold');
 const analytics = require('./lib/analytics');
-const { cleanPhone, cleanInstagram, contactChannelFields } = require('./lib/contactFields');
+const { cleanPhone, cleanInstagram, contactChannelFields, contactDocumentFields, DOCUMENT_TYPES } = require('./lib/contactFields');
 
 // Chat source → analytics channel (Meta Cloud API and Baileys are both WhatsApp).
 const chatChannel = (source) => (['cloud_api', 'whatsapp', 'baileys'].includes(source) ? 'whatsapp' : source || 'web');
@@ -16810,8 +16810,14 @@ Responde con JSON EXACTAMENTE en este formato:
       const accommodation = await prisma.accommodations.findUnique({ where: { id: contract.accommodation_id } });
       const venue = accommodation?.venue ? await prisma.venues.findUnique({ where: { id: accommodation.venue } }) : null;
 
+      // An unsigned contract asks the guest for their id when the contact has none.
+      const customer = accommodation?.customer && contract.status !== 'signed'
+        ? await prisma.contacts.findUnique({ where: { id: accommodation.customer }, select: { document_number: true } })
+        : null;
       res.json({
         ...contract,
+        needs_document: !!customer && !customer.document_number,
+        document_types: DOCUMENT_TYPES,
         venue_branding: venue ? {
           name: venue.name,
           logo_url: venue.logo_url,
@@ -16843,6 +16849,33 @@ Responde con JSON EXACTAMENTE en este formato:
     }
   });
 
+  // The guest fills in their id before signing: it is saved on their contact (only
+  // when the contact has none) and the contract is rendered again with it.
+  app.post('/api/public/contracts/:token/document', async (req, res) => {
+    try {
+      const contract = await prisma.contracts.findUnique({ where: { qr_token: req.params.token } });
+      if (!contract) return res.status(404).json({ error: 'Contrato no encontrado' });
+      if (contract.status === 'signed') return res.status(400).json({ error: 'El contrato ya está firmado' });
+      const accommodation = await prisma.accommodations.findUnique({ where: { id: contract.accommodation_id } });
+      const customer = accommodation?.customer ? await prisma.contacts.findUnique({ where: { id: accommodation.customer } }) : null;
+      if (!customer) return res.status(400).json({ error: 'La reserva no tiene cliente' });
+      if (customer.document_number) return res.status(400).json({ error: 'El documento ya está registrado; si está mal, pídele a la cabaña que lo corrija.' });
+      const fields = contactDocumentFields({ document_type: req.body?.document_type || 'CC', document_number: req.body?.document_number });
+      if (!fields.document_number) return res.status(400).json({ error: 'Escribe el número de documento' });
+      await prisma.contacts.update({ where: { id: customer.id }, data: fields });
+
+      const { snapshotHtml } = await buildContractSnapshot(accommodation, contract.template_id);
+      const updated = await prisma.contracts.update({
+        where: { id: contract.id },
+        data: { ...(snapshotHtml ? { snapshot_html: snapshotHtml } : {}), updated_at: new Date() },
+        include: { attachments: true },
+      });
+      res.json({ ...updated, needs_document: false });
+    } catch (error) {
+      res.status(error.statusCode || 500).json({ error: error.message });
+    }
+  });
+
   app.post('/api/public/contracts/validate-code', async (req, res) => {
     try {
       const { accommodation_id, code } = req.body;
@@ -16867,6 +16900,10 @@ Responde con JSON EXACTAMENTE en este formato:
       const userAgent = req.headers['user-agent'];
 
       const signedAccommodation = await prisma.accommodations.findUnique({ where: { id: contract.accommodation_id } });
+      if (signedAccommodation?.customer) {
+        const signer = await prisma.contacts.findUnique({ where: { id: signedAccommodation.customer }, select: { document_number: true } });
+        if (signer && !signer.document_number) return res.status(400).json({ error: 'Escribe tu documento de identidad antes de firmar' });
+      }
       const updated = await prisma.contracts.update({
         where: { qr_token: req.params.token },
         data: {

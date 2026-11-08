@@ -50,3 +50,26 @@ test('contactChannelFields checks the preferred channel', () => {
   assert.throws(() => contactChannelFields({ contact_channel: 'instagram', instagram: '' }), { statusCode: 400, message: /medio de contacto/ });
   assert.throws(() => contactChannelFields({ facebook: 'a b' }), { statusCode: 400, message: /Facebook/ });
 });
+
+test('identity document: cleaned, CC by default, cleared when empty', () => {
+  const { contactDocumentFields, formatDocumentNumber, contactChannelFields } = require('../lib/contactFields');
+  assert.deepStrictEqual(contactDocumentFields({ document_number: '1.143.456.789' }), { document_type: 'CC', document_number: '1143456789' });
+  assert.deepStrictEqual(contactDocumentFields({ document_type: 'PA', document_number: 'ab 123456' }), { document_type: 'PA', document_number: 'AB123456' });
+  assert.deepStrictEqual(contactDocumentFields({ document_type: 'CC', document_number: '' }), { document_type: null, document_number: null });
+  assert.deepStrictEqual(contactDocumentFields({ fullname: 'Ana' }), {});
+  assert.throws(() => contactDocumentFields({ document_type: 'CC', document_number: 'ABC123' }), /no es válido/);
+  assert.throws(() => contactDocumentFields({ document_type: 'XX', document_number: '123456' }), /tipo de documento/);
+  assert.strictEqual(formatDocumentNumber('CC', '1143456789'), '1.143.456.789');
+  assert.strictEqual(formatDocumentNumber('NIT', '900123456'), '900123456');
+  assert.strictEqual(contactChannelFields({ document_number: '12345678' }).document_number, '12345678');
+});
+
+test('contracts print the document, never the phone, as the customer id', () => {
+  const { buildPlaceholders } = require('../services/contractRenderer');
+  const accommodation = { date: new Date('2026-11-15'), adults: 2, children: 0 };
+  const withDoc = buildPlaceholders({ accommodation, customer: { fullname: 'Ana', whatsapp: '573113635165', document_type: 'CC', document_number: '1143456789' } });
+  assert.strictEqual(withDoc.customer_id, '1.143.456.789');
+  assert.strictEqual(withDoc.customer_document_type, 'Cédula de ciudadanía');
+  const without = buildPlaceholders({ accommodation, customer: { fullname: 'Ana', whatsapp: '573113635165' } });
+  assert.strictEqual(without.customer_id, '—');
+});

@@ -151,9 +151,33 @@
         </div>
       </section>
 
+      <!-- The guest's id, asked before signing when the booking's contact has none -->
+      <section v-if="needsDocument" class="cabania-contract__card cabania-doc-card">
+        <h3 class="cabania-doc-card__title">Antes de firmar, escribe tu documento</h3>
+        <p class="cabania-muted">Va en el contrato junto a tu nombre. Revisa que esté bien escrito.</p>
+        <div class="cabania-doc-card__row">
+          <select v-model="docForm.type" class="cabania-doc-input cabania-doc-input--type" aria-label="Tipo de documento">
+            <option v-for="(label, code) in contract.document_types" :key="code" :value="code">{{ label }}</option>
+          </select>
+          <input
+            v-model="docForm.number"
+            class="cabania-doc-input"
+            :inputmode="['PA', 'CE', 'PPT'].includes(docForm.type) ? 'text' : 'numeric'"
+            placeholder="Número de documento"
+            aria-label="Número de documento"
+            @keyup.enter="saveDocument"
+          />
+        </div>
+        <p v-if="docError" class="cabania-sign-error">{{ docError }}</p>
+        <button class="cabania-btn cabania-btn--gradient" :disabled="docSaving || !docForm.number.trim()" @click="saveDocument">
+          <span v-if="docSaving" class="cabania-spinner cabania-spinner--sm"></span>
+          {{ docSaving ? 'Guardando...' : 'Guardar y ver el contrato' }}
+        </button>
+      </section>
+
       <!-- Sign CTA (hidden in print) -->
       <div v-if="contract.status !== 'signed'" class="cabania-contract__cta">
-        <button class="cabania-btn cabania-btn--gradient" @click="startSigning">
+        <button class="cabania-btn cabania-btn--gradient" :disabled="needsDocument" @click="startSigning">
           {{ isAmendment ? 'Firmar y aceptar otrosí' : 'Firmar y Aceptar Contrato' }}
         </button>
       </div>
@@ -320,6 +344,48 @@ let videoStream = null
 
 const lightboxUrl = ref(null)
 
+// Id document typed by the guest before signing (contracts only, not amendments).
+const needsDocument = computed(() => !isAmendment.value && contract.value?.status !== 'signed' && !!contract.value?.needs_document)
+const docForm = ref({ type: 'CC', number: '' })
+const docSaving = ref(false)
+const docError = ref('')
+
+function applyContract(data) {
+  contract.value = data
+  if (data.snapshot_html) {
+    try {
+      sections.value = JSON.parse(data.snapshot_html)
+      sections.value.forEach((_, i) => { expandedSections.value[i] = true })
+    } catch {
+      sections.value = []
+    }
+  }
+}
+
+async function saveDocument() {
+  if (docSaving.value || !docForm.value.number.trim()) return
+  docSaving.value = true
+  docError.value = ''
+  try {
+    const res = await fetch(`${apiBase.value}/document`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ document_type: docForm.value.type, document_number: docForm.value.number }),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      docError.value = data.error || 'No se pudo guardar el documento'
+      return
+    }
+    applyContract({ ...contract.value, ...data })
+    track('contract_document_added', { type: docForm.value.type })
+  } catch {
+    docError.value = 'No se pudo guardar el documento. Revisa tu conexión.'
+  } finally {
+    docSaving.value = false
+  }
+}
+
 const venueName = computed(() => contract.value?.venue_branding?.name || '')
 
 const modalTitle = computed(() => ({
@@ -377,17 +443,9 @@ async function loadContract() {
       return
     }
     const firstLoad = !contract.value
-    contract.value = await res.json()
+    applyContract(await res.json())
     if (firstLoad) {
       track('contract_opened', { kind: isAmendment.value ? 'amendment' : 'contract', status: contract.value.status })
-    }
-    if (contract.value.snapshot_html) {
-      try {
-        sections.value = JSON.parse(contract.value.snapshot_html)
-        sections.value.forEach((_, i) => { expandedSections.value[i] = true })
-      } catch {
-        sections.value = []
-      }
     }
   } catch (err) {
     error.value = err.message
@@ -1058,6 +1116,30 @@ onUnmounted(() => {
   justify-content: center;
 }
 
+.cabania-doc-card {
+  margin-top: 1rem;
+  padding: 1.25rem;
+  text-align: center;
+}
+.cabania-doc-card__title { margin: 0 0 0.25rem; font-size: 1.1rem; color: var(--cc-text); }
+.cabania-doc-card__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+}
+.cabania-doc-input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid var(--cc-divider);
+  border-radius: 0.75rem;
+  background: var(--cc-section-header-bg);
+  color: var(--cc-text);
+  font-size: 1rem;
+}
+.cabania-doc-input--type { flex: 1 1 100%; }
+
 /* --- Buttons --- */
 .cabania-btn {
   display: inline-flex;
@@ -1229,7 +1311,8 @@ onUnmounted(() => {
   .cabania-print-toggle,
   .cabania-glow,
   .cabania-modal-backdrop,
-  .cabania-contract__cta {
+  .cabania-contract__cta,
+  .cabania-doc-card {
     display: none !important;
   }
 

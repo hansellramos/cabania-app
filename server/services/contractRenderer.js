@@ -2,6 +2,8 @@
  * Contract template renderer — replaces placeholders with accommodation data
  */
 
+const { DOCUMENT_TYPES, formatDocumentNumber } = require('../lib/contactFields');
+
 const PLACEHOLDER_REGEX = /\{\{(\w+)\}\}/g;
 
 /**
@@ -53,7 +55,8 @@ function buildPlaceholders({ accommodation, customer, venue, organization, plan,
   return {
     // Customer
     customer_name: customer?.fullname || '—',
-    customer_id: customer?.whatsapp || '—',
+    customer_id: formatDocumentNumber(customer?.document_type, customer?.document_number) || '—',
+    customer_document_type: DOCUMENT_TYPES[customer?.document_type] || '—',
     customer_phone: customer?.whatsapp
       || (customer?.whatsapp_username ? `WhatsApp @${customer.whatsapp_username}` : null)
       || (customer?.instagram ? `Instagram ${customer.instagram}` : null)
@@ -141,7 +144,8 @@ function renderContract(sections, data) {
 function getAvailablePlaceholders() {
   return [
     { key: 'customer_name', label: 'Nombre del cliente', category: 'Cliente' },
-    { key: 'customer_id', label: 'Documento del cliente', category: 'Cliente' },
+    { key: 'customer_id', label: 'Número de documento del cliente', category: 'Cliente' },
+    { key: 'customer_document_type', label: 'Tipo de documento del cliente', category: 'Cliente' },
     { key: 'customer_phone', label: 'Teléfono del cliente', category: 'Cliente' },
     { key: 'customer_email', label: 'Email del cliente', category: 'Cliente' },
     { key: 'customer_instagram', label: 'Instagram del cliente', category: 'Cliente' },
