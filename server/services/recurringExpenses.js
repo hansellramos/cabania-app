@@ -138,8 +138,8 @@ function snapPeriod(def, period) {
  * status:
  *  - vencido: a past due date has no expense and was not skipped
  *  - pendiente: due today or within the lead days
- *  - registrado / omitido: the last due date was paid / skipped, next one not close
- *  - programado: no due date yet, and the first one is not close
+ *  - programado: the next due date is not close and not paid yet
+ *  - registrado / omitido: the next due date was already paid / skipped ahead
  *  - finalizado: past its end date with nothing owed
  *  - inactivo: turned off
  *
@@ -177,13 +177,18 @@ function periodStatus(def, today, paid, skipped) {
     return result;
   }
 
-  result.current_period = nextDue && !covered(nextDue) ? nextDue : null;
-  if (lastDue) {
+  // Nothing owed now: the status speaks of the next due date, not the last one
+  // (a salary paid late for October must not read as November paid).
+  if (nextDue && !covered(nextDue)) {
+    result.status = 'programado';
+    result.current_period = nextDue;
+  } else if (nextDue) {
+    result.status = paid.has(nextDue) ? 'registrado' : 'omitido';
+  } else if (lastDue && covered(lastDue) && isoDate(def.end_date) && isoDate(def.end_date) < today) {
+    result.status = 'finalizado';
+  } else if (lastDue) {
     result.status = paid.has(lastDue) ? 'registrado' : 'omitido';
   } else {
-    result.status = nextDue ? 'programado' : 'finalizado';
-  }
-  if (!nextDue && lastDue && covered(lastDue) && isoDate(def.end_date) && isoDate(def.end_date) < today) {
     result.status = 'finalizado';
   }
   return result;
@@ -203,8 +208,12 @@ function monthRange(month) {
  *    expected amount (active expenses only; `pending_without_amount` counts the
  *    ones with no expected amount).
  * Also split by category. `expenses` and `skips` are the rows of these defs.
+ * With `carryFrom` (for the current month), due dates from that day to the end
+ * of the previous month still unpaid and not skipped are carried in as
+ * `overdue`: they count in the total, the categories and the balance, since
+ * this month's income has to cover them.
  */
-function monthSummary(defs, expenses, skips, month) {
+function monthSummary(defs, expenses, skips, month, { carryFrom = null } = {}) {
   const { from, to } = monthRange(month);
   const inMonth = (d) => d && d >= from && d <= to;
   const byCategory = new Map();
@@ -216,6 +225,8 @@ function monthSummary(defs, expenses, skips, month) {
     return byCategory.get(key);
   };
   const totals = { paid: 0, pending: 0, paid_count: 0, pending_count: 0, pending_without_amount: 0 };
+  // Unpaid due dates of earlier months carried into this one (current month only).
+  const overdue = { amount: 0, count: 0, items: [] };
 
   for (const def of defs) {
     const own = expenses.filter(e => e.recurring_expense_id === def.id);
@@ -231,6 +242,19 @@ function monthSummary(defs, expenses, skips, month) {
     }
     if (!def.is_active) continue;
     const skipped = new Set(skips.filter(s => s.recurring_expense_id === def.id).map(s => isoDate(s.due_date)));
+    if (carryFrom && carryFrom < from) {
+      const paidBefore = new Set(own.map(e => snapPeriod(def, isoDate(e.recurring_period))));
+      for (const due of occurrencesBetween(def, carryFrom, addDays(from, -1))) {
+        if (paidBefore.has(due) || skipped.has(due)) continue;
+        const amount = def.expected_amount === null || def.expected_amount === undefined ? null : Number(def.expected_amount) || 0;
+        overdue.count++;
+        overdue.items.push({ recurring_expense_id: def.id, name: def.name, due, amount });
+        if (amount) {
+          overdue.amount += amount;
+          bucket(def).pending += amount;
+        }
+      }
+    }
     for (const due of occurrencesBetween(def, from, to)) {
       if (paidPeriods.has(due) || skipped.has(due)) continue;
       totals.pending_count++;
@@ -246,7 +270,8 @@ function monthSummary(defs, expenses, skips, month) {
   const categories = [...byCategory.values()]
     .filter(c => c.paid || c.pending)
     .sort((a, b) => (b.paid + b.pending) - (a.paid + a.pending));
-  return { month, from, to, ...totals, total: totals.paid + totals.pending, categories };
+  overdue.items.sort((a, b) => a.due.localeCompare(b.due));
+  return { month, from, to, ...totals, overdue, total: totals.paid + totals.pending + overdue.amount, categories };
 }
 
 module.exports = {
