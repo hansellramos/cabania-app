@@ -115,12 +115,14 @@ import { CIcon } from '@coreui/icons-vue'
 
 const props = defineProps({
   venueId: { type: [String, Number], default: '' },
+  // 'YYYY-MM', chosen with the arrows (v-model:month).
+  month: { type: String, required: true },
   // Bump to reload (after the list below registers, skips or edits something).
   refreshKey: { type: Number, default: 0 },
 })
 
-const thisMonth = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/Bogota' }).slice(0, 7)
-const month = ref(thisMonth())
+const emit = defineEmits(['update:month'])
+const month = computed(() => props.month)
 const summary = ref(null)
 
 const monthLabel = computed(() => {
@@ -131,7 +133,7 @@ const monthLabel = computed(() => {
 const shift = (k) => {
   const [y, m] = month.value.split('-').map(Number)
   const d = new Date(Date.UTC(y, m - 1 + k, 1))
-  month.value = d.toISOString().slice(0, 7)
+  emit('update:month', d.toISOString().slice(0, 7))
 }
 
 const money = (n) => new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 }).format(n || 0)

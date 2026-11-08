@@ -274,6 +274,53 @@ function monthSummary(defs, expenses, skips, month, { carryFrom = null } = {}) {
   return { month, from, to, ...totals, overdue, total: totals.paid + totals.pending + overdue.amount, categories };
 }
 
+/**
+ * Every due date of a month ('YYYY-MM') with what happened to it, for the
+ * month's table: pagado (with its payments), omitido, atrasado (past and
+ * unpaid) or por_pagar (today or later). Payments whose period is not a due
+ * date (e.g. a month before the start) get their own pagado row.
+ * `expenses` need id, amount, expense_date, payment_method and description.
+ */
+function monthOccurrences(defs, expenses, skips, month, today) {
+  const { from, to } = monthRange(month);
+  const rows = [];
+  for (const def of defs) {
+    const own = expenses.filter(e => e.recurring_expense_id === def.id);
+    const byPeriod = new Map();
+    for (const e of own) {
+      const period = snapPeriod(def, isoDate(e.recurring_period));
+      if (!period || period < from || period > to) continue;
+      if (!byPeriod.has(period)) byPeriod.set(period, []);
+      byPeriod.get(period).push(e);
+    }
+    const skipped = new Set(skips.filter(s => s.recurring_expense_id === def.id).map(s => isoDate(s.due_date)));
+    const dues = new Set(def.is_active ? occurrencesBetween(def, from, to) : []);
+    for (const period of byPeriod.keys()) dues.add(period);
+    for (const due of dues) {
+      const payments = (byPeriod.get(due) || []).map(e => ({
+        id: e.id,
+        amount: Number(e.amount) || 0,
+        date: isoDate(e.expense_date),
+        payment_method: e.payment_method || null,
+        description: e.description || null,
+      }));
+      const status = payments.length ? 'pagado' : skipped.has(due) ? 'omitido' : due < today ? 'atrasado' : 'por_pagar';
+      rows.push({
+        recurring_expense_id: def.id,
+        name: def.name,
+        venue_id: def.venue_id,
+        category: def.category ? { id: def.category.id, name: def.category.name, color: def.category.color || null } : null,
+        due,
+        status,
+        expected_amount: def.expected_amount === null || def.expected_amount === undefined ? null : Number(def.expected_amount),
+        paid_amount: payments.reduce((sum, p) => sum + p.amount, 0),
+        payments,
+      });
+    }
+  }
+  return rows.sort((a, b) => a.due.localeCompare(b.due) || a.name.localeCompare(b.name));
+}
+
 module.exports = {
   FREQUENCIES,
   isoDate,
@@ -285,5 +332,6 @@ module.exports = {
   periodStatus,
   monthRange,
   monthSummary,
-  snapPeriod
+  snapPeriod,
+  monthOccurrences
 };

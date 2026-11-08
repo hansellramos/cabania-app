@@ -1,14 +1,14 @@
 <template>
   <div>
     <div class="d-flex flex-wrap justify-content-between align-items-end gap-2 mb-3">
-      <div style="min-width: 220px;">
+      <div v-if="!hideVenueFilter" style="min-width: 220px;">
         <CFormLabel class="small">Sede</CFormLabel>
         <CFormSelect :model-value="venueId" size="sm" @update:model-value="emit('update:venueId', $event)">
           <option value="">Todas las sedes</option>
           <option v-for="venue in venues" :key="venue.id" :value="venue.id">{{ venue.name }}</option>
         </CFormSelect>
       </div>
-      <CButton color="primary" size="sm" @click="openCreate">
+      <CButton color="primary" size="sm" class="ms-auto" @click="openCreate">
         <CIcon name="cil-plus" class="me-1" /> Nuevo recurrente
       </CButton>
     </div>
@@ -244,7 +244,9 @@ import { RECURRING_STATUS, recurringFrequencyLabel } from '@/utils/recurringExpe
 const props = defineProps({
   venueId: { type: String, default: '' },
   venues: { type: Array, default: () => [] },
-  categories: { type: Array, default: () => [] }
+  categories: { type: Array, default: () => [] },
+  // The page shows its own venue filter (Pagos y balance).
+  hideVenueFilter: { type: Boolean, default: false }
 })
 // `loaded` fires after every (re)load, so the page can refresh its month summary.
 const emit = defineEmits(['update:venueId', 'loaded'])
