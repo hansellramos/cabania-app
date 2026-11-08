@@ -46,6 +46,15 @@
         <CFormInput id="contactEmail" v-model="form.email" type="email" placeholder="correo@ejemplo.com" />
       </div>
       <div class="mb-3">
+        <CFormLabel for="contactDocument">Documento de identidad</CFormLabel>
+        <DocumentInput
+          v-model:type="form.document_type"
+          v-model:number="form.document_number"
+          input-id="contactDocument"
+        />
+        <div class="form-text">Sale en el contrato. Si falta, se le pide al cliente cuando firma.</div>
+      </div>
+      <div class="mb-3">
         <CFormLabel for="contactCountry">País</CFormLabel>
         <CFormSelect id="contactCountry" v-model="form.country">
           <option value="">Selecciona un país</option>
@@ -112,6 +121,7 @@
 
 <script setup>
 import { ref, computed, watch, defineProps, defineEmits, onMounted } from 'vue'
+import DocumentInput from '@/components/contacts/DocumentInput.vue'
 import { CONTACT_CHANNELS, channelError, initialChannel } from '@/utils/contactLinks'
 import ContactChannelPicker from '@/components/contacts/ContactChannelPicker.vue'
 import { fetchCountries, fetchStatesByCountry } from '@/services/contactService'

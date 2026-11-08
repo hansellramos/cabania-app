@@ -87,6 +87,10 @@ model contacts {
   /// whatsapp_user, instagram o facebook (por usuario). Null: el primero disponible.
   contact_channel String? @db.VarChar(20)
   email      String?  @db.VarChar(255)
+  /// Identity document: CC, CE, TI, PA, PPT or NIT (lib/contactFields DOCUMENT_TYPES).
+  document_type   String? @db.VarChar(5)
+  /// Digits for Colombian ids, letters and digits for passports (no dots).
+  document_number String? @db.VarChar(20)
   city       String?  @db.VarChar
   state      String?  @db.VarChar
   country    String?  @db.VarChar

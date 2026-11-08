@@ -29,6 +29,15 @@
           <CFormLabel for="newCustomerChannel">¿Cómo le escribimos?</CFormLabel>
           <ContactChannelPicker v-model="newCustomer" input-id="newCustomerChannel" required />
         </div>
+        <div class="mt-3">
+          <CFormLabel for="newCustomerDocument">Documento de identidad</CFormLabel>
+          <DocumentInput
+            v-model:type="newCustomer.document_type"
+            v-model:number="newCustomer.document_number"
+            input-id="newCustomerDocument"
+          />
+          <div class="form-text">Opcional. Si no lo tienes, se lo pedimos al cliente cuando firme el contrato.</div>
+        </div>
         <CAlert v-if="createError" color="danger" class="py-2 small mt-3 mb-0">{{ createError }}</CAlert>
       </CModalBody>
       <CModalFooter>
@@ -44,6 +53,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { CModal, CModalHeader, CModalTitle, CModalBody, CModalFooter, CButton, CFormInput, CFormLabel, CAlert } from '@coreui/vue'
 import { CONTACT_CHANNELS, channelError, channelValue, initialChannel } from '@/utils/contactLinks'
 import ContactChannelPicker from '@/components/contacts/ContactChannelPicker.vue'
+import DocumentInput from '@/components/contacts/DocumentInput.vue'
 import { fetchContacts, createContact } from '@/services/contactService'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
@@ -58,7 +68,7 @@ const query = ref('')
 const showDropdown = ref(false)
 const contacts = ref([])
 const showCreateForm = ref(false)
-const emptyCustomer = () => ({ fullname: '', whatsapp: '', whatsapp_username: '', instagram: '', facebook: '', contact_channel: 'whatsapp' })
+const emptyCustomer = () => ({ fullname: '', whatsapp: '', whatsapp_username: '', instagram: '', facebook: '', contact_channel: 'whatsapp', document_type: 'CC', document_number: '' })
 const newCustomer = ref(emptyCustomer())
 const createError = ref('')
 
@@ -127,6 +137,10 @@ async function createCustomer() {
       fullname: newCustomer.value.fullname,
       contact_channel: channel,
       [CONTACT_CHANNELS[channel].field]: chosenValue.value
+    }
+    if (newCustomer.value.document_number.trim()) {
+      payload.document_type = newCustomer.value.document_type || 'CC'
+      payload.document_number = newCustomer.value.document_number
     }
     if (props.organizationId) {
       payload.organizationId = props.organizationId

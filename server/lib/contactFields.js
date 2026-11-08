@@ -115,11 +115,59 @@ function contactWhatsappFields(body) {
   return out;
 }
 
+/** Identity documents a guest can sign with (Colombia). */
+const DOCUMENT_TYPES = {
+  CC: 'Cédula de ciudadanía',
+  CE: 'Cédula de extranjería',
+  TI: 'Tarjeta de identidad',
+  PA: 'Pasaporte',
+  PPT: 'Permiso por protección temporal',
+  NIT: 'NIT',
+};
+
+/**
+ * A document number as stored: digits for Colombian ids (dots, spaces and dashes
+ * dropped), letters and digits in capitals for passports and foreign ids. Null
+ * when it doesn't look like a document number.
+ */
+function cleanDocumentNumber(type, value) {
+  const text = String(value ?? '').trim().toUpperCase().replace(/[\s.-]/g, '');
+  if (type === 'PA' || type === 'CE' || type === 'PPT') return /^[A-Z0-9]{4,20}$/.test(text) ? text : null;
+  return /^\d{4,15}$/.test(text) ? text : null;
+}
+
+/**
+ * The document fields of a contact sent by a form: only when `document_number` or
+ * `document_type` is present; an empty number clears both. Type defaults to CC.
+ * Throws a 400 when the number is filled in but not valid.
+ */
+function contactDocumentFields(body) {
+  if (body.document_number === undefined && body.document_type === undefined) return {};
+  const raw = String(body.document_number ?? '').trim();
+  if (!raw) return { document_type: null, document_number: null };
+  const type = body.document_type || 'CC';
+  if (!DOCUMENT_TYPES[type]) throw badRequest('El tipo de documento no es válido.');
+  const number = cleanDocumentNumber(type, raw);
+  if (!number) {
+    throw badRequest(type === 'PA' || type === 'CE' || type === 'PPT'
+      ? 'El número de documento no es válido: de 4 a 20 letras o números.'
+      : 'El número de documento no es válido: escribe solo los números, sin puntos.');
+  }
+  return { document_type: type, document_number: number };
+}
+
+/** A document for a contract: "1.234.567.890" for Colombian ids, as is for others. */
+function formatDocumentNumber(type, number) {
+  if (!number) return null;
+  return /^\d+$/.test(number) && type !== 'NIT' ? number.replace(/\B(?=(\d{3})+(?!\d))/g, '.') : number;
+}
+
 function badRequest(message) {
   return Object.assign(new Error(message), { statusCode: 400 });
 }
 
 module.exports = {
   cleanPhone, cleanInstagram, cleanFacebook, cleanWhatsappUsername, contactWhatsappFields,
-  contactChannelFields: contactWhatsappFields, CONTACT_CHANNELS,
+  contactChannelFields: (body) => ({ ...contactWhatsappFields(body), ...contactDocumentFields(body) }),
+  CONTACT_CHANNELS, DOCUMENT_TYPES, cleanDocumentNumber, contactDocumentFields, formatDocumentNumber,
 };
