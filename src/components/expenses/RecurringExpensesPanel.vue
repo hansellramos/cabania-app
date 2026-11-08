@@ -22,17 +22,17 @@
     <CTable v-else hover responsive>
       <CTableHead>
         <CTableRow>
-          <CTableHeaderCell>Gasto</CTableHeaderCell>
-          <CTableHeaderCell class="d-mobile-none">Sede</CTableHeaderCell>
-          <CTableHeaderCell class="d-mobile-none">Frecuencia</CTableHeaderCell>
-          <CTableHeaderCell>Monto aprox.</CTableHeaderCell>
-          <CTableHeaderCell>Vence</CTableHeaderCell>
-          <CTableHeaderCell>Estado</CTableHeaderCell>
+          <CTableHeaderCell role="button" class="sortable" @click="sortBy('name')">Gasto<span class="sort-mark">{{ sortMark('name') }}</span></CTableHeaderCell>
+          <CTableHeaderCell role="button" class="sortable d-mobile-none" @click="sortBy('venue')">Sede<span class="sort-mark">{{ sortMark('venue') }}</span></CTableHeaderCell>
+          <CTableHeaderCell role="button" class="sortable d-mobile-none" @click="sortBy('frequency')">Frecuencia<span class="sort-mark">{{ sortMark('frequency') }}</span></CTableHeaderCell>
+          <CTableHeaderCell role="button" class="sortable" @click="sortBy('amount')">Monto aprox.<span class="sort-mark">{{ sortMark('amount') }}</span></CTableHeaderCell>
+          <CTableHeaderCell role="button" class="sortable" @click="sortBy('due')">Vence<span class="sort-mark">{{ sortMark('due') }}</span></CTableHeaderCell>
+          <CTableHeaderCell role="button" class="sortable" @click="sortBy('status')">Estado<span class="sort-mark">{{ sortMark('status') }}</span></CTableHeaderCell>
           <CTableHeaderCell>Acciones</CTableHeaderCell>
         </CTableRow>
       </CTableHead>
       <CTableBody>
-        <CTableRow v-for="item in items" :key="item.id">
+        <CTableRow v-for="item in sortedItems" :key="item.id">
           <CTableDataCell>
             <div class="fw-semibold">{{ item.name }}</div>
             <div class="d-flex flex-wrap gap-1 mt-1">
@@ -62,8 +62,9 @@
             <div v-if="item.status === 'registrado' && item.last_expense" class="small text-body-secondary">
               {{ formatCurrency(item.last_expense.amount) }} el {{ formatDate(item.last_expense.expense_date) }}
             </div>
-            <div v-if="item.status === 'omitido' && item.last_due" class="small">
-              <a href="javascript:void(0)" @click="undoSkip(item, item.last_due)">Deshacer omisión</a>
+            <div v-if="undoablePeriod(item)" class="small">
+              <span class="text-body-secondary">Omitido el {{ formatDate(undoablePeriod(item)) }} · </span>
+              <a href="javascript:void(0)" @click="undoSkip(item, undoablePeriod(item))">Deshacer</a>
             </div>
           </CTableDataCell>
           <CTableDataCell>
@@ -78,7 +79,7 @@
                 Registrar
               </CButton>
               <CButton
-                v-if="item.current_period && (item.status === 'vencido' || item.status === 'pendiente')"
+                v-if="item.current_period"
                 color="secondary"
                 size="sm"
                 variant="outline"
@@ -302,6 +303,42 @@ const statusLabel = (status) => RECURRING_STATUS[status]?.label || status
 const statusColor = (status) => RECURRING_STATUS[status]?.color || 'secondary'
 const frequencyLabel = recurringFrequencyLabel
 
+// Sorting: by default the server's order (overdue and due soon first); a header
+// click sorts by that column, a second click reverses it, a third goes back.
+const STATUS_ORDER = { vencido: 0, pendiente: 1, programado: 2, registrado: 3, omitido: 3, finalizado: 4, inactivo: 5 }
+const FREQUENCY_ORDER = { weekly: 0, biweekly: 1, monthly: 2, bimonthly: 3, yearly: 4 }
+const sortKey = ref(null)
+const sortDir = ref(1)
+const sortValue = {
+  name: (i) => (i.name || '').toLowerCase(),
+  venue: (i) => (i.venue_data?.name || '').toLowerCase(),
+  frequency: (i) => FREQUENCY_ORDER[i.frequency] ?? 9,
+  amount: (i) => Number(i.expected_amount) || 0,
+  due: (i) => i.current_period || i.next_due || '9999',
+  status: (i) => STATUS_ORDER[i.status] ?? 9,
+}
+const sortBy = (key) => {
+  if (sortKey.value !== key) { sortKey.value = key; sortDir.value = 1 }
+  else if (sortDir.value === 1) sortDir.value = -1
+  else sortKey.value = null
+}
+const sortMark = (key) => (sortKey.value === key ? (sortDir.value === 1 ? ' ▲' : ' ▼') : '')
+const sortedItems = computed(() => {
+  if (!sortKey.value) return items.value
+  const value = sortValue[sortKey.value]
+  return [...items.value].sort((a, b) => {
+    const x = value(a)
+    const y = value(b)
+    return (x < y ? -1 : x > y ? 1 : 0) * sortDir.value
+  })
+})
+
+/** The skip that can still be undone: the latest one, if no due date came after it. */
+const undoablePeriod = (item) => {
+  const last = item.skipped_periods?.[item.skipped_periods.length - 1]
+  return last && (!item.last_due || last >= item.last_due) ? last : null
+}
+
 const formatDate = (date) => {
   if (!date) return '—'
   return new Date(date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })
@@ -460,3 +497,8 @@ const remove = async () => {
 
 onMounted(load)
 </script>
+
+<style scoped>
+.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.sort-mark { font-size: 0.75em; }
+</style>

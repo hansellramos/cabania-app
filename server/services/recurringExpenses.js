@@ -117,6 +117,21 @@ function closestOccurrence(def, date) {
 }
 
 /**
+ * The due date a payment for `period` covers: `period` itself when it is a due
+ * date, else the closest due date in the same month (a payment dated the 4th
+ * covers the bill due the 15th), else `period` unchanged (e.g. a month before
+ * the start date, which then counts in its own month without any due date).
+ */
+function snapPeriod(def, period) {
+  if (!period) return period;
+  const month = monthRange(period.slice(0, 7));
+  const dues = occurrencesBetween(def, month.from, month.to);
+  if (!dues.length || dues.includes(period)) return period;
+  const diff = (d) => Math.abs(Date.parse(d) - Date.parse(period));
+  return dues.reduce((best, d) => (diff(d) < diff(best) ? d : best));
+}
+
+/**
  * Where a recurring expense stands today.
  * `paid` and `skipped` are Sets of due dates already covered.
  *
@@ -206,7 +221,7 @@ function monthSummary(defs, expenses, skips, month) {
     const own = expenses.filter(e => e.recurring_expense_id === def.id);
     const paidPeriods = new Set();
     for (const e of own) {
-      const period = isoDate(e.recurring_period);
+      const period = snapPeriod(def, isoDate(e.recurring_period));
       if (!inMonth(period)) continue;
       paidPeriods.add(period);
       const amount = Number(e.amount) || 0;
@@ -244,5 +259,6 @@ module.exports = {
   closestOccurrence,
   periodStatus,
   monthRange,
-  monthSummary
+  monthSummary,
+  snapPeriod
 };

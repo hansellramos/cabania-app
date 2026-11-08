@@ -43,3 +43,17 @@ test('weekly expenses count every due date in the month', () => {
   assert.strictEqual(s.pending_count, 5);
   assert.strictEqual(s.pending, 250000);
 });
+
+test('a payment whose period is not a due date covers the due date of its month', () => {
+  const { snapPeriod } = require('../services/recurringExpenses');
+  // Like the gardener: starts on the 4th, due on the 15th, paid with period the 4th.
+  const def = { ...base, id: 'j', frequency: 'monthly', due_day: 15, start_date: '2026-11-04', expected_amount: 500000, category: cat('c3', 'Jardinería') };
+  assert.strictEqual(snapPeriod(def, '2026-11-04'), '2026-11-15');
+  assert.strictEqual(snapPeriod(def, '2026-11-15'), '2026-11-15');
+  assert.strictEqual(snapPeriod(def, '2026-10-15'), '2026-10-15'); // before the start: kept
+  const nov = monthSummary([def], [{ recurring_expense_id: 'j', recurring_period: '2026-11-04', amount: 550000 }], [], '2026-11');
+  assert.strictEqual(nov.paid, 550000);
+  assert.strictEqual(nov.pending, 0); // not counted twice
+  const oct = monthSummary([def], [{ recurring_expense_id: 'j', recurring_period: '2026-10-15', amount: 550000 }], [], '2026-10');
+  assert.strictEqual(oct.paid, 550000);
+});
