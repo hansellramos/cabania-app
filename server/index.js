@@ -5451,6 +5451,44 @@ async function startServer() {
     }
   });
 
+  // GET /api/recurring-expenses/month?month=YYYY-MM — each due date of the month
+  // with its status and payments (for the month's table in Pagos y balance).
+  app.get('/api/recurring-expenses/month', isAuthenticated, async (req, res) => {
+    try {
+      const { venue_id } = req.query;
+      const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(req.query.month || ''))
+        ? req.query.month
+        : bogotaNow().date.slice(0, 7);
+      const { from, to } = recurringSchedule.monthRange(month);
+      const orgIds = await recurringExpenseOrgIds(req);
+      if (orgIds !== null && orgIds.length === 0) return res.json({ month, rows: [] });
+      const where = {};
+      if (orgIds !== null) where.organization_id = { in: orgIds };
+      if (venue_id) where.venue_id = venue_id;
+      const defs = await prisma.recurring_expenses.findMany({ where, include: { category: true } });
+      const ids = defs.map(d => d.id);
+      const [expenses, skips] = ids.length ? await Promise.all([
+        prisma.expenses.findMany({
+          where: { recurring_expense_id: { in: ids }, recurring_period: { gte: new Date(from), lte: new Date(to) } },
+          select: { id: true, recurring_expense_id: true, recurring_period: true, amount: true, expense_date: true, payment_method: true, description: true },
+          orderBy: { expense_date: 'asc' }
+        }),
+        prisma.recurring_expense_periods.findMany({
+          where: { recurring_expense_id: { in: ids }, skipped_at: { not: null }, due_date: { gte: new Date(from), lte: new Date(to) } },
+          select: { recurring_expense_id: true, due_date: true }
+        })
+      ]) : [[], []];
+      const rows = recurringSchedule.monthOccurrences(defs, expenses, skips, month, bogotaNow().date);
+      const venueIds = [...new Set(rows.map(r => r.venue_id).filter(Boolean))];
+      const venues = venueIds.length ? await prisma.venues.findMany({ where: { id: { in: venueIds } }, select: { id: true, name: true } }) : [];
+      const venueName = Object.fromEntries(venues.map(v => [v.id, v.name]));
+      res.json({ month, rows: rows.map(r => ({ ...r, venue_name: venueName[r.venue_id] || null })) });
+    } catch (error) {
+      console.error('[recurring-expenses] Month error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // GET /api/recurring-expenses/summary?month=YYYY-MM — the month's recurring
   // expenses (paid / pending, by category) against the month's income.
   app.get('/api/recurring-expenses/summary', isAuthenticated, async (req, res) => {

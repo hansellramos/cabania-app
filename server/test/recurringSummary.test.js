@@ -83,3 +83,21 @@ test('the current month carries the unpaid due dates of earlier months', () => {
   // Without carryFrom (past or future months) nothing is carried.
   assert.strictEqual(monthSummary([luz], [], [], '2026-11').overdue.count, 0);
 });
+
+test('month table: each due date with its payments, skips and late ones', () => {
+  const { monthOccurrences } = require('../services/recurringExpenses');
+  const luz = { ...base, id: 'l', name: 'Luz', frequency: 'monthly', due_day: 15, start_date: '2026-10-01', expected_amount: 400000, category: cat('c2', 'Servicios') };
+  const gas = { ...base, id: 'g', name: 'Gas', frequency: 'monthly', due_day: 10, start_date: '2026-10-01', expected_amount: 98000, category: cat('c2', 'Servicios') };
+  const andres = { ...base, id: 'a', name: 'Andrés', frequency: 'monthly', due_day: 30, start_date: '2026-10-01', expected_amount: 800000, category: null };
+  const expenses = [{ id: 'e1', recurring_expense_id: 'l', recurring_period: '2026-10-15', amount: '394010', expense_date: '2026-11-03', payment_method: 'ePayco' }];
+  const skips = [{ recurring_expense_id: 'g', due_date: '2026-10-10' }];
+  const oct = monthOccurrences([luz, gas, andres], expenses, skips, '2026-10', '2026-11-08');
+  assert.deepStrictEqual(oct.map(r => [r.name, r.due, r.status, r.paid_amount]), [
+    ['Gas', '2026-10-10', 'omitido', 0],
+    ['Luz', '2026-10-15', 'pagado', 394010],
+    ['Andrés', '2026-10-30', 'atrasado', 0],
+  ]);
+  assert.strictEqual(oct[1].payments[0].date, '2026-11-03');
+  const nov = monthOccurrences([andres], [], [], '2026-11', '2026-11-08');
+  assert.strictEqual(nov[0].status, 'por_pagar');
+});
