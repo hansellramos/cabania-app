@@ -6,6 +6,9 @@
 const crypto = require('crypto');
 
 const KINDS = ['public_page', 'whatsapp', 'instagram', 'url', 'wifi'];
+// Extra small QRs a sign can carry (WiFi does not go through a link, so it cannot be one).
+const LINK_KINDS = ['public_page', 'whatsapp', 'instagram', 'url'];
+const MAX_LINKS = 2;
 const SIZES = ['letter', 'half_letter', 'a3', 'banner_3x1'];
 const STYLES = ['gradient', 'light'];
 // No 0/o, 1/l/i: the code is also printed under the QR and may be typed by hand.
@@ -102,7 +105,26 @@ function signFields(body, { partial = false } = {}) {
     if (body.kind === 'url' && !/^https?:\/\/\S+$/i.test(target || '')) throw bad('Escribe una dirección completa, que empiece por https://');
     out.target = target ? target.slice(0, 1000) : null;
   }
+  if (body.links !== undefined) out.links = signLinks(body.links);
   return out;
+}
+
+/** The extra QRs sent by the form, checked: at most two, of different kinds. */
+function signLinks(value) {
+  const bad = (message) => Object.assign(new Error(message), { statusCode: 400 });
+  if (value === null) return [];
+  if (!Array.isArray(value)) throw bad('Los QR adicionales no son válidos.');
+  if (value.length > MAX_LINKS) throw bad(`Puedes poner hasta ${MAX_LINKS} QR adicionales.`);
+  const seen = new Set();
+  return value.map((link) => {
+    const kind = link?.kind;
+    if (!LINK_KINDS.includes(kind)) throw bad('El destino de un QR adicional no es válido.');
+    if (seen.has(kind) && kind !== 'url') throw bad('No repitas el mismo destino en dos QR adicionales.');
+    seen.add(kind);
+    const target = String(link.target || '').trim() || null;
+    if (kind === 'url' && !/^https?:\/\/\S+$/i.test(target || '')) throw bad('En el QR adicional, escribe una dirección completa que empiece por https://');
+    return { id: typeof link.id === 'string' ? link.id : null, kind, target: target ? target.slice(0, 1000) : null };
+  });
 }
 
 /** "@handle" from whatever the venue saved as its Instagram, or null. */
@@ -184,31 +206,99 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     if (!signIds.length) return {};
     const since30 = new Date(Date.now() - 30 * DAY);
     const since7 = new Date(Date.now() - 7 * DAY);
+    // Per sign: its total, plus one row per QR (link_id null = the main QR).
     const rows = await prisma.$queryRaw`
-      SELECT sign_id::text AS sign_id,
+      SELECT sign_id::text AS sign_id, link_id::text AS link_id, GROUPING(link_id)::int AS all_qrs,
              COUNT(*)::int AS total,
              COUNT(*) FILTER (WHERE scanned_at >= ${since30})::int AS last30,
              COUNT(*) FILTER (WHERE scanned_at >= ${since7})::int AS last7,
              MAX(scanned_at) AS last_scan
       FROM venue_sign_scans
       WHERE sign_id = ANY(${signIds}::uuid[])
-      GROUP BY sign_id`;
-    return Object.fromEntries(rows.map(r => [r.sign_id, r]));
+      GROUP BY GROUPING SETS ((sign_id), (sign_id, link_id))`;
+    const out = {};
+    for (const r of rows) {
+      const entry = out[r.sign_id] || (out[r.sign_id] = { all: null, main: null, links: {} });
+      const counts = { total: r.total, last30: r.last30, last7: r.last7, last_scan: r.last_scan };
+      if (r.all_qrs) entry.all = counts;
+      else if (r.link_id) entry.links[r.link_id] = counts;
+      else entry.main = counts;
+    }
+    return out;
   }
+
+  const scanSummary = (c) => ({ total: c?.total || 0, last30: c?.last30 || 0, last7: c?.last7 || 0, last_scan: c?.last_scan || null });
 
   function signPayload(sign, venue, counts) {
     const base = appBaseUrl();
     const c = counts[sign.id] || {};
+    const links = (sign.links || []).slice().sort((a, b) => a.sort_order - b.sort_order).map(link => ({
+      id: link.id,
+      kind: link.kind,
+      target: link.target,
+      code: link.code,
+      short_url: `${base}/q/${link.code}`,
+      qr_text: `${base}/q/${link.code}`,
+      destination: signDestination({ ...link, code: link.code }, venue, base),
+      scans: scanSummary(c.links?.[link.id])
+    }));
     return {
       ...sign,
+      links,
       short_url: sign.kind === 'wifi' ? null : `${base}/q/${sign.code}`,
       destination: sign.kind === 'wifi' ? null : signDestination(sign, venue, base),
       // What the QR encodes: the counted short link, or the network itself.
       qr_text: sign.kind === 'wifi'
         ? (venue.wifi_ssid ? wifiPayload(venue.wifi_ssid, venue.wifi_password) : null)
         : `${base}/q/${sign.code}`,
-      scans: { total: c.total || 0, last30: c.last30 || 0, last7: c.last7 || 0, last_scan: c.last_scan || null }
+      // All the sign's QRs together; main_scans is the big QR alone.
+      scans: scanSummary(c.all),
+      main_scans: scanSummary(c.main)
     };
+  }
+
+  const WITH_LINKS = { links: { orderBy: { sort_order: 'asc' } } };
+
+  /** A new short code not used by any sign or extra QR (they share /q/<code>). */
+  async function freeCode() {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const code = newCode();
+      const [sign, link] = await Promise.all([
+        prisma.venue_signs.findUnique({ where: { code }, select: { id: true } }),
+        prisma.venue_sign_links.findUnique({ where: { code }, select: { id: true } }),
+      ]);
+      if (!sign && !link) return code;
+    }
+    throw new Error('No se pudo generar un código para el QR');
+  }
+
+  /**
+   * Saves a sign's extra QRs. A QR that stays (same id, or same kind) keeps its
+   * code, so the printed sign keeps working; the ones taken out are deleted.
+   */
+  async function saveLinks(signId, wanted) {
+    const existing = await prisma.venue_sign_links.findMany({ where: { sign_id: signId } });
+    const kept = new Set();
+    for (const [i, link] of wanted.entries()) {
+      const match = existing.find(e => !kept.has(e.id) && (e.id === link.id || (!link.id && e.kind === link.kind)))
+        || existing.find(e => !kept.has(e.id) && e.kind === link.kind);
+      if (match) {
+        kept.add(match.id);
+        await prisma.venue_sign_links.update({ where: { id: match.id }, data: { kind: link.kind, target: link.target, sort_order: i } });
+        continue;
+      }
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const created = await prisma.venue_sign_links.create({ data: { sign_id: signId, kind: link.kind, target: link.target, sort_order: i, code: await freeCode() } });
+          kept.add(created.id);
+          break;
+        } catch (error) {
+          if (error.code !== 'P2002' || attempt >= 4) throw error; // code taken: try another one
+        }
+      }
+    }
+    const gone = existing.filter(e => !kept.has(e.id)).map(e => e.id);
+    if (gone.length) await prisma.venue_sign_links.deleteMany({ where: { id: { in: gone } } });
   }
 
   const VENUE_SELECT = { id: true, name: true, city: true, slug: true, is_public: true, whatsapp: true, instagram: true, wifi_ssid: true, wifi_password: true, logo_url: true, brand_color_primary: true, brand_color_secondary: true };
@@ -228,7 +318,7 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     if (!(await canAccessVenue(req, req.params.id))) return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
     const venue = await prisma.venues.findUnique({ where: { id: req.params.id }, select: VENUE_SELECT });
     if (!venue) return res.status(404).json({ error: 'Cabaña no encontrada' });
-    const signs = await prisma.venue_signs.findMany({ where: { venue_id: venue.id }, orderBy: { created_at: 'asc' } });
+    const signs = await prisma.venue_signs.findMany({ where: { venue_id: venue.id }, orderBy: { created_at: 'asc' }, include: WITH_LINKS });
     const counts = await scanCounts(signs.map(s => s.id));
     res.json({
       venue: {
@@ -247,16 +337,18 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     if (!(await canAccessVenue(req, req.params.id, 'venues:edit'))) return res.status(403).json({ error: 'No tienes permiso para editar esta cabaña' });
     const venue = await prisma.venues.findUnique({ where: { id: req.params.id }, select: VENUE_SELECT });
     if (!venue) return res.status(404).json({ error: 'Cabaña no encontrada' });
-    const data = signFields(req.body);
+    const { links, ...data } = signFields(req.body);
     let sign;
     for (let attempt = 0; !sign; attempt++) {
       try {
-        sign = await prisma.venue_signs.create({ data: { ...data, venue_id: venue.id, code: newCode(), created_by: UUID.test(userIdOf(req) || '') ? userIdOf(req) : null } });
+        sign = await prisma.venue_signs.create({ data: { ...data, venue_id: venue.id, code: await freeCode(), created_by: UUID.test(userIdOf(req) || '') ? userIdOf(req) : null } });
       } catch (error) {
         if (error.code !== 'P2002' || attempt >= 4) throw error; // code taken: try another one
       }
     }
-    analytics.track('sign_created', { userId: userIdOf(req), venueId: venue.id, properties: { kind: sign.kind, size: sign.size } });
+    if (links?.length) await saveLinks(sign.id, links);
+    sign = await prisma.venue_signs.findUnique({ where: { id: sign.id }, include: WITH_LINKS });
+    analytics.track('sign_created', { userId: userIdOf(req), venueId: venue.id, properties: { kind: sign.kind, size: sign.size, extra_qrs: sign.links.map(l => l.kind) } });
     res.status(201).json(signPayload(sign, venue, {}));
   }));
 
@@ -264,8 +356,10 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     if (!(await canAccessVenue(req, req.params.id, 'venues:edit'))) return res.status(403).json({ error: 'No tienes permiso para editar esta cabaña' });
     const existing = await prisma.venue_signs.findFirst({ where: { id: req.params.signId, venue_id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Aviso no encontrado' });
-    const data = signFields({ kind: existing.kind, ...req.body }, { partial: true });
-    const sign = await prisma.venue_signs.update({ where: { id: existing.id }, data: { ...data, updated_at: new Date() } });
+    const { links, ...data } = signFields({ kind: existing.kind, ...req.body }, { partial: true });
+    await prisma.venue_signs.update({ where: { id: existing.id }, data: { ...data, updated_at: new Date() } });
+    if (links) await saveLinks(existing.id, links);
+    const sign = await prisma.venue_signs.findUnique({ where: { id: existing.id }, include: WITH_LINKS });
     const venue = await prisma.venues.findUnique({ where: { id: req.params.id }, select: VENUE_SELECT });
     res.json(signPayload(sign, venue, await scanCounts([sign.id])));
   }));
@@ -316,11 +410,11 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
   // GET /api/venues/:id/signs/:signId/scans?days=30 — scans per day (Bogotá time) and per phone
   app.get('/api/venues/:id/signs/:signId/scans', isAuthenticated, handle(async (req, res) => {
     if (!(await canAccessVenue(req, req.params.id))) return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
-    const sign = await prisma.venue_signs.findFirst({ where: { id: req.params.signId, venue_id: req.params.id }, select: { id: true } });
+    const sign = await prisma.venue_signs.findFirst({ where: { id: req.params.signId, venue_id: req.params.id }, select: { id: true, kind: true, links: { select: { id: true, kind: true }, orderBy: { sort_order: 'asc' } } } });
     if (!sign) return res.status(404).json({ error: 'Aviso no encontrado' });
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
     const since = new Date(Date.now() - days * DAY);
-    const [perDay, perDevice] = await Promise.all([
+    const [perDay, perDevice, perQr] = await Promise.all([
       prisma.$queryRaw`
         SELECT to_char((scanned_at AT TIME ZONE 'America/Bogota')::date, 'YYYY-MM-DD') AS day, COUNT(*)::int AS scans
         FROM venue_sign_scans WHERE sign_id = ${sign.id}::uuid AND scanned_at >= ${since}
@@ -328,9 +422,17 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
       prisma.$queryRaw`
         SELECT device, COUNT(*)::int AS scans
         FROM venue_sign_scans WHERE sign_id = ${sign.id}::uuid AND scanned_at >= ${since}
+        GROUP BY 1`,
+      prisma.$queryRaw`
+        SELECT link_id::text AS link_id, COUNT(*)::int AS scans
+        FROM venue_sign_scans WHERE sign_id = ${sign.id}::uuid AND scanned_at >= ${since}
         GROUP BY 1`
     ]);
-    res.json({ days, per_day: perDay, per_device: perDevice });
+    // Scans of each QR of the sign: the main one first, then the extra ones.
+    const byLink = Object.fromEntries(perQr.map(r => [r.link_id || 'main', r.scans]));
+    const qrs = [{ id: null, kind: sign.kind, main: true, scans: byLink.main || 0 }]
+      .concat(sign.links.map(l => ({ id: l.id, kind: l.kind, main: false, scans: byLink[l.id] || 0 })));
+    res.json({ days, per_day: perDay, per_device: perDevice, per_qr: qrs });
   }));
 
   // GET /q/:code — public: count the scan and send the person to the sign's destination
@@ -338,18 +440,28 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     const base = appBaseUrl();
     try {
       const code = String(req.params.code || '').toLowerCase();
-      const sign = /^[a-z0-9]{4,16}$/.test(code)
+      const valid = /^[a-z0-9]{4,16}$/.test(code);
+      let sign = valid
         ? await prisma.venue_signs.findUnique({ where: { code }, include: { venue: { select: VENUE_SELECT } } })
         : null;
-      const destination = sign && sign.kind !== 'wifi' ? signDestination(sign, sign.venue, base) : null;
+      // Not a sign's main QR: maybe one of its extra QRs.
+      const link = !sign && valid
+        ? await prisma.venue_sign_links.findUnique({ where: { code }, include: { sign: { include: { venue: { select: VENUE_SELECT } } } } })
+        : null;
+      if (link) sign = link.sign;
+      const target = link || sign;
+      const destination = target && target.kind !== 'wifi' ? signDestination(target, sign.venue, base) : null;
       if (!destination) return res.redirect(302, base);
 
       const ua = req.get('user-agent') || '';
       if (!BOT_UA.test(ua)) {
         const device = deviceOf(ua);
-        prisma.venue_sign_scans.create({ data: { sign_id: sign.id, device } })
+        prisma.venue_sign_scans.create({ data: { sign_id: sign.id, link_id: link ? link.id : null, device } })
           .catch(err => console.error('[signs] scan not saved:', err.message));
-        analytics.track('qr_scanned', { venueId: sign.venue_id, properties: { sign_id: sign.id, sign_code: sign.code, kind: sign.kind, size: sign.size, device } });
+        analytics.track('qr_scanned', {
+          venueId: sign.venue_id,
+          properties: { sign_id: sign.id, sign_code: sign.code, kind: target.kind, size: sign.size, device, qr: link ? 'extra' : 'main', ...(link && { link_code: link.code, sign_kind: sign.kind }) }
+        });
       }
       res.set('Cache-Control', 'no-store');
       res.redirect(302, destination);
@@ -360,4 +472,4 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
   });
 }
 
-module.exports = { registerVenueSignRoutes, signDestination, wifiPayload, signFields, newCode, deviceOf, displayPhone, instagramHandle, signCopyPrompt, parseSignCopy };
+module.exports = { registerVenueSignRoutes, signDestination, wifiPayload, signFields, signLinks, newCode, deviceOf, displayPhone, instagramHandle, signCopyPrompt, parseSignCopy };

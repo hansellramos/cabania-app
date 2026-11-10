@@ -1471,8 +1471,27 @@ model venue_signs {
   updated_at DateTime @default(now()) @db.Timestamptz(6)
   venue      venues   @relation(fields: [venue_id], references: [id], onDelete: Cascade)
   scans      venue_sign_scans[]
+  links      venue_sign_links[]
 
   @@index([venue_id])
+}
+
+/// Small extra QRs printed on a sign (e.g. WhatsApp and Instagram under the booking QR),
+/// each with its own short link so their scans are counted apart.
+model venue_sign_links {
+  id         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sign_id    String             @db.Uuid
+  /// public_page | whatsapp | instagram | url
+  kind       String             @db.VarChar(20)
+  /// First WhatsApp message (kind whatsapp) or the address (kind url).
+  target     String?
+  code       String             @unique @db.VarChar(16)
+  sort_order Int                @default(0)
+  created_at DateTime           @default(now()) @db.Timestamptz(6)
+  sign       venue_signs        @relation(fields: [sign_id], references: [id], onDelete: Cascade)
+  scans      venue_sign_scans[]
+
+  @@index([sign_id])
 }
 
 /// One scan of a sign's QR. No IP or personal data: only when and the kind of phone.
@@ -1481,8 +1500,11 @@ model venue_sign_scans {
   sign_id    String      @db.Uuid
   scanned_at DateTime    @default(now()) @db.Timestamptz(6)
   /// ios | android | other
-  device     String      @db.VarChar(10)
-  sign       venue_signs @relation(fields: [sign_id], references: [id], onDelete: Cascade)
+  device     String            @db.VarChar(10)
+  /// The extra QR that was scanned; null = the sign's main QR.
+  link_id    String?           @db.Uuid
+  sign       venue_signs       @relation(fields: [sign_id], references: [id], onDelete: Cascade)
+  link       venue_sign_links? @relation(fields: [link_id], references: [id], onDelete: Cascade)
 
   @@index([sign_id, scanned_at])
 }
