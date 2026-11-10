@@ -9,6 +9,10 @@
           <template v-if="contact">
             <div class="ph-no-capture">
               <p><strong>Nombre:</strong> <span class="text-body-secondary">{{ contact.fullname }}</span></p>
+              <p v-if="contact.document_number">
+                <strong>Documento:</strong>
+                <span class="text-body-secondary">{{ DOCUMENT_TYPES[contact.document_type] || contact.document_type }} {{ formatDocument(contact) }}</span>
+              </p>
               <p v-if="principal"><strong>Medio principal:</strong> <span class="text-body-secondary">{{ principal.label }}{{ principal.kind === 'phone' ? ' (teléfono)' : '' }}</span></p>
               <p v-if="contact.whatsapp"><strong>Teléfono:</strong> <span class="text-body-secondary">{{ contact.whatsapp }}</span></p>
               <p v-if="contact.whatsapp_username"><strong>Usuario de WhatsApp:</strong> <span class="text-body-secondary">@{{ contact.whatsapp_username }}</span></p>
@@ -48,12 +52,14 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { contactChannel } from '@/utils/contactLinks'
+import { DOCUMENT_TYPES, formatDocumentNumber } from '@/utils/documentTypes'
 import { useRoute, useRouter } from 'vue-router'
 import { getContactById, deleteContact } from '@/services/contactService'
 
 const route = useRoute()
 const router = useRouter()
 const contact = ref(null)
+const formatDocument = (c) => formatDocumentNumber(c.document_type, c.document_number)
 const principal = computed(() => contactChannel(contact.value))
 
 const onDelete = async () => {

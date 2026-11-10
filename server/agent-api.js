@@ -59,7 +59,7 @@ Servidor MCP (si tu cliente lo soporta): ${appUrl()}/api/agent/mcp
 Autentícate en cada llamada con el header:
 Authorization: Bearer ${key}
 
-La key actúa con mis permisos. ${canWrite ? 'Puedes consultar y también crear cotizaciones, crear y corregir alquileres (horario, comisionista, personas, precio), registrar pagos, marcar no asistencia, cancelar alquileres, registrar y corregir egresos (también de un alquiler), configurar egresos recurrentes y marcar notificaciones como leídas: antes de cambiar algo, confírmamelo.' : 'Solo puede consultar información, no cambiar nada.'} Empieza llamando a GET ${appUrl()}/api/agent/v1/context para saber qué día es hoy y cuáles son mis cabañas.`;
+La key actúa con mis permisos. ${canWrite ? 'Puedes consultar y también crear cotizaciones, crear y corregir alquileres (horario, comisionista, personas, precio), corregir datos de clientes (nombre, cédula u otro documento, WhatsApp, correo), registrar pagos, marcar no asistencia, cancelar alquileres, registrar y corregir egresos (también de un alquiler), configurar egresos recurrentes y marcar notificaciones como leídas: antes de cambiar algo, confírmamelo.' : 'Solo puede consultar información, no cambiar nada.'} Empieza llamando a GET ${appUrl()}/api/agent/v1/context para saber qué día es hoy y cuáles son mis cabañas.`;
 }
 
 module.exports = function registerAgentApi(app, deps) {

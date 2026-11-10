@@ -11,7 +11,7 @@
 const analytics = require('./lib/analytics');
 const modules = require('./modules');
 const recurringSchedule = require('./services/recurringExpenses');
-const { cleanWhatsappUsername } = require('./lib/contactFields');
+const { cleanWhatsappUsername, contactDocumentFields, DOCUMENT_TYPES } = require('./lib/contactFields');
 
 const TIMEZONE = 'America/Bogota';
 const MAX_TOOL_ROUNDS = 6;
@@ -114,9 +114,27 @@ const DEFINITIONS = [
   {
     name: 'find_contacts',
     http: { method: 'GET', path: '/contacts' },
-    description: 'Busca contactos (clientes) por nombre, teléfono, Instagram o correo, con cuántos alquileres tiene.',
-    properties: { query: { type: 'string', description: 'Nombre, teléfono, @instagram o correo (mínimo 2 caracteres).' } },
+    description: 'Busca contactos (clientes) por nombre, teléfono, Instagram, correo o número de documento, con su documento de identidad y cuántos alquileres tiene.',
+    properties: { query: { type: 'string', description: 'Nombre, teléfono, @instagram, correo o número de documento (mínimo 2 caracteres).' } },
     required: ['query']
+  },
+  {
+    name: 'update_contact',
+    write: true,
+    http: { method: 'PATCH', path: '/contacts/{contact_id}' },
+    description: 'Corrige los datos de un cliente: nombre, documento de identidad (tipo y número, sale en el contrato), WhatsApp, usuario de WhatsApp, Instagram, correo o ciudad. Solo cambia los campos que envíes. Si el contrato del alquiler no está firmado, hay que regenerarlo en la app para que tome los datos nuevos.',
+    properties: {
+      contact_id: { type: 'string', description: 'ID del contacto (de find_contacts).' },
+      fullname: { type: 'string', description: 'Nombre completo.' },
+      document_type: { type: 'string', enum: Object.keys(DOCUMENT_TYPES), description: 'Tipo de documento: CC cédula de ciudadanía (por defecto), CE cédula de extranjería, TI tarjeta de identidad, PA pasaporte, PPT permiso por protección temporal, NIT.' },
+      document_number: { type: 'string', description: 'Número de documento, sin puntos. Vacío borra el documento.' },
+      whatsapp: { type: 'string', description: 'WhatsApp con indicativo, ej: 573001234567.' },
+      whatsapp_username: { type: 'string', description: 'Usuario de WhatsApp (ej: @maria.perez).' },
+      instagram: { type: 'string', description: 'Usuario de Instagram.' },
+      email: { type: 'string', description: 'Correo.' },
+      city: { type: 'string', description: 'Ciudad.' }
+    },
+    required: ['contact_id']
   },
   {
     name: 'create_quote',
@@ -154,6 +172,8 @@ const DEFINITIONS = [
       whatsapp: { type: 'string', description: 'WhatsApp con indicativo, para el contacto nuevo.' },
       whatsapp_username: { type: 'string', description: 'Usuario de WhatsApp (ej: @maria.perez), para el contacto nuevo que no dio su número.' },
       email: { type: 'string', description: 'Correo, para el contacto nuevo.' },
+      document_type: { type: 'string', enum: Object.keys(DOCUMENT_TYPES), description: 'Tipo de documento del cliente (por defecto CC, cédula).' },
+      document_number: { type: 'string', description: 'Número de documento del cliente, sin puntos. Se guarda en el contacto (si aún no tiene) y sale en el contrato.' },
       agreed_price: { type: 'number', description: 'Precio acordado total, si es distinto al del plan.' },
       start_time: { type: 'string', description: 'Hora de llegada HH:MM en 24 h (ej: 19:30). Por defecto la del plan.' },
       end_time: { type: 'string', description: 'Hora de salida HH:MM en 24 h (ej: 00:00 = medianoche). Si es menor o igual a la de llegada, es del día siguiente. Por defecto la del plan.' },
@@ -488,7 +508,7 @@ function createAgentTools(deps) {
       ]);
       return {
         ...summary,
-        customer_contact: customer ? { whatsapp: customer.whatsapp ? String(customer.whatsapp) : null, whatsapp_username: customer.whatsapp_username || null, instagram: customer.instagram, facebook: customer.facebook || null, contact_channel: customer.contact_channel || null, email: customer.email } : null,
+        customer_contact: customer ? { whatsapp: customer.whatsapp ? String(customer.whatsapp) : null, whatsapp_username: customer.whatsapp_username || null, instagram: customer.instagram, facebook: customer.facebook || null, contact_channel: customer.contact_channel || null, email: customer.email, document_type: customer.document_type || null, document_number: customer.document_number || null } : null,
         payments: payments.map(p => ({ date: p.payment_date ? isoDay(p.payment_date) : null, amount: money(p.amount), method: p.payment_method, verified: p.verified })),
         deposit: deposit ? { amount: money(deposit.amount), status: deposit.status, refund: deposit.refund_amount ? money(deposit.refund_amount) : null } : null,
         contract: contract ? {
@@ -759,6 +779,7 @@ function createAgentTools(deps) {
             { instagram: { contains: q.replace(/^@/, ''), mode: 'insensitive' } },
             { whatsapp_username: { contains: q.replace(/^@/, ''), mode: 'insensitive' } },
             { email: { contains: q, mode: 'insensitive' } },
+            { document_number: { contains: q.replace(/[\s.-]/g, '').toUpperCase() } },
             ...(digits.length >= 6 ? [{ whatsapp: { equals: Number(digits) } }] : [])
           ]
         },
@@ -780,9 +801,85 @@ function createAgentTools(deps) {
           facebook: c.facebook || null,
           contact_channel: c.contact_channel || null,
           email: c.email,
+          document_type: c.document_type || null,
+          document_number: c.document_number || null,
           bookings: cm[c.id] || 0,
           link: `/business/contacts/${c.id}`
         }))
+      };
+    },
+
+    async update_contact(args, scope) {
+      if (!scope.can('contacts:edit')) return { error: 'Sin permiso para editar contactos.' };
+      if (!/^[0-9a-f-]{36}$/i.test(args.contact_id || '')) return { error: 'contact_id no válido: búscalo primero con find_contacts.' };
+      if (!(await contactAllowed(args.contact_id, scope))) return { error: 'Contacto no encontrado o sin acceso.' };
+      const data = {};
+      const changed = [];
+      if (args.fullname !== undefined) {
+        const name = String(args.fullname || '').trim().slice(0, 255);
+        if (!name) return { error: 'El nombre no puede quedar vacío.' };
+        data.fullname = name;
+        changed.push('nombre');
+      }
+      if (args.document_number !== undefined || args.document_type !== undefined) {
+        let number = args.document_number;
+        if (number === undefined) {
+          // Only the type changes: keep the number it has.
+          const current = await prisma.contacts.findUnique({ where: { id: args.contact_id }, select: { document_number: true } });
+          number = current?.document_number || '';
+          if (!number) return { error: 'Ese contacto no tiene número de documento: envía document_number.' };
+        }
+        try {
+          Object.assign(data, contactDocumentFields({ document_type: args.document_type, document_number: number }));
+        } catch (err) {
+          return { error: err.message };
+        }
+        changed.push('documento');
+      }
+      if (args.whatsapp !== undefined) {
+        const whatsapp = args.whatsapp ? cleanPhone(args.whatsapp) : null;
+        if (args.whatsapp && !whatsapp) return { error: 'whatsapp no válido: el número con indicativo, ej: 573001234567.' };
+        data.whatsapp = whatsapp ? Number(whatsapp) : null;
+        changed.push('WhatsApp');
+      }
+      if (args.whatsapp_username !== undefined) {
+        const user = args.whatsapp_username ? cleanWhatsappUsername(args.whatsapp_username) : null;
+        if (args.whatsapp_username && !user) return { error: 'whatsapp_username no válido: de 3 a 35 letras, números, puntos o guiones bajos, con al menos una letra.' };
+        data.whatsapp_username = user;
+        changed.push('usuario de WhatsApp');
+      }
+      if (args.instagram !== undefined) {
+        const instagram = args.instagram ? cleanInstagram(args.instagram) : null;
+        if (args.instagram && !instagram) return { error: 'instagram no válido.' };
+        data.instagram = instagram;
+        changed.push('Instagram');
+      }
+      if (args.email !== undefined) {
+        const email = args.email ? validEmail(args.email) : null;
+        if (args.email && !email) return { error: 'email no válido.' };
+        data.email = email;
+        changed.push('correo');
+      }
+      if (args.city !== undefined) {
+        data.city = String(args.city || '').trim().slice(0, 255) || null;
+        changed.push('ciudad');
+      }
+      if (!changed.length) return { error: 'No enviaste ningún dato para cambiar.' };
+      const c = await prisma.contacts.update({ where: { id: args.contact_id }, data });
+      return {
+        updated: changed,
+        contact: {
+          id: c.id,
+          name: c.fullname,
+          document_type: c.document_type || null,
+          document_number: c.document_number || null,
+          whatsapp: c.whatsapp ? String(c.whatsapp) : null,
+          whatsapp_username: c.whatsapp_username || null,
+          instagram: c.instagram,
+          email: c.email,
+          city: c.city,
+          link: `/business/contacts/${c.id}`
+        }
       };
     },
 
@@ -1712,10 +1809,20 @@ function createAgentTools(deps) {
 
   /** The booking's customer: an existing contact the user can see, or a new one. */
   async function resolveCustomer(args, scope, venue) {
+    let document = {};
+    try {
+      document = args.document_number ? contactDocumentFields({ document_type: args.document_type, document_number: args.document_number }) : {};
+    } catch (err) {
+      return { error: err.message };
+    }
+    const found = async (id) => {
+      await saveMissingDocument(id, document);
+      return { id, created: false };
+    };
     if (args.customer_contact_id) {
       if (!/^[0-9a-f-]{36}$/i.test(args.customer_contact_id)) return { error: 'customer_contact_id no válido.' };
       const allowed = await contactAllowed(args.customer_contact_id, scope);
-      return allowed ? { id: args.customer_contact_id, created: false } : { error: 'Contacto no encontrado o sin acceso.' };
+      return allowed ? found(args.customer_contact_id) : { error: 'Contacto no encontrado o sin acceso.' };
     }
     const name = String(args.customer_name || '').trim().slice(0, 255);
     if (!name) return { id: null, created: false };
@@ -1727,11 +1834,11 @@ function createAgentTools(deps) {
       const existing = await prisma.contacts.findFirst({
         where: whatsapp ? { whatsapp: Number(whatsapp) } : { whatsapp_username: whatsappUsername }
       });
-      if (existing && await contactAllowed(existing.id, scope)) return { id: existing.id, created: false };
+      if (existing && await contactAllowed(existing.id, scope)) return found(existing.id);
     }
     if (!hasPermission(scope.perms, 'contacts:create')) return { error: 'Sin permiso para crear contactos: usa customer_contact_id.' };
     const contact = await prisma.contacts.create({
-      data: { fullname: name, whatsapp: whatsapp ? Number(whatsapp) : null, whatsapp_username: whatsappUsername, email }
+      data: { fullname: name, whatsapp: whatsapp ? Number(whatsapp) : null, whatsapp_username: whatsappUsername, email, ...document }
     });
     if (venue.organization) {
       await prisma.contact_organization.create({
@@ -1739,6 +1846,12 @@ function createAgentTools(deps) {
       });
     }
     return { id: contact.id, created: true };
+  }
+
+  /** Saves a booking's document on its contact, unless the contact already has one. */
+  async function saveMissingDocument(contactId, document) {
+    if (!document.document_number) return;
+    await prisma.contacts.updateMany({ where: { id: contactId, document_number: null }, data: document });
   }
 
   /** Same scope as find_contacts: the user's organizations and their venues' customers. */

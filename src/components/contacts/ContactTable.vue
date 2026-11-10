@@ -8,16 +8,16 @@
     </CCardHeader>
     <CCardBody>
       <div class="mb-3">
-        <label class="form-label">Filter by Name:</label>
-        <input type="text" v-model="nameInput" @input="onNameInput" class="form-control form-control-sm" placeholder="Search full name" />
-        <ul v-if="filteredNames.length" class="list-group position-absolute z-3">
-          <li v-for="name in filteredNames" :key="name" class="list-group-item list-group-item-action" @click="selectName(name)">{{ name }}</li>
-        </ul>
-        <div v-if="selectedNames.length" class="d-flex align-items-center flex-wrap mt-2">
-          <div v-for="name in selectedNames" :key="name" class="filter-chip me-2 mb-2">
-            {{ name }} <span class="filter-chip-close" @click="removeName(name)">&times;</span>
-          </div>
-          <CButton size="sm" color="secondary" class="ms-2" @click="clearAllNames">Clear All</CButton>
+        <label class="form-label">Buscar:</label>
+        <input
+          type="search"
+          v-model="search"
+          class="form-control form-control-sm"
+          placeholder="Nombre, teléfono, documento, correo o Instagram"
+          autocomplete="off"
+        />
+        <div v-if="search.trim()" class="small text-body-secondary mt-1">
+          {{ filteredContacts.length }} {{ filteredContacts.length === 1 ? 'contacto' : 'contactos' }}
         </div>
       </div>
       <CTable hover responsive>
@@ -31,6 +31,7 @@
               Full Name {{ sortIcon('fullname') }}
             </CTableHeaderCell>
             <CTableHeaderCell scope="col">WhatsApp</CTableHeaderCell>
+            <CTableHeaderCell scope="col">Documento</CTableHeaderCell>
             <CTableHeaderCell
               scope="col"
               style="cursor: pointer; user-select: none;"
@@ -57,12 +58,20 @@
               </RouterLink>
             </CTableDataCell>
             <CTableDataCell>{{ channelValue(initialChannel(contact), contact) }}</CTableDataCell>
+            <CTableDataCell class="text-nowrap">
+              <template v-if="contact.document_number">{{ contact.document_type }} {{ formatDocumentNumber(contact.document_type, contact.document_number) }}</template>
+            </CTableDataCell>
             <CTableDataCell>{{ contact.country }}</CTableDataCell>
             <CTableDataCell>{{ contact.state }}</CTableDataCell>
             <CTableDataCell>{{ contact.city }}</CTableDataCell>
             <CTableDataCell>
               <CButton color="primary" size="sm" @click="onEdit(contact)">Edit</CButton>
               <CButton color="danger" size="sm" class="ms-2" @click="onDelete(contact)">Delete</CButton>
+            </CTableDataCell>
+          </CTableRow>
+          <CTableRow v-if="!paginatedContacts.length">
+            <CTableDataCell colspan="8" class="text-center text-muted py-4">
+              {{ search.trim() ? 'Ningún contacto coincide con la búsqueda' : 'No hay contactos' }}
             </CTableDataCell>
           </CTableRow>
         </CTableBody>
@@ -96,14 +105,12 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { RouterLink, useRouter } from 'vue-router'
 import { fetchContacts, deleteContact } from '@/services/contactService'
 import { channelValue, initialChannel } from '@/utils/contactLinks'
+import { formatDocumentNumber } from '@/utils/documentTypes'
 import { useSettingsStore } from '@/stores/settings'
 import { useAuth } from '@/composables/useAuth'
 
 const contacts = ref([])
-const allContacts = ref([])
-const nameInput = ref('')
-const filteredNames = ref([])
-const selectedNames = ref([])
+const search = ref('')
 const router = useRouter()
 const settingsStore = useSettingsStore()
 const { user } = useAuth()
@@ -127,8 +134,26 @@ function sortIcon(key) {
   return sortOrder.value === 'asc' ? '▲' : '▼'
 }
 
+// Matches every word typed, ignoring accents and case, against the name,
+// phone, document, email and social handles.
+const normalize = (text) => String(text ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+const filteredContacts = computed(() => {
+  const words = normalize(search.value).split(/\s+/).filter(Boolean)
+  if (!words.length) return contacts.value
+  return contacts.value.filter(c => {
+    const text = normalize([c.fullname, c.whatsapp, c.whatsapp_username, c.instagram, c.facebook, c.email, c.document_number, c.city].join(' '))
+    const digits = text.replace(/\D/g, '')
+    return words.every(word => {
+      const wordDigits = word.replace(/[\s.+-]/g, '')
+      return text.includes(word.replace(/^@/, '')) || (/^\d+$/.test(wordDigits) && digits.includes(wordDigits))
+    })
+  })
+})
+
+watch(search, () => { currentPage.value = 1 })
+
 const sortedContacts = computed(() => {
-  let result = contacts.value
+  let result = filteredContacts.value
 
   if (sortKey.value) {
     const key = sortKey.value
@@ -175,51 +200,15 @@ const visiblePages = computed(() => {
   return pages
 })
 
-async function loadContacts(names = []) {
+async function loadContacts() {
   const viewAll = user.value?.is_super_admin ? settingsStore.godModeViewAll : false
   contacts.value = await fetchContacts({ viewAll })
   currentPage.value = 1
 }
 
-async function loadAllContacts() {
-  const viewAll = user.value?.is_super_admin ? settingsStore.godModeViewAll : false
-  allContacts.value = await fetchContacts({ viewAll })
-}
+watch(() => settingsStore.godModeViewAll, () => loadContacts())
 
-watch(() => settingsStore.godModeViewAll, () => {
-  loadContacts(selectedNames.value)
-  loadAllContacts()
-})
-
-function onNameInput() {
-  if (!nameInput.value) { filteredNames.value = []; return }
-  const search = nameInput.value.toLowerCase()
-  filteredNames.value = allContacts.value
-    .map(c => c.fullname)
-    .filter(n => n.toLowerCase().includes(search) && !selectedNames.value.includes(n))
-}
-
-function selectName(name) {
-  selectedNames.value.push(name)
-  nameInput.value = ''
-  filteredNames.value = []
-  loadContacts(selectedNames.value)
-}
-
-function removeName(name) {
-  selectedNames.value = selectedNames.value.filter(n => n !== name)
-  loadContacts(selectedNames.value)
-}
-
-function clearAllNames() {
-  selectedNames.value = []
-  loadContacts()
-}
-
-onMounted(async () => {
-  await loadAllContacts()
-  await loadContacts()
-})
+onMounted(loadContacts)
 
 function onEdit(contact) {
   router.push(`/business/contacts/${contact.id}/edit`)
@@ -228,7 +217,7 @@ function onEdit(contact) {
 async function onDelete(contact) {
   if (confirm(`Are you sure you want to delete "${contact.fullname}"?`)) {
     await deleteContact(contact.id)
-    await loadContacts(selectedNames.value)
+    await loadContacts()
   }
 }
 </script>
