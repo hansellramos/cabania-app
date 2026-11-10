@@ -2,6 +2,14 @@
   <div class="p-4">
     <div class="d-flex flex-column flex-md-row align-items-start align-items-md-center justify-content-between gap-2 mb-4">
       <h1 class="m-0">Próximos Hospedajes</h1>
+      <div class="d-flex flex-column flex-md-row gap-2 w-100 w-md-auto justify-content-md-end">
+      <CFormInput
+        v-model="customerSearch"
+        class="customer-search"
+        placeholder="Buscar por cliente"
+        autocomplete="off"
+        @update:model-value="updateUrlParams"
+      />
       <div class="venue-search position-relative w-100 w-md-auto" style="max-width: 300px;">
         <CInputGroup>
           <CFormInput
@@ -22,6 +30,7 @@
           </div>
         </div>
       </div>
+      </div>
     </div>
     
     <div v-if="selectedVenues.length > 0" class="d-flex align-items-center justify-content-end mb-4">
@@ -36,6 +45,10 @@
       </div>
     </div>
     
+    <div v-if="customerSearch.trim() && accommodations.length && !visibleAccommodations.length" class="text-center text-body-secondary py-5">
+      Ningún hospedaje próximo de un cliente que coincida con "{{ customerSearch.trim() }}"
+    </div>
+
     <div v-for="(groupedItems, date) in groupedAccommodations" :key="date" class="mb-4">
       <div class="day-header d-flex align-items-center mb-2">
         <div class="day-title">{{ formatDate(date) }}</div>
@@ -45,6 +58,15 @@
         <div v-for="item in groupedItems" :key="item.id" class="event-item mb-3">
           <div class="d-flex align-items-center">
             <CCard class="event-card w-100">
+              <router-link
+                v-if="item.customer_data"
+                :to="{ path: '/business/accommodations/' + item.id, query: { tab: 'contrato' } }"
+                :class="['contract-mark', `contract-mark--${contractMark(item).kind}`]"
+                :title="contractMark(item).label"
+                :aria-label="contractMark(item).label"
+              >
+                <CIcon :icon="contractMark(item).icon" size="sm" />
+              </router-link>
               <CCardBody class="p-3">
                 <div class="row g-2">
                   <div class="col-12 col-md-2 d-flex flex-row flex-md-column align-items-center align-items-md-start gap-2 mb-2 mb-md-0">
@@ -248,6 +270,11 @@ const updateUrlParams = () => {
   } else {
     delete query.venues
   }
+  if (customerSearch.value.trim()) {
+    query.cliente = customerSearch.value.trim()
+  } else {
+    delete query.cliente
+  }
   
   router.replace({ query })
 }
@@ -290,9 +317,28 @@ const clearAllVenueFilters = () => {
   updateUrlParams()
 }
 
+// Search by client name, ignoring accents and case.
+const customerSearch = ref(typeof route.query.cliente === 'string' ? route.query.cliente : '')
+const normalize = (text) => (text || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim()
+const visibleAccommodations = computed(() => {
+  const words = normalize(customerSearch.value).split(/\s+/).filter(Boolean)
+  if (!words.length) return accommodations.value
+  return accommodations.value.filter(item => {
+    const name = normalize(item.customer_data?.fullname)
+    return words.every(word => name.includes(word))
+  })
+})
+
+// The mark at the card's top-right corner: whether the guest signed the contract.
+const contractMark = (item) => {
+  if (item.contract_status === 'signed') return { kind: 'signed', icon: 'cilCheckCircle', label: 'Contrato firmado' }
+  if (item.contract_status) return { kind: 'pending', icon: 'cilPencil', label: 'Contrato sin firmar' }
+  return { kind: 'none', icon: 'cilDescription', label: 'Sin contrato' }
+}
+
 const groupedAccommodations = computed(() => {
   const grouped = {}
-  accommodations.value.forEach(item => {
+  visibleAccommodations.value.forEach(item => {
     if (!grouped[item.date]) {
       grouped[item.date] = []
     }
@@ -407,6 +453,12 @@ watch(accommodations, async () => {
 .venue-search {
   width: 300px;
 }
+.customer-search {
+  width: 240px;
+}
+@media (max-width: 767.98px) {
+  .customer-search { width: 100%; max-width: 300px; }
+}
 
 .venue-dropdown {
   position: absolute;
@@ -470,11 +522,31 @@ watch(accommodations, async () => {
 }
 
 .event-card {
+  position: relative;
   border-left: 4px solid var(--cui-primary);
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
   transition: transform 0.2s;
   background-color: var(--cui-card-bg);
 }
+
+.contract-mark {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid var(--cui-body-bg);
+  color: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.contract-mark--signed { background: var(--cui-success); }
+.contract-mark--pending { background: var(--cui-warning); }
+.contract-mark--none { background: var(--cui-secondary); }
 
 .event-card:hover {
   transform: translateY(-3px);
