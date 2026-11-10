@@ -201,6 +201,12 @@
                 <option v-for="(meta, size) in SIGN_SIZES" :key="size" :value="size">{{ meta.label }}</option>
               </CFormSelect>
             </div>
+            <CFormCheck
+              id="signPoweredBy"
+              v-model="form.powered_by"
+              class="mt-3"
+              label="Mostrar “Powered by CabanIA.app” abajo"
+            />
           </CCol>
           <CCol :md="6">
             <CFormLabel class="d-block">Vista previa</CFormLabel>
@@ -251,7 +257,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import {
-  CAlert, CBadge, CButton, CButtonGroup, CCard, CCardBody, CCol, CForm, CFormInput, CFormLabel, CFormSelect, CFormTextarea,
+  CAlert, CBadge, CButton, CButtonGroup, CCard, CCardBody, CCol, CForm, CFormCheck, CFormInput, CFormLabel, CFormSelect, CFormTextarea,
   CModal, CModalBody, CModalFooter, CModalHeader, CModalTitle, CRow, CSpinner,
   CTable, CTableBody, CTableDataCell, CTableHead, CTableHeaderCell, CTableRow,
 } from '@coreui/vue'
@@ -418,7 +424,7 @@ async function saveWifi() {
 }
 
 // Create / edit
-const emptyForm = () => ({ id: null, name: '', kind: 'public_page', headline: '', body: '', target: '', size: 'letter', style: 'gradient' })
+const emptyForm = () => ({ id: null, name: '', kind: 'public_page', headline: '', body: '', target: '', size: 'letter', style: 'gradient', powered_by: true })
 const form = ref(emptyForm())
 const formOpen = ref(false)
 const formError = ref('')
@@ -434,7 +440,7 @@ const kindHelp = computed(() => ({
 
 function openForm(sign) {
   form.value = sign
-    ? { id: sign.id, name: sign.name, kind: sign.kind, headline: sign.headline || '', body: sign.body || '', target: sign.target || '', size: sign.size, style: sign.style || 'gradient' }
+    ? { id: sign.id, name: sign.name, kind: sign.kind, headline: sign.headline || '', body: sign.body || '', target: sign.target || '', size: sign.size, style: sign.style || 'gradient', powered_by: sign.powered_by !== false }
     : emptyForm()
   formError.value = ''
   aiIdea.value = ''
@@ -557,8 +563,14 @@ onMounted(load)
   display: flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
   padding: 12px;
   aspect-ratio: 4 / 3;
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
 }
 .brand-logo {
   width: 32px;
@@ -580,6 +592,9 @@ onMounted(load)
 }
 .sign-preview :deep(svg) {
   display: block;
+  overflow: hidden;
+  max-width: 100%;
+  max-height: 100%;
   filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.2));
 }
 </style>

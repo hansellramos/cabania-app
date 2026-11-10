@@ -181,22 +181,28 @@ function background(W, H, pal, id) {
   const defs = `<defs>`
     + `<linearGradient id="${id}-bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${pal.primary}"/><stop offset="1" stop-color="${pal.secondary}"/></linearGradient>`
     + `<linearGradient id="${id}-ig" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#feda75"/><stop offset="0.3" stop-color="#fa7e1e"/><stop offset="0.6" stop-color="#d62976"/><stop offset="1" stop-color="#4f5bd5"/></linearGradient>`
+    // The circles are cut at the sheet's edge, so nothing paints outside the sign.
+    + `<clipPath id="${id}-sheet"><rect width="${W}" height="${H}"/></clipPath>`
     + `</defs>`
   const big = Math.max(W, H)
   if (pal.light) {
     const bar = Math.min(W, H) * 0.03
     return defs
       + `<rect width="${W}" height="${H}" fill="#ffffff"/>`
+      + `<g clip-path="url(#${id}-sheet)">`
       + `<circle cx="${W * 0.95}" cy="${H * 0.04}" r="${big * 0.28}" fill="${pal.primary}" opacity="0.07"/>`
       + `<circle cx="${W * 0.02}" cy="${H * 0.98}" r="${big * 0.22}" fill="${pal.secondary}" opacity="0.07"/>`
+      + `</g>`
       + `<rect width="${W}" height="${bar}" fill="url(#${id}-bg)"/>`
       + `<rect y="${H - bar}" width="${W}" height="${bar}" fill="url(#${id}-bg)"/>`
   }
   // Soft light circles, like the glow on the public page.
   return defs
     + `<rect width="${W}" height="${H}" fill="url(#${id}-bg)"/>`
+    + `<g clip-path="url(#${id}-sheet)">`
     + `<circle cx="${W * 0.92}" cy="${H * 0.06}" r="${big * 0.32}" fill="#ffffff" opacity="0.10"/>`
     + `<circle cx="${W * 0.04}" cy="${H * 0.96}" r="${big * 0.26}" fill="#ffffff" opacity="0.08"/>`
+    + `</g>`
 }
 
 /** White card with a soft shadow. */
@@ -322,6 +328,13 @@ export async function signSvg({ sign, venueName, qrText, shortUrl, wifi, colors,
       const room = H - m - y
       parts.push(textBlock(L.body, { x: cx, y: y + (room - blockHeight(L.body, 1.3)) / 2, weight: 500, color: pal.text, lineHeight: 1.3 }))
     }
+  }
+
+  if (sign.powered_by !== false) {
+    // Small credit in the bottom margin, under everything else.
+    const size = W > H ? H * 0.032 : W * 0.02
+    const margin = W > H ? H * 0.09 : W * 0.08
+    parts.push(`<text x="${(W / 2).toFixed(1)}" y="${(H - margin * 0.38).toFixed(1)}" font-family="${FONT}" font-size="${size.toFixed(2)}" font-weight="500" fill="${pal.soft}" fill-opacity="0.75" text-anchor="middle" letter-spacing="${(size * 0.03).toFixed(2)}">Powered by <tspan font-weight="700">CabanIA.app</tspan></text>`)
   }
 
   return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">`

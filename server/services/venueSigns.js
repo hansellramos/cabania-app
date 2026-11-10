@@ -90,6 +90,7 @@ function signFields(body, { partial = false } = {}) {
     if (!STYLES.includes(style)) throw bad('El estilo del aviso no es válido.');
     out.style = style;
   }
+  if (body.powered_by !== undefined) out.powered_by = body.powered_by !== false && body.powered_by !== 'false';
   if (body.headline !== undefined) out.headline = String(body.headline || '').trim().slice(0, 80) || null;
   if (body.body !== undefined) {
     const text = String(body.body || '').replace(/\r/g, '').split('\n').map(l => l.trim()).join('\n').replace(/\n{3,}/g, '\n\n').trim();
