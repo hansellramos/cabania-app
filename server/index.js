@@ -1847,6 +1847,13 @@ async function startServer() {
         }
       });
       
+      // Contract status per accommodation, for the "firmado" mark on the cards.
+      const contracts = accommodationIds.length > 0 ? await prisma.contracts.findMany({
+        where: { accommodation_id: { in: accommodationIds } },
+        select: { accommodation_id: true, status: true }
+      }) : [];
+      const contractStatus = Object.fromEntries(contracts.map(c => [c.accommodation_id, c.status]));
+
       // Enrich accommodations with related data
       const enriched = accommodations.map(a => {
         const agreedPrice = parseFloat(a.agreed_price) || parseFloat(a.calculated_price) || 0;
@@ -1856,7 +1863,8 @@ async function startServer() {
           venue_data: a.venue ? venuesMap[a.venue] : null,
           customer_data: a.customer ? customersMap[a.customer] : null,
           total_paid: totalPaid,
-          pending_balance: agreedPrice - totalPaid
+          pending_balance: agreedPrice - totalPaid,
+          contract_status: contractStatus[a.id] || null
         };
       });
 
