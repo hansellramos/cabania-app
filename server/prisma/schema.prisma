@@ -1464,6 +1464,8 @@ model venue_signs {
   target     String?
   /// letter | half_letter | a3 | banner_3x1
   size       String   @default("letter") @db.VarChar(20)
+  /// Prints "Powered by CabanIA.app" at the bottom.
+  powered_by Boolean  @default(true)
   created_by String?  @db.Uuid
   created_at DateTime @default(now()) @db.Timestamptz(6)
   updated_at DateTime @default(now()) @db.Timestamptz(6)
