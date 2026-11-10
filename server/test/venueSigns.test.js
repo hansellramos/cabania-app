@@ -70,3 +70,18 @@ test('AI copy is parsed and trimmed', () => {
   assert.match(system, /pasacalles/);
   assert.match(user, /domicilios 300/);
 });
+
+test('signLinks checks the extra QRs', () => {
+  const { signLinks, signFields } = require('../services/venueSigns');
+  assert.deepStrictEqual(signLinks([{ kind: 'whatsapp' }, { kind: 'instagram', target: '' }]), [
+    { id: null, kind: 'whatsapp', target: null },
+    { id: null, kind: 'instagram', target: null },
+  ]);
+  assert.deepStrictEqual(signLinks(null), []);
+  assert.throws(() => signLinks([{ kind: 'wifi' }]), /no es válido/);
+  assert.throws(() => signLinks([{ kind: 'whatsapp' }, { kind: 'whatsapp' }]), /No repitas/);
+  assert.throws(() => signLinks([{ kind: 'url', target: 'hola' }]), /https/);
+  assert.throws(() => signLinks([{ kind: 'whatsapp' }, { kind: 'instagram' }, { kind: 'public_page' }]), /hasta 2/);
+  assert.deepStrictEqual(signFields({ links: [{ kind: 'public_page' }] }, { partial: true }), { links: [{ id: null, kind: 'public_page', target: null }] });
+  assert.deepStrictEqual(signFields({ name: 'x' }, { partial: true }).links, undefined);
+});

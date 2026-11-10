@@ -88,6 +88,10 @@
               <div><div class="fs-5 fw-semibold">{{ sign.scans.last30 }}</div><span class="text-body-secondary">últimos 30 días</span></div>
             </div>
             <small v-else class="text-body-secondary mb-2">El QR del WiFi conecta directo a la red, así que no se pueden contar los escaneos.</small>
+            <small v-if="sign.links?.length" class="text-body-secondary mb-2">
+              <template v-if="sign.kind !== 'wifi'">{{ SIGN_KINDS[sign.kind].label }} {{ sign.main_scans.total }} · </template>
+              <template v-for="(link, i) in sign.links" :key="link.id">{{ i ? ' · ' : '' }}{{ EXTRA_QR_LABELS[link.kind] }} {{ link.scans.total }}</template>
+            </small>
 
             <small v-if="sign.short_url" class="mb-2 text-truncate">
               <a :href="sign.short_url" target="_blank" rel="noopener">{{ sign.short_url.replace(/^https?:\/\//, '') }}</a>
@@ -148,6 +152,29 @@
             <div v-if="form.kind === 'url'" class="mb-3">
               <CFormLabel for="signUrl">Dirección</CFormLabel>
               <CFormInput id="signUrl" v-model="form.target" type="url" placeholder="https://" />
+            </div>
+            <div class="mb-3">
+              <CFormLabel class="d-block">QR pequeños <span class="text-body-secondary fw-normal">(opcional, hasta 2)</span></CFormLabel>
+              <div class="d-flex flex-wrap gap-1">
+                <CButton
+                  v-for="(label, kind) in EXTRA_QR_LABELS"
+                  :key="kind"
+                  type="button"
+                  size="sm"
+                  :color="SIGN_KINDS[kind].color"
+                  :variant="hasExtra(kind) ? undefined : 'outline'"
+                  :aria-pressed="hasExtra(kind)"
+                  :disabled="!hasExtra(kind) && (form.links.length >= 2 || kind === form.kind)"
+                  @click="toggleExtra(kind)"
+                >
+                  <CIcon :icon="SIGN_KINDS[kind].icon" size="sm" class="me-1" />{{ label }}
+                </CButton>
+              </div>
+              <div class="form-text">Van debajo del QR grande, cada uno con su nombre, y sus escaneos se cuentan aparte.</div>
+              <div v-for="link in form.links.filter(l => l.kind === 'url')" :key="'u' + link.kind" class="mt-2">
+                <CFormInput v-model="link.target" type="url" size="sm" placeholder="https:// (dirección del QR pequeño)" />
+              </div>
+              <div v-if="extraProblem" class="small text-warning mt-1">{{ extraProblem }}</div>
             </div>
             <div v-if="venueInfo.ai_available" class="ai-box rounded p-2 mb-3">
               <CFormLabel for="signIdea" class="small fw-semibold mb-1">
@@ -236,6 +263,11 @@
               · {{ deviceSummary }}
             </span>
           </p>
+          <p v-if="scans.per_qr?.length > 1" class="small mb-2">
+            <template v-for="(qr, i) in scans.per_qr" :key="qr.id || 'main'">
+              {{ i ? ' · ' : '' }}{{ qr.main ? `QR grande (${SIGN_KINDS[qr.kind].label})` : EXTRA_QR_LABELS[qr.kind] }}: <strong>{{ qr.scans }}</strong>
+            </template>
+          </p>
           <CTable v-if="scans.per_day.length" small class="mb-0">
             <CTableHead>
               <CTableRow><CTableHeaderCell>Día</CTableHeaderCell><CTableHeaderCell class="text-end">Escaneos</CTableHeaderCell></CTableRow>
@@ -262,7 +294,7 @@ import {
   CTable, CTableBody, CTableDataCell, CTableHead, CTableHeaderCell, CTableRow,
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
-import { SIGN_KINDS, SIGN_SIZES, SIGN_STYLES, signSvg, printSign, downloadSign, logoDataUrl } from '@/utils/signArtwork'
+import { EXTRA_QR_LABELS, SIGN_KINDS, SIGN_SIZES, SIGN_STYLES, signSvg, printSign, downloadSign, logoDataUrl } from '@/utils/signArtwork'
 import { copyText } from '@/utils/contactLinks'
 
 const props = defineProps({
@@ -302,7 +334,8 @@ const venueArt = (wifiFallback = {}) => ({
   wifi: { ssid: venueInfo.value.wifi_ssid || wifiFallback.ssid, password: venueInfo.value.wifi_password || wifiFallback.password },
 })
 
-const artwork = (sign) => signSvg({ ...venueArt(), sign, qrText: sign.qr_text, shortUrl: sign.short_url })
+const extrasOf = (sign) => (sign.links || []).map(l => ({ kind: l.kind, qrText: l.qr_text, shortUrl: l.short_url }))
+const artwork = (sign) => signSvg({ ...venueArt(), sign, qrText: sign.qr_text, shortUrl: sign.short_url, extras: extrasOf(sign) })
 
 /** The sign scaled to its box for the screen (the printed file keeps its size in mm). */
 const fit = (svg) => String(svg || '').replace(/ width="[\d.]+mm" height="[\d.]+mm"/, ' width="100%" height="100%"')
@@ -338,6 +371,22 @@ function problem(sign) {
   if (sign.kind === 'whatsapp') return 'La cabaña no tiene número de WhatsApp: agrégalo en Editar cabaña.'
   if (sign.kind === 'instagram') return 'La cabaña no tiene Instagram: agrégalo en Editar cabaña.'
   return 'Revisa la dirección del aviso.'
+}
+
+/** What an extra QR lacks to lead somewhere, or ''. */
+function linkProblem(kind, info = venueInfo.value) {
+  if (kind === 'whatsapp' && !info.has_whatsapp) return 'La cabaña no tiene número de WhatsApp: el QR pequeño de WhatsApp no funcionará hasta que lo agregues en Editar cabaña.'
+  if (kind === 'instagram' && !info.has_instagram) return 'La cabaña no tiene Instagram: el QR pequeño de Instagram no funcionará hasta que lo agregues en Editar cabaña.'
+  if (kind === 'public_page' && !info.is_public) return 'La página pública está apagada: el QR pequeño de reservas no funcionará hasta que la publiques.'
+  return ''
+}
+const extraProblem = computed(() => form.value.links.map(l => linkProblem(l.kind)).find(Boolean) || '')
+const hasExtra = (kind) => form.value.links.some(l => l.kind === kind)
+function toggleExtra(kind) {
+  const links = form.value.links
+  const i = links.findIndex(l => l.kind === kind)
+  if (i >= 0) links.splice(i, 1)
+  else if (links.length < 2) links.push({ kind, target: '' })
 }
 
 // Logo and brand colors
@@ -424,7 +473,7 @@ async function saveWifi() {
 }
 
 // Create / edit
-const emptyForm = () => ({ id: null, name: '', kind: 'public_page', headline: '', body: '', target: '', size: 'letter', style: 'gradient', powered_by: true })
+const emptyForm = () => ({ id: null, name: '', kind: 'public_page', headline: '', body: '', target: '', size: 'letter', style: 'gradient', powered_by: true, links: [] })
 const form = ref(emptyForm())
 const formOpen = ref(false)
 const formError = ref('')
@@ -440,7 +489,7 @@ const kindHelp = computed(() => ({
 
 function openForm(sign) {
   form.value = sign
-    ? { id: sign.id, name: sign.name, kind: sign.kind, headline: sign.headline || '', body: sign.body || '', target: sign.target || '', size: sign.size, style: sign.style || 'gradient', powered_by: sign.powered_by !== false }
+    ? { id: sign.id, name: sign.name, kind: sign.kind, headline: sign.headline || '', body: sign.body || '', target: sign.target || '', size: sign.size, style: sign.style || 'gradient', powered_by: sign.powered_by !== false, links: (sign.links || []).map(l => ({ id: l.id, kind: l.kind, target: l.target || '' })) }
     : emptyForm()
   formError.value = ''
   aiIdea.value = ''
@@ -483,6 +532,11 @@ watch(form, async (f) => {
     sign: f,
     qrText: sample,
     shortUrl,
+    extras: f.links.map((l) => {
+      const savedLink = saved?.links?.find(s => s.id === l.id || s.kind === l.kind)
+      const url = savedLink?.short_url || `${window.location.origin}/q/ejemplo${l.kind.slice(0, 2)}`
+      return { kind: l.kind, qrText: url, shortUrl: url }
+    }),
   })
 }, { deep: true })
 
@@ -491,6 +545,8 @@ async function saveForm() {
   formError.value = ''
   try {
     const { id, ...body } = form.value
+    // A small QR to the same place as the big one is redundant.
+    body.links = body.links.filter(l => l.kind !== body.kind || l.kind === 'url')
     if (id) await api('PUT', `/signs/${id}`, body)
     else await api('POST', '/signs', body)
     formOpen.value = false

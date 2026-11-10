@@ -223,6 +223,32 @@ function channelLines(sign, { shortUrl, wifi, whatsapp, instagram }) {
   }
 }
 
+// The name printed next to an extra (small) QR.
+export const EXTRA_QR_LABELS = { whatsapp: 'WhatsApp', instagram: 'Instagram', public_page: 'Reservas', url: 'Más info' }
+
+/** What is printed under an extra QR's name: the number, the @user or the short link. */
+function extraCaption(kind, { shortUrl, whatsapp, instagram }) {
+  if (kind === 'whatsapp') return whatsapp || ''
+  if (kind === 'instagram') return instagram ? `@${instagram}` : ''
+  return displayUrl(shortUrl)
+}
+
+/** An extra QR: a small white card with the QR on the left and its name and caption on the right. */
+async function extraChip(extra, x, y, w, h, pal, id, art) {
+  const p = h * 0.12
+  const side = h - 2 * p
+  const tx = x + p + side + p * 0.8
+  const tw = Math.max(w - (tx - x) - p * 0.7, h * 0.4)
+  const label = fitText(EXTRA_QR_LABELS[extra.kind] || '', tw, h * 0.17, 1, { min: 0.5 })
+  const caption = fitText(extraCaption(extra.kind, { ...art, shortUrl: extra.shortUrl }), tw, h * 0.11, 2, { bold: false, min: 0.5 })
+  const textH = blockHeight(label) + (caption.lines.length ? h * 0.05 + blockHeight(caption, 1.2) : 0)
+  const ty = y + (h - textH) / 2
+  return card(x, y, w, h, h * 0.12, pal)
+    + (extra.qrText ? await qrBlock(extra.qrText, x + p, y + p, side, extra.kind, pal, id) : '')
+    + textBlock(label, { x: tx, y: ty, weight: 800, anchor: 'start' })
+    + (caption.lines.length ? textBlock(caption, { x: tx, y: ty + blockHeight(label) + h * 0.05, weight: 500, color: MUTED, anchor: 'start', lineHeight: 1.2 }) : '')
+}
+
 // ---------- the sign ----------
 
 /**
@@ -231,7 +257,7 @@ function channelLines(sign, { shortUrl, wifi, whatsapp, instagram }) {
  * shortUrl · wifi: { ssid, password } · colors: { primary, secondary } · logo (data URL
  * or URL) · whatsapp ("300 123 4567") · instagram (handle).
  */
-export async function signSvg({ sign, venueName, qrText, shortUrl, wifi, colors, logo, whatsapp, instagram }) {
+export async function signSvg({ sign, venueName, qrText, shortUrl, wifi, colors, logo, whatsapp, instagram, extras = [] }) {
   const { width: W, height: H } = SIGN_SIZES[sign.size] || SIGN_SIZES.letter
   const headline = sign.headline || SIGN_KINDS[sign.kind]?.headline || ''
   const pal = palette(sign.style, colors)
@@ -239,6 +265,9 @@ export async function signSvg({ sign, venueName, qrText, shortUrl, wifi, colors,
   const isWifi = sign.kind === 'wifi'
   const lines = channelLines(sign, { shortUrl, wifi, whatsapp, instagram })
   const parts = [background(W, H, pal, id)]
+  // Extra small QRs (e.g. WhatsApp and Instagram under the booking QR): at most two.
+  const extraQrs = (extras || []).slice(0, 2)
+  const art = { whatsapp, instagram }
 
   if (W > H) {
     // Banner: logo on the left, text in the middle, QR card on the right.
@@ -252,6 +281,19 @@ export async function signSvg({ sign, venueName, qrText, shortUrl, wifi, colors,
     const cardW = Math.max(side, capW) + 2 * pad
     const cardX = W - m - cardW
     parts.push(card(cardX, m, cardW, cardH, H * 0.05, pal))
+    // Extra QRs stacked in a column left of the main card.
+    let textRight = cardX
+    if (extraQrs.length) {
+      const gapY = H * 0.04
+      const chipH = (cardH - gapY) / 2
+      const chipW = chipH * 2.5
+      const chipX = cardX - m * 0.6 - chipW
+      const top = extraQrs.length === 1 ? m + (cardH - chipH) / 2 : m
+      for (const [i, extra] of extraQrs.entries()) {
+        parts.push(await extraChip(extra, chipX, top + i * (chipH + gapY), chipW, chipH, pal, id, art))
+      }
+      textRight = chipX
+    }
     if (qrText) parts.push(await qrBlock(qrText, cardX + (cardW - side) / 2, m + pad, side, sign.kind, pal, id))
     parts.push(textBlock({ lines, size: capSize }, { x: cardX + cardW / 2, y: m + pad + side + pad * 0.5, weight: 700, lineHeight: 1.25 }))
 
@@ -261,7 +303,7 @@ export async function signSvg({ sign, venueName, qrText, shortUrl, wifi, colors,
       parts.push(logoBlock(logo, m + d / 2, H / 2, d, id))
       left = m + d + m * 0.9
     }
-    const textW = cardX - m - left
+    const textW = textRight - m - left
     const cx = left + textW / 2
     const name = fitText(venueName, textW, H * 0.1, 1)
     const head = fitText(headline, textW, H * 0.22, 2)
@@ -285,7 +327,10 @@ export async function signSvg({ sign, venueName, qrText, shortUrl, wifi, colors,
     const capSize = W * (isWifi ? 0.05 : 0.045)
     const capH = hint.size + W * 0.025 + lines.length * capSize * 1.3
     const capW = Math.max(hint.lines[0].length * hint.size * 0.5, ...lines.map(l => l.length * capSize * 0.58))
-    const minSide = W * 0.42
+    const minSide = W * (extraQrs.length ? 0.36 : 0.42)
+    // The extra QRs go in a row of small cards under the main card.
+    const chipH = W * 0.17
+    const extrasH = extraQrs.length ? chipH + W * 0.04 : 0
 
     const layout = (k) => {
       const logoD = logo ? W * 0.2 * k : 0
@@ -294,7 +339,7 @@ export async function signSvg({ sign, venueName, qrText, shortUrl, wifi, colors,
       const body = sign.body ? fitText(sign.body, W - 2 * m, W * 0.045 * Math.max(k, 0.8), 4, { paragraphs: true, bold: false, min: 0.65 }) : { lines: [], size: 0 }
       const top = m + (logoD ? logoD + W * 0.04 * k : 0) + blockHeight(name) + W * 0.035 * k + blockHeight(head, 1.08) + W * 0.06 * k
       const bodyH = body.lines.length ? blockHeight(body, 1.3) + W * 0.05 * k : 0
-      const side = Math.min(W - 2 * m - 2 * pad, H - m - bodyH - top - 2 * pad - capH - pad * 0.4)
+      const side = Math.min(W - 2 * m - 2 * pad, H - m - bodyH - extrasH - top - 2 * pad - capH - pad * 0.4)
       return { k, logoD, name, head, body, side }
     }
     let L = layout(1)
@@ -322,6 +367,18 @@ export async function signSvg({ sign, venueName, qrText, shortUrl, wifi, colors,
     const cap = fitText(lines.join('\n'), cardW - pad, capSize, lines.length, { paragraphs: true, min: 0.6 })
     parts.push(textBlock(cap, { x: cx, y: cy, weight: 700, lineHeight: 1.3 }))
     y += cardH
+
+    if (extraQrs.length) {
+      const gapX = W * 0.03
+      const rowW = W - 2 * m
+      const chipW = extraQrs.length === 1 ? rowW * 0.62 : (rowW - gapX) / 2
+      let x = extraQrs.length === 1 ? cx - chipW / 2 : m
+      for (const [i, extra] of extraQrs.entries()) {
+        parts.push(await extraChip(extra, x, y + W * 0.04, chipW, chipH, pal, id, art))
+        x += chipW + gapX
+      }
+      y += extrasH
+    }
 
     if (L.body.lines.length) {
       // Centre the free text in the space left under the card.
