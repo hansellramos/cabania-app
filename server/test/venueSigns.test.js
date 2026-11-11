@@ -106,3 +106,16 @@ test('directory signs: rows with their own phone, call QRs, no banner', () => {
     'https://wa.me/573001112233?text=' + encodeURIComponent('Hola, te escribo desde Casa Baluna.'));
   assert.strictEqual(signDestination({ kind: 'directory', code: 'x' }, venue, base), null);
 });
+
+test('custom short links are cleaned and checked', () => {
+  const { cleanAlias, signFields } = require('../services/venueSigns');
+  assert.strictEqual(cleanAlias('  Domicilios Baluña! '), 'domicilios-baluna');
+  assert.strictEqual(cleanAlias('casa--baluna__wifi'), 'casa-baluna-wifi');
+  assert.strictEqual(cleanAlias(''), null);
+  assert.strictEqual(cleanAlias(null), null);
+  assert.throws(() => cleanAlias('ab'), /entre 3 y 40/);
+  assert.throws(() => cleanAlias('x'.repeat(41)), /entre 3 y 40/);
+  assert.strictEqual(signFields({ kind: 'whatsapp', alias: 'Pide Ya' }, { partial: true }).alias, 'pide-ya');
+  assert.strictEqual(signFields({ kind: 'wifi', alias: 'red' }, { partial: true }).alias, null);
+  assert.throws(() => signFields({ kind: 'whatsapp', alias: 'baluna', links: [{ kind: 'instagram', alias: 'Baluna' }] }, { partial: true }), /mismo enlace/);
+});

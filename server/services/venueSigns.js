@@ -20,6 +20,21 @@ const CODE_ALPHABET = '23456789abcdefghjkmnpqrstuvwxyz';
 // Link previews and crawlers fetch the URL too; they are not people scanning.
 const BOT_UA = /bot|crawl|spider|preview|facebookexternalhit|whatsapp|telegram|slack|discord|curl|wget|python|headless/i;
 
+/**
+ * A custom short link as the host typed it, cleaned: lowercase, no accents, words
+ * joined by dashes ("Domicilios Baluna" -> "domicilios-baluna"). Null when empty.
+ * Throws a 400 when it is too short or too long.
+ */
+function cleanAlias(value) {
+  const text = String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  if (!text) return null;
+  if (text.length < 3 || text.length > 40) {
+    throw Object.assign(new Error('El enlace personalizado debe tener entre 3 y 40 letras, números o guiones.'), { statusCode: 400 });
+  }
+  return text;
+}
+
 function newCode(length = 7) {
   const bytes = crypto.randomBytes(length);
   return Array.from(bytes, b => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
@@ -118,7 +133,10 @@ function signFields(body, { partial = false } = {}) {
     if (body.kind === 'url' && !/^https?:\/\/\S+$/i.test(target || '')) throw bad('Escribe una dirección completa, que empiece por https://');
     out.target = target ? target.slice(0, 1000) : null;
   }
+  if (body.alias !== undefined) out.alias = body.kind === 'wifi' || body.kind === 'directory' ? null : cleanAlias(body.alias);
   if (body.links !== undefined) out.links = signLinks(body.links, body.kind);
+  const aliases = [out.alias, ...(out.links || []).map(l => l.alias)].filter(Boolean);
+  if (new Set(aliases).size !== aliases.length) throw bad('Usaste el mismo enlace personalizado en dos QR del aviso: cada uno necesita el suyo.');
   if (!partial && body.kind === 'directory' && !(out.links || []).length) throw bad('Agrega al menos una fila al directorio.');
   return out;
 }
@@ -145,6 +163,7 @@ function signLinks(value, signKind) {
     const target = String(link.target || '').trim() || null;
     if (kind === 'url' && !/^https?:\/\/\S+$/i.test(target || '')) throw bad(`${where}, escribe una dirección completa que empiece por https://`);
     const out = { id: typeof link.id === 'string' ? link.id : null, kind, target: target ? target.slice(0, 1000) : null };
+    if (link.alias !== undefined) out.alias = cleanAlias(link.alias);
     if (directory) {
       const title = String(link.title || '').trim();
       if (!title) throw bad(`Ponle un título a la fila ${i + 1} (por ejemplo "Domicilios tienda").`);
@@ -273,8 +292,9 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
       subtitle: link.subtitle || null,
       phone: link.phone || null,
       code: link.code,
-      short_url: `${base}/q/${link.code}`,
-      qr_text: `${base}/q/${link.code}`,
+      alias: link.alias || null,
+      short_url: `${base}/q/${link.alias || link.code}`,
+      qr_text: `${base}/q/${link.alias || link.code}`,
       destination: signDestination({ ...link, code: link.code }, venue, base),
       scans: scanSummary(c.links?.[link.id])
     }));
@@ -282,12 +302,12 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
       ...sign,
       links,
       // A directory has no main QR: only its rows.
-      short_url: sign.kind === 'wifi' || sign.kind === 'directory' ? null : `${base}/q/${sign.code}`,
+      short_url: sign.kind === 'wifi' || sign.kind === 'directory' ? null : `${base}/q/${sign.alias || sign.code}`,
       destination: sign.kind === 'wifi' || sign.kind === 'directory' ? null : signDestination(sign, venue, base),
       // What the QR encodes: the counted short link, or the network itself.
       qr_text: sign.kind === 'directory' ? null : sign.kind === 'wifi'
         ? (venue.wifi_ssid ? wifiPayload(venue.wifi_ssid, venue.wifi_password) : null)
-        : `${base}/q/${sign.code}`,
+        : `${base}/q/${sign.alias || sign.code}`,
       // All the sign's QRs together; main_scans is the big QR alone.
       scans: scanSummary(c.all),
       main_scans: scanSummary(c.main)
@@ -297,14 +317,28 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
   const WITH_LINKS = { links: { orderBy: { sort_order: 'asc' } } };
 
   /** A new short code not used by any sign or extra QR (they share /q/<code>). */
+  /** Whether /q/<value> already belongs to another sign (its code or custom link) or its QRs. */
+  async function shortLinkTaken(value, signId = null) {
+    const [sign, link] = await Promise.all([
+      prisma.venue_signs.findFirst({ where: { OR: [{ code: value }, { alias: value }], ...(signId && { id: { not: signId } }) }, select: { id: true } }),
+      prisma.venue_sign_links.findFirst({ where: { OR: [{ code: value }, { alias: value }], ...(signId && { sign_id: { not: signId } }) }, select: { id: true } }),
+    ]);
+    return !!(sign || link);
+  }
+
+  /** Every custom link of the sign must be free (they share /q/ with all the codes). */
+  async function checkAliases(aliases, signId = null) {
+    for (const alias of aliases.filter(Boolean)) {
+      if (await shortLinkTaken(alias, signId)) {
+        throw Object.assign(new Error(`El enlace cabania.app/q/${alias} ya está en uso: elige otro.`), { statusCode: 409 });
+      }
+    }
+  }
+
   async function freeCode() {
     for (let attempt = 0; attempt < 5; attempt++) {
       const code = newCode();
-      const [sign, link] = await Promise.all([
-        prisma.venue_signs.findUnique({ where: { code }, select: { id: true } }),
-        prisma.venue_sign_links.findUnique({ where: { code }, select: { id: true } }),
-      ]);
-      if (!sign && !link) return code;
+      if (!(await shortLinkTaken(code))) return code;
     }
     throw new Error('No se pudo generar un código para el QR');
   }
@@ -315,12 +349,16 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
    */
   async function saveLinks(signId, wanted, { directory = false } = {}) {
     const existing = await prisma.venue_sign_links.findMany({ where: { sign_id: signId } });
+    // Custom links may move between this sign's QRs: free them first.
+    if (existing.some(e => e.alias)) await prisma.venue_sign_links.updateMany({ where: { sign_id: signId }, data: { alias: null } });
     const kept = new Set();
     for (const [i, link] of wanted.entries()) {
       // A directory's rows are matched by id only (several rows can share a kind).
       const byId = link.id && existing.find(e => !kept.has(e.id) && e.id === link.id);
       const match = byId || (directory ? null : existing.find(e => !kept.has(e.id) && e.kind === link.kind));
-      const rowData = { title: link.title || null, subtitle: link.subtitle || null, phone: link.phone || null };
+      // A QR that keeps its custom link when the form did not send one.
+      const alias = link.alias !== undefined ? link.alias : (match?.alias || null);
+      const rowData = { title: link.title || null, subtitle: link.subtitle || null, phone: link.phone || null, alias };
       if (match) {
         kept.add(match.id);
         await prisma.venue_sign_links.update({ where: { id: match.id }, data: { kind: link.kind, target: link.target, sort_order: i, ...rowData } });
@@ -347,6 +385,9 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
       await fn(req, res);
     } catch (error) {
       if (error.statusCode) return res.status(error.statusCode).json({ error: error.message });
+      if (error.code === 'P2002' && String(error.meta?.target || '').includes('alias')) {
+        return res.status(409).json({ error: 'Ese enlace personalizado ya está en uso: elige otro.' });
+      }
       console.error('[signs]', req.method, req.path, error.message);
       res.status(500).json({ error: 'No se pudo completar la acción con los avisos' });
     }
@@ -377,6 +418,7 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     const venue = await prisma.venues.findUnique({ where: { id: req.params.id }, select: VENUE_SELECT });
     if (!venue) return res.status(404).json({ error: 'Cabaña no encontrada' });
     const { links, ...data } = signFields(req.body);
+    await checkAliases([data.alias, ...(links || []).map(l => l.alias)]);
     let sign;
     for (let attempt = 0; !sign; attempt++) {
       try {
@@ -396,6 +438,7 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     const existing = await prisma.venue_signs.findFirst({ where: { id: req.params.signId, venue_id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Aviso no encontrado' });
     const { links, ...data } = signFields({ kind: existing.kind, size: req.body.size ?? existing.size, ...req.body }, { partial: true });
+    await checkAliases([data.alias, ...(links || []).map(l => l.alias)], existing.id);
     await prisma.venue_signs.update({ where: { id: existing.id }, data: { ...data, updated_at: new Date() } });
     if (links) await saveLinks(existing.id, links, { directory: (data.kind || existing.kind) === 'directory' });
     const sign = await prisma.venue_signs.findUnique({ where: { id: existing.id }, include: WITH_LINKS });
@@ -479,13 +522,15 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     const base = appBaseUrl();
     try {
       const code = String(req.params.code || '').toLowerCase();
-      const valid = /^[a-z0-9]{4,16}$/.test(code);
+      // A generated code, or a custom link (letters, numbers and dashes).
+      const valid = /^[a-z0-9-]{3,40}$/.test(code);
+      const byCode = { OR: [{ code }, { alias: code }] };
       let sign = valid
-        ? await prisma.venue_signs.findUnique({ where: { code }, include: { venue: { select: VENUE_SELECT } } })
+        ? await prisma.venue_signs.findFirst({ where: byCode, include: { venue: { select: VENUE_SELECT } } })
         : null;
       // Not a sign's main QR: maybe one of its extra QRs.
       const link = !sign && valid
-        ? await prisma.venue_sign_links.findUnique({ where: { code }, include: { sign: { include: { venue: { select: VENUE_SELECT } } } } })
+        ? await prisma.venue_sign_links.findFirst({ where: byCode, include: { sign: { include: { venue: { select: VENUE_SELECT } } } } })
         : null;
       if (link) sign = link.sign;
       const target = link || sign;
@@ -511,4 +556,4 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
   });
 }
 
-module.exports = { registerVenueSignRoutes, signDestination, wifiPayload, signFields, signLinks, newCode, deviceOf, displayPhone, instagramHandle, signCopyPrompt, parseSignCopy };
+module.exports = { registerVenueSignRoutes, signDestination, wifiPayload, signFields, signLinks, cleanAlias, newCode, deviceOf, displayPhone, instagramHandle, signCopyPrompt, parseSignCopy };
