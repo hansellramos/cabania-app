@@ -5,10 +5,14 @@
 
 const crypto = require('crypto');
 
-const KINDS = ['public_page', 'whatsapp', 'instagram', 'url', 'wifi'];
-// Extra small QRs a sign can carry (WiFi does not go through a link, so it cannot be one).
+// directory: no main QR, a list of rows with their own QR (deliveries, menus...).
+const KINDS = ['public_page', 'whatsapp', 'instagram', 'url', 'wifi', 'directory'];
+// Extra QRs a sign can carry (WiFi does not go through a link, so it cannot be one).
+// call: a phone call to the row's number (directory rows only).
 const LINK_KINDS = ['public_page', 'whatsapp', 'instagram', 'url'];
+const DIRECTORY_LINK_KINDS = ['whatsapp', 'call', 'url', 'public_page', 'instagram'];
 const MAX_LINKS = 2;
+const MAX_DIRECTORY_ROWS = 6;
 const SIZES = ['letter', 'half_letter', 'a3', 'banner_3x1'];
 const STYLES = ['gradient', 'light'];
 // No 0/o, 1/l/i: the code is also printed under the QR and may be typed by hand.
@@ -46,9 +50,13 @@ function signDestination(sign, venue, baseUrl) {
       if (!venue.is_public || !venue.slug) return null;
       return `${baseUrl}/p/${venue.slug}?utm_source=qr&utm_medium=aviso&utm_campaign=${sign.code}`;
     case 'whatsapp': {
-      const number = waNumber(venue.whatsapp);
+      // A directory row may have its own number (e.g. the shop that delivers).
+      const number = waNumber(sign.phone || venue.whatsapp);
       if (!number) return null;
-      const text = sign.target || `Hola, vi su aviso de ${venue.name || 'la cabaña'} y quiero información.`;
+      // A row with its own number is another business (a shop, a restaurant): tell it where the guest is.
+      const text = sign.target || (sign.phone
+        ? `Hola, te escribo desde ${venue.name || 'la cabaña'}.`
+        : `Hola, vi su aviso de ${venue.name || 'la cabaña'} y quiero información.`);
       return `https://wa.me/${number}?text=${encodeURIComponent(text)}`;
     }
     case 'instagram': {
@@ -57,6 +65,10 @@ function signDestination(sign, venue, baseUrl) {
     }
     case 'url':
       return /^https?:\/\/\S+$/i.test(sign.target || '') ? sign.target : null;
+    case 'call': {
+      const number = waNumber(sign.phone || venue.whatsapp);
+      return number ? `tel:+${number}` : null;
+    }
     default:
       return null;
   }
@@ -88,6 +100,7 @@ function signFields(body, { partial = false } = {}) {
     if (!SIZES.includes(size)) throw bad('El tamaño del aviso no es válido.');
     out.size = size;
   }
+  if ((body.kind === 'directory') && out.size === 'banner_3x1') throw bad('El directorio es vertical: elige carta, media carta o A3.');
   if (!partial || body.style !== undefined) {
     const style = body.style || 'gradient';
     if (!STYLES.includes(style)) throw bad('El estilo del aviso no es válido.');
@@ -105,25 +118,44 @@ function signFields(body, { partial = false } = {}) {
     if (body.kind === 'url' && !/^https?:\/\/\S+$/i.test(target || '')) throw bad('Escribe una dirección completa, que empiece por https://');
     out.target = target ? target.slice(0, 1000) : null;
   }
-  if (body.links !== undefined) out.links = signLinks(body.links);
+  if (body.links !== undefined) out.links = signLinks(body.links, body.kind);
+  if (!partial && body.kind === 'directory' && !(out.links || []).length) throw bad('Agrega al menos una fila al directorio.');
   return out;
 }
 
-/** The extra QRs sent by the form, checked: at most two, of different kinds. */
-function signLinks(value) {
+/**
+ * The extra QRs sent by the form, checked. On most signs: at most two small QRs of
+ * different kinds. On a directory: up to six rows, each with a title and maybe its
+ * own phone.
+ */
+function signLinks(value, signKind) {
   const bad = (message) => Object.assign(new Error(message), { statusCode: 400 });
+  const directory = signKind === 'directory';
   if (value === null) return [];
   if (!Array.isArray(value)) throw bad('Los QR adicionales no son válidos.');
-  if (value.length > MAX_LINKS) throw bad(`Puedes poner hasta ${MAX_LINKS} QR adicionales.`);
+  const max = directory ? MAX_DIRECTORY_ROWS : MAX_LINKS;
+  if (value.length > max) throw bad(directory ? `El directorio admite hasta ${max} filas.` : `Puedes poner hasta ${max} QR adicionales.`);
   const seen = new Set();
-  return value.map((link) => {
+  return value.map((link, i) => {
     const kind = link?.kind;
-    if (!LINK_KINDS.includes(kind)) throw bad('El destino de un QR adicional no es válido.');
-    if (seen.has(kind) && kind !== 'url') throw bad('No repitas el mismo destino en dos QR adicionales.');
+    const where = directory ? `En la fila ${i + 1}` : 'En el QR adicional';
+    if (!(directory ? DIRECTORY_LINK_KINDS : LINK_KINDS).includes(kind)) throw bad(`${where}, el destino no es válido.`);
+    if (!directory && seen.has(kind) && kind !== 'url') throw bad('No repitas el mismo destino en dos QR adicionales.');
     seen.add(kind);
     const target = String(link.target || '').trim() || null;
-    if (kind === 'url' && !/^https?:\/\/\S+$/i.test(target || '')) throw bad('En el QR adicional, escribe una dirección completa que empiece por https://');
-    return { id: typeof link.id === 'string' ? link.id : null, kind, target: target ? target.slice(0, 1000) : null };
+    if (kind === 'url' && !/^https?:\/\/\S+$/i.test(target || '')) throw bad(`${where}, escribe una dirección completa que empiece por https://`);
+    const out = { id: typeof link.id === 'string' ? link.id : null, kind, target: target ? target.slice(0, 1000) : null };
+    if (directory) {
+      const title = String(link.title || '').trim();
+      if (!title) throw bad(`Ponle un título a la fila ${i + 1} (por ejemplo "Domicilios tienda").`);
+      out.title = title.slice(0, 60);
+      out.subtitle = String(link.subtitle || '').replace(/\s+/g, ' ').trim().slice(0, 120) || null;
+      const raw = String(link.phone || '').trim();
+      const digits = raw.replace(/\D/g, '');
+      if (raw && (digits.length < 7 || digits.length > 15)) throw bad(`${where}, el teléfono no es válido.`);
+      out.phone = digits || null;
+    }
+    return out;
   });
 }
 
@@ -149,6 +181,7 @@ function signCopyPrompt({ venue, kind, size, idea, headline, body }) {
     instagram: 'abre el perfil de Instagram de la cabaña',
     url: 'abre un enlace',
     wifi: 'conecta el celular a la red WiFi de la cabaña (es para los huéspedes que ya están adentro)',
+    directory: 'es un directorio para los huéspedes dentro de la cabaña, con varias filas, cada una con su QR (por ejemplo domicilios de la tienda, almuerzos o comidas rápidas); el texto grande es el título del directorio',
   };
   const sizes = {
     letter: 'hoja carta pegada en una pared o puerta',
@@ -236,6 +269,9 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
       id: link.id,
       kind: link.kind,
       target: link.target,
+      title: link.title || null,
+      subtitle: link.subtitle || null,
+      phone: link.phone || null,
       code: link.code,
       short_url: `${base}/q/${link.code}`,
       qr_text: `${base}/q/${link.code}`,
@@ -245,10 +281,11 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     return {
       ...sign,
       links,
-      short_url: sign.kind === 'wifi' ? null : `${base}/q/${sign.code}`,
-      destination: sign.kind === 'wifi' ? null : signDestination(sign, venue, base),
+      // A directory has no main QR: only its rows.
+      short_url: sign.kind === 'wifi' || sign.kind === 'directory' ? null : `${base}/q/${sign.code}`,
+      destination: sign.kind === 'wifi' || sign.kind === 'directory' ? null : signDestination(sign, venue, base),
       // What the QR encodes: the counted short link, or the network itself.
-      qr_text: sign.kind === 'wifi'
+      qr_text: sign.kind === 'directory' ? null : sign.kind === 'wifi'
         ? (venue.wifi_ssid ? wifiPayload(venue.wifi_ssid, venue.wifi_password) : null)
         : `${base}/q/${sign.code}`,
       // All the sign's QRs together; main_scans is the big QR alone.
@@ -276,20 +313,22 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
    * Saves a sign's extra QRs. A QR that stays (same id, or same kind) keeps its
    * code, so the printed sign keeps working; the ones taken out are deleted.
    */
-  async function saveLinks(signId, wanted) {
+  async function saveLinks(signId, wanted, { directory = false } = {}) {
     const existing = await prisma.venue_sign_links.findMany({ where: { sign_id: signId } });
     const kept = new Set();
     for (const [i, link] of wanted.entries()) {
-      const match = existing.find(e => !kept.has(e.id) && (e.id === link.id || (!link.id && e.kind === link.kind)))
-        || existing.find(e => !kept.has(e.id) && e.kind === link.kind);
+      // A directory's rows are matched by id only (several rows can share a kind).
+      const byId = link.id && existing.find(e => !kept.has(e.id) && e.id === link.id);
+      const match = byId || (directory ? null : existing.find(e => !kept.has(e.id) && e.kind === link.kind));
+      const rowData = { title: link.title || null, subtitle: link.subtitle || null, phone: link.phone || null };
       if (match) {
         kept.add(match.id);
-        await prisma.venue_sign_links.update({ where: { id: match.id }, data: { kind: link.kind, target: link.target, sort_order: i } });
+        await prisma.venue_sign_links.update({ where: { id: match.id }, data: { kind: link.kind, target: link.target, sort_order: i, ...rowData } });
         continue;
       }
       for (let attempt = 0; ; attempt++) {
         try {
-          const created = await prisma.venue_sign_links.create({ data: { sign_id: signId, kind: link.kind, target: link.target, sort_order: i, code: await freeCode() } });
+          const created = await prisma.venue_sign_links.create({ data: { sign_id: signId, kind: link.kind, target: link.target, sort_order: i, ...rowData, code: await freeCode() } });
           kept.add(created.id);
           break;
         } catch (error) {
@@ -346,7 +385,7 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
         if (error.code !== 'P2002' || attempt >= 4) throw error; // code taken: try another one
       }
     }
-    if (links?.length) await saveLinks(sign.id, links);
+    if (links?.length) await saveLinks(sign.id, links, { directory: sign.kind === 'directory' });
     sign = await prisma.venue_signs.findUnique({ where: { id: sign.id }, include: WITH_LINKS });
     analytics.track('sign_created', { userId: userIdOf(req), venueId: venue.id, properties: { kind: sign.kind, size: sign.size, extra_qrs: sign.links.map(l => l.kind) } });
     res.status(201).json(signPayload(sign, venue, {}));
@@ -356,9 +395,9 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     if (!(await canAccessVenue(req, req.params.id, 'venues:edit'))) return res.status(403).json({ error: 'No tienes permiso para editar esta cabaña' });
     const existing = await prisma.venue_signs.findFirst({ where: { id: req.params.signId, venue_id: req.params.id } });
     if (!existing) return res.status(404).json({ error: 'Aviso no encontrado' });
-    const { links, ...data } = signFields({ kind: existing.kind, ...req.body }, { partial: true });
+    const { links, ...data } = signFields({ kind: existing.kind, size: req.body.size ?? existing.size, ...req.body }, { partial: true });
     await prisma.venue_signs.update({ where: { id: existing.id }, data: { ...data, updated_at: new Date() } });
-    if (links) await saveLinks(existing.id, links);
+    if (links) await saveLinks(existing.id, links, { directory: (data.kind || existing.kind) === 'directory' });
     const sign = await prisma.venue_signs.findUnique({ where: { id: existing.id }, include: WITH_LINKS });
     const venue = await prisma.venues.findUnique({ where: { id: req.params.id }, select: VENUE_SELECT });
     res.json(signPayload(sign, venue, await scanCounts([sign.id])));
@@ -410,7 +449,7 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
   // GET /api/venues/:id/signs/:signId/scans?days=30 — scans per day (Bogotá time) and per phone
   app.get('/api/venues/:id/signs/:signId/scans', isAuthenticated, handle(async (req, res) => {
     if (!(await canAccessVenue(req, req.params.id))) return res.status(403).json({ error: 'No tienes acceso a esta cabaña' });
-    const sign = await prisma.venue_signs.findFirst({ where: { id: req.params.signId, venue_id: req.params.id }, select: { id: true, kind: true, links: { select: { id: true, kind: true }, orderBy: { sort_order: 'asc' } } } });
+    const sign = await prisma.venue_signs.findFirst({ where: { id: req.params.signId, venue_id: req.params.id }, select: { id: true, kind: true, links: { select: { id: true, kind: true, title: true }, orderBy: { sort_order: 'asc' } } } });
     if (!sign) return res.status(404).json({ error: 'Aviso no encontrado' });
     const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
     const since = new Date(Date.now() - days * DAY);
@@ -430,8 +469,8 @@ function registerVenueSignRoutes(app, { prisma, isAuthenticated, hasPermission, 
     ]);
     // Scans of each QR of the sign: the main one first, then the extra ones.
     const byLink = Object.fromEntries(perQr.map(r => [r.link_id || 'main', r.scans]));
-    const qrs = [{ id: null, kind: sign.kind, main: true, scans: byLink.main || 0 }]
-      .concat(sign.links.map(l => ({ id: l.id, kind: l.kind, main: false, scans: byLink[l.id] || 0 })));
+    const qrs = (sign.kind === 'directory' ? [] : [{ id: null, kind: sign.kind, main: true, scans: byLink.main || 0 }])
+      .concat(sign.links.map(l => ({ id: l.id, kind: l.kind, title: l.title, main: false, scans: byLink[l.id] || 0 })));
     res.json({ days, per_day: perDay, per_device: perDevice, per_qr: qrs });
   }));
 
