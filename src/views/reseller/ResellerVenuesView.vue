@@ -23,7 +23,11 @@
             <CTableBody>
               <CTableRow v-for="venue in venues" :key="venue.id">
                 <CTableDataCell>
-                  <div class="fw-semibold">{{ venue.name }}</div>
+                  <div class="fw-semibold">
+                  <RouterLink v-if="venue.source !== 'comisionista'" :to="`/business/venues/${venue.id}`" class="venue-link">{{ venue.name }}</RouterLink>
+                  <a v-else-if="venue.is_public && venue.slug" :href="`/p/${venue.slug}`" target="_blank" rel="noopener" class="venue-link" title="Ver la página pública">{{ venue.name }}</a>
+                  <template v-else>{{ venue.name }}</template>
+                  </div>
                   <div v-if="venue.organization_name" class="small text-body-secondary">{{ venue.organization_name }}</div>
                 </CTableDataCell>
                 <CTableDataCell>
@@ -79,7 +83,11 @@
                 <CCard class="h-100" :class="venue.is_available ? 'border-success' : 'border-danger'">
                   <CCardBody class="d-flex flex-column">
                     <div class="d-flex justify-content-between align-items-start mb-1">
-                      <h5 class="mb-0">{{ venue.name }}</h5>
+                      <h5 class="mb-0">
+                  <RouterLink v-if="venue.source !== 'comisionista'" :to="`/business/venues/${venue.id}`" class="venue-link">{{ venue.name }}</RouterLink>
+                  <a v-else-if="venue.is_public && venue.slug" :href="`/p/${venue.slug}`" target="_blank" rel="noopener" class="venue-link" title="Ver la página pública">{{ venue.name }}</a>
+                  <template v-else>{{ venue.name }}</template>
+                      </h5>
                       <CBadge :color="venue.is_available ? 'success' : 'danger'">
                         {{ venue.is_available ? 'Disponible' : 'Ocupado' }}
                       </CBadge>
@@ -125,7 +133,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 import {
   CRow, CCol, CCard, CCardHeader, CCardBody, CButton, CBadge, CSpinner, CAlert,
   CFormLabel, CFormInput, CFormSelect,
@@ -240,6 +248,14 @@ function formatCurrency(value) {
 </script>
 
 <style scoped>
+.venue-link {
+  color: inherit;
+  text-decoration: none;
+}
+.venue-link:hover {
+  color: var(--cui-link-color);
+  text-decoration: underline;
+}
 .plan-item {
   border: 1px solid var(--cui-border-color);
 }
