@@ -1452,6 +1452,8 @@ model venue_signs {
   id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   venue_id   String   @db.Uuid
   code       String   @unique @db.VarChar(16)
+  /// Custom short link chosen by the host (/q/<alias>); the code keeps working too.
+  alias      String?  @unique @db.VarChar(40)
   name       String   @db.VarChar(100)
   /// public_page | whatsapp | instagram | url | wifi | directory (several QRs in rows)
   kind       String   @db.VarChar(20)
@@ -1491,6 +1493,8 @@ model venue_sign_links {
   subtitle   String?            @db.VarChar(120)
   phone      String?            @db.VarChar(20)
   code       String             @unique @db.VarChar(16)
+  /// Custom short link chosen by the host (/q/<alias>); the code keeps working too.
+  alias      String?            @unique @db.VarChar(40)
   sort_order Int                @default(0)
   created_at DateTime           @default(now()) @db.Timestamptz(6)
   sign       venue_signs        @relation(fields: [sign_id], references: [id], onDelete: Cascade)

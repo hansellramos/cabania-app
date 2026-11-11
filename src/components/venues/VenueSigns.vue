@@ -153,6 +153,15 @@
               <CFormLabel for="signUrl">Dirección</CFormLabel>
               <CFormInput id="signUrl" v-model="form.target" type="url" placeholder="https://" />
             </div>
+            <div v-if="form.kind !== 'wifi' && form.kind !== 'directory'" class="mb-3">
+              <CFormLabel for="signAlias">Enlace del QR <span class="text-body-secondary fw-normal">(opcional)</span></CFormLabel>
+              <CInputGroup size="sm">
+                  <CInputGroupText>{{ qPrefix }}</CInputGroupText>
+                  <CFormInput id="signAlias" v-model="form.alias" maxlength="40" placeholder="enlace-personalizado (opcional)" autocomplete="off" />
+                </CInputGroup>
+              <div class="form-text">Por ejemplo <em>reserva-baluna</em>. Se imprime debajo del QR. Si lo dejas vacío, se usa un código automático.</div>
+              <div v-if="aliasWarning(form.alias, savedAlias())" class="small text-warning mt-1">{{ aliasWarning(form.alias, savedAlias()) }}</div>
+            </div>
             <div v-if="form.kind === 'directory'" class="mb-3">
               <CFormLabel class="d-block">Filas del directorio <span class="text-body-secondary fw-normal">(hasta 6)</span></CFormLabel>
               <div v-for="(row, i) in form.links" :key="row.key" class="directory-row rounded p-2 mb-2">
@@ -184,6 +193,11 @@
                   class="mt-1"
                   :placeholder="row.phone ? `Primer mensaje (opcional): Hola, te escribo desde ${venueInfo.name || 'la cabaña'}.` : 'Primer mensaje (opcional)'"
                 />
+                <CInputGroup size="sm" class="mt-1">
+                  <CInputGroupText>{{ qPrefix }}</CInputGroupText>
+                  <CFormInput v-model="row.alias" maxlength="40" placeholder="enlace-personalizado (opcional)" autocomplete="off" />
+                </CInputGroup>
+                <div v-if="aliasWarning(row.alias, savedAlias(row))" class="small text-warning mt-1">{{ aliasWarning(row.alias, savedAlias(row)) }}</div>
                 <div v-if="rowProblem(row)" class="small text-warning mt-1">{{ rowProblem(row) }}</div>
               </div>
               <CButton color="primary" variant="outline" size="sm" :disabled="form.links.length >= 6" @click="addRow">+ Agregar fila</CButton>
@@ -207,8 +221,14 @@
                 </CButton>
               </div>
               <div class="form-text">Van debajo del QR grande, cada uno con su nombre, y sus escaneos se cuentan aparte.</div>
-              <div v-for="link in form.links.filter(l => l.kind === 'url')" :key="'u' + link.kind" class="mt-2">
-                <CFormInput v-model="link.target" type="url" size="sm" placeholder="https:// (dirección del QR pequeño)" />
+              <div v-for="link in form.links" :key="'x' + link.kind" class="mt-2">
+                <div class="small fw-semibold mb-1">{{ EXTRA_QR_LABELS[link.kind] }}</div>
+                <CFormInput v-if="link.kind === 'url'" v-model="link.target" type="url" size="sm" class="mb-1" placeholder="https:// (dirección del QR pequeño)" />
+                <CInputGroup size="sm">
+                  <CInputGroupText>{{ qPrefix }}</CInputGroupText>
+                  <CFormInput v-model="link.alias" maxlength="40" placeholder="enlace-personalizado (opcional)" autocomplete="off" />
+                </CInputGroup>
+                <div v-if="aliasWarning(link.alias, savedAlias(link))" class="small text-warning mt-1">{{ aliasWarning(link.alias, savedAlias(link)) }}</div>
               </div>
               <div v-if="extraProblem" class="small text-warning mt-1">{{ extraProblem }}</div>
             </div>
@@ -325,7 +345,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import {
-  CAlert, CBadge, CButton, CButtonGroup, CCard, CCardBody, CCol, CForm, CFormCheck, CFormInput, CFormLabel, CFormSelect, CFormTextarea,
+  CAlert, CBadge, CButton, CButtonGroup, CCard, CCardBody, CCol, CForm, CFormCheck, CInputGroup, CInputGroupText, CFormInput, CFormLabel, CFormSelect, CFormTextarea,
   CModal, CModalBody, CModalFooter, CModalHeader, CModalTitle, CRow, CSpinner,
   CTable, CTableBody, CTableDataCell, CTableHead, CTableHeaderCell, CTableRow,
 } from '@coreui/vue'
@@ -428,7 +448,7 @@ function toggleExtra(kind) {
   const links = form.value.links
   const i = links.findIndex(l => l.kind === kind)
   if (i >= 0) links.splice(i, 1)
-  else if (links.length < 2) links.push({ kind, target: '' })
+  else if (links.length < 2) links.push({ kind, target: '', alias: '' })
 }
 
 // Logo and brand colors
@@ -519,7 +539,28 @@ async function saveWifi() {
 const FIXED_KINDS = ['wifi', 'directory']
 const ROW_EXAMPLES = ['Domicilios tienda', 'Almuerzos', 'Comidas rápidas', 'Lavandería', 'Transporte', 'Administración']
 let rowKey = 0
-const newRow = () => ({ key: ++rowKey, kind: 'whatsapp', title: '', subtitle: '', phone: '', target: '' })
+const newRow = () => ({ key: ++rowKey, kind: 'whatsapp', title: '', subtitle: '', phone: '', target: '', alias: '' })
+
+// Custom short links: cabania.app/q/<alias>.
+const qPrefix = `${window.location.host}/q/`
+/** The custom link as the server will save it: lowercase, no accents, words joined by dashes. */
+const cleanAlias = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+const savedSign = () => form.value.id && signs.value.find(s => s.id === form.value.id)
+/** The custom link a QR of the sign being edited has now (the main one without `link`). */
+const savedAlias = (link) => {
+  const sign = savedSign()
+  if (!sign) return ''
+  if (!link) return sign.alias || ''
+  return sign.links?.find(l => l.id && l.id === link.id)?.alias || ''
+}
+function aliasWarning(value, saved) {
+  const alias = cleanAlias(value)
+  if (alias && (alias.length < 3 || alias.length > 40)) return 'Debe tener entre 3 y 40 letras, números o guiones.'
+  if (alias && alias !== String(value || '').trim()) return `Quedará así: ${qPrefix}${alias}`
+  if (saved && alias !== saved) return `Si ya imprimiste el aviso con ${qPrefix}${saved}, ese QR dejará de funcionar.`
+  return ''
+}
 function addRow() {
   if (form.value.links.length < 6) form.value.links.push(newRow())
 }
@@ -547,7 +588,7 @@ function rowProblem(row) {
   return row.kind === 'public_page' || row.kind === 'instagram' ? linkProblem(row.kind) : ''
 }
 
-const emptyForm = () => ({ id: null, name: '', kind: 'public_page', headline: '', body: '', target: '', size: 'letter', style: 'gradient', powered_by: true, links: [] })
+const emptyForm = () => ({ id: null, name: '', kind: 'public_page', headline: '', body: '', target: '', alias: '', size: 'letter', style: 'gradient', powered_by: true, links: [] })
 const form = ref(emptyForm())
 const formOpen = ref(false)
 const formError = ref('')
@@ -564,9 +605,9 @@ const kindHelp = computed(() => ({
 
 function openForm(sign) {
   form.value = sign
-    ? { id: sign.id, name: sign.name, kind: sign.kind, headline: sign.headline || '', body: sign.body || '', target: sign.target || '', size: sign.size, style: sign.style || 'gradient', powered_by: sign.powered_by !== false, links: (sign.links || []).map(l => sign.kind === 'directory'
-        ? { key: ++rowKey, id: l.id, kind: l.kind, target: l.target || '', title: l.title || '', subtitle: l.subtitle || '', phone: l.phone || '' }
-        : { id: l.id, kind: l.kind, target: l.target || '' }) }
+    ? { id: sign.id, name: sign.name, kind: sign.kind, headline: sign.headline || '', body: sign.body || '', target: sign.target || '', alias: sign.alias || '', size: sign.size, style: sign.style || 'gradient', powered_by: sign.powered_by !== false, links: (sign.links || []).map(l => sign.kind === 'directory'
+        ? { key: ++rowKey, id: l.id, kind: l.kind, target: l.target || '', title: l.title || '', subtitle: l.subtitle || '', phone: l.phone || '', alias: l.alias || '' }
+        : { id: l.id, kind: l.kind, target: l.target || '', alias: l.alias || '' }) }
     : emptyForm()
   formError.value = ''
   aiIdea.value = ''
@@ -600,10 +641,14 @@ async function suggest() {
 
 watch(form, async (f) => {
   const saved = f.id && signs.value.find(s => s.id === f.id)
+  // The link the QR will have: the custom one typed, else the sign's code.
+  const mainUrl = cleanAlias(f.alias)
+    ? `${window.location.origin}/q/${cleanAlias(f.alias)}`
+    : `${window.location.origin}/q/${saved?.code || 'ejemplo'}`
   const sample = f.kind === 'wifi'
     ? (venueInfo.value.wifi_ssid ? `WIFI:T:WPA;S:${venueInfo.value.wifi_ssid};;` : 'WIFI:T:nopass;S:red;;')
-    : (saved?.qr_text || `${window.location.origin}/q/ejemplo`)
-  const shortUrl = f.kind === 'wifi' ? null : (saved?.short_url || `${window.location.origin}/q/ejemplo`)
+    : mainUrl
+  const shortUrl = f.kind === 'wifi' ? null : mainUrl
   formPreview.value = await signSvg({
     ...venueArt({ ssid: 'Nombre de la red', password: '' }),
     sign: f,
@@ -611,7 +656,9 @@ watch(form, async (f) => {
     shortUrl,
     extras: f.links.map((l, i) => {
       const savedLink = saved?.links?.find(s => s.id === l.id || (f.kind !== 'directory' && s.kind === l.kind))
-      const url = savedLink?.short_url || `${window.location.origin}/q/ejemplo${i}${l.kind.slice(0, 2)}`
+      const url = cleanAlias(l.alias)
+        ? `${window.location.origin}/q/${cleanAlias(l.alias)}`
+        : (savedLink?.alias ? `${window.location.origin}/q/${savedLink.code}` : savedLink?.short_url) || `${window.location.origin}/q/ejemplo${i}${l.kind.slice(0, 2)}`
       return { kind: l.kind, qrText: url, shortUrl: url, title: l.title || ROW_EXAMPLES[i % ROW_EXAMPLES.length], subtitle: l.subtitle, phone: l.phone }
     }),
   })
