@@ -1453,7 +1453,7 @@ model venue_signs {
   venue_id   String   @db.Uuid
   code       String   @unique @db.VarChar(16)
   name       String   @db.VarChar(100)
-  /// public_page | whatsapp | instagram | url | wifi
+  /// public_page | whatsapp | instagram | url | wifi | directory (several QRs in rows)
   kind       String   @db.VarChar(20)
   headline   String?  @db.VarChar(80)
   /// Free text printed on the sign (delivery numbers, opening hours...).
@@ -1481,10 +1481,15 @@ model venue_signs {
 model venue_sign_links {
   id         String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   sign_id    String             @db.Uuid
-  /// public_page | whatsapp | instagram | url
+  /// public_page | whatsapp | instagram | url | call
   kind       String             @db.VarChar(20)
   /// First WhatsApp message (kind whatsapp) or the address (kind url).
   target     String?
+  /// Row of a directory sign: its title (e.g. "Domicilios tienda"), a line under it and
+  /// the phone printed and used by its WhatsApp / call QR (the venue's when empty).
+  title      String?            @db.VarChar(60)
+  subtitle   String?            @db.VarChar(120)
+  phone      String?            @db.VarChar(20)
   code       String             @unique @db.VarChar(16)
   sort_order Int                @default(0)
   created_at DateTime           @default(now()) @db.Timestamptz(6)

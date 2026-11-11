@@ -4,7 +4,7 @@
 // page), with its logo on top and the QR on a white card with the channel's logo
 // (WhatsApp, Instagram, WiFi...) in the middle.
 import QRCode from 'qrcode'
-import { cibWhatsapp, cibInstagram, cilGlobeAlt, cilLink } from '@coreui/icons'
+import { cibWhatsapp, cibInstagram, cilGlobeAlt, cilLink, cilPhone } from '@coreui/icons'
 
 export const SIGN_SIZES = {
   letter: { label: 'Carta (21,6 × 27,9 cm)', width: 216, height: 279 },
@@ -19,6 +19,23 @@ export const SIGN_KINDS = {
   instagram: { label: 'Instagram', headline: 'Síguenos en Instagram', icon: 'cibInstagram', color: 'danger' },
   url: { label: 'Otro enlace', headline: 'Más información', icon: 'cilLink', color: 'secondary' },
   wifi: { label: 'WiFi', headline: 'Conéctate al WiFi', icon: 'cilWifiSignal4', color: 'primary' },
+  directory: { label: 'Directorio', headline: 'Domicilios y servicios', icon: 'cilList', color: 'dark' },
+}
+
+/** What a directory row's QR does. */
+export const DIRECTORY_ROW_KINDS = {
+  whatsapp: { label: 'WhatsApp', icon: 'cibWhatsapp' },
+  call: { label: 'Llamada', icon: 'cilPhone' },
+  url: { label: 'Enlace', icon: 'cilLink' },
+  public_page: { label: 'Página de reservas', icon: 'cilGlobeAlt' },
+  instagram: { label: 'Instagram', icon: 'cibInstagram' },
+}
+
+/** "300 123 4567" for a Colombian mobile, the digits as they are otherwise. */
+export function displayPhone(value) {
+  let digits = String(value || '').replace(/\D/g, '')
+  if (digits.length === 12 && digits.startsWith('57')) digits = digits.slice(2)
+  return digits.length === 10 ? `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}` : digits
 }
 
 export const SIGN_STYLES = {
@@ -142,7 +159,7 @@ function textBlock(fit, { x, y, weight = 400, color = INK, anchor = 'middle', li
 
 // The usual WiFi symbol: three arcs over a dot.
 const WIFI_ICON = ['24 24', "<g fill='none' stroke='#ffffff' stroke-width='2.3' stroke-linecap='round'><path d='M2.5 9a14 14 0 0 1 19 0'/><path d='M5.8 12.6a9.2 9.2 0 0 1 12.4 0'/><path d='M9.1 16.1a4.5 4.5 0 0 1 5.8 0'/></g><circle cx='12' cy='19.6' r='1.7'/>"]
-const ICONS = { whatsapp: cibWhatsapp, instagram: cibInstagram, wifi: WIFI_ICON, public_page: cilGlobeAlt, url: cilLink }
+const ICONS = { whatsapp: cibWhatsapp, instagram: cibInstagram, wifi: WIFI_ICON, public_page: cilGlobeAlt, url: cilLink, call: cilPhone }
 
 /** The channel's logo: a coloured disc (a rounded square for Instagram) with a white glyph. */
 function channelBadge(kind, cx, cy, d, pal, id) {
@@ -249,6 +266,82 @@ async function extraChip(extra, x, y, w, h, pal, id, art) {
     + (caption.lines.length ? textBlock(caption, { x: tx, y: ty + blockHeight(label) + h * 0.05, weight: 500, color: MUTED, anchor: 'start', lineHeight: 1.2 }) : '')
 }
 
+/** The line a directory row prints under its title: how to reach it. */
+function rowContact(row, { whatsapp, instagram }) {
+  const phone = row.phone ? displayPhone(row.phone) : whatsapp
+  if (row.kind === 'whatsapp') return phone ? `WhatsApp ${phone}` : 'WhatsApp'
+  if (row.kind === 'call') return phone ? `Tel. ${phone}` : 'Llamar'
+  if (row.kind === 'instagram') return instagram ? `@${instagram}` : 'Instagram'
+  return displayUrl(row.shortUrl)
+}
+
+/** A directory row: white card, its QR on the left, title, line and contact on the right. */
+async function directoryRow(row, x, y, w, h, pal, id, art) {
+  const p = h * 0.11
+  const side = h - 2 * p
+  const tx = x + p + side + p * 1.1
+  const tw = x + w - p - tx
+  const title = fitText(row.title || '', tw, h * 0.2, 2, { min: 0.55 })
+  const sub = row.subtitle ? fitText(row.subtitle, tw, h * 0.12, 2, { bold: false, min: 0.6 }) : { lines: [], size: 0 }
+  const contact = fitText(rowContact(row, art), tw, h * 0.15, 1, { min: 0.55 })
+  const gap = h * 0.05
+  const textH = blockHeight(title, 1.1) + (sub.lines.length ? gap + blockHeight(sub, 1.2) : 0) + gap * 1.4 + blockHeight(contact)
+  let ty = y + (h - textH) / 2
+  const out = [card(x, y, w, h, h * 0.1, pal)]
+  if (row.qrText) out.push(await qrBlock(row.qrText, x + p, y + p, side, row.kind, pal, id))
+  out.push(textBlock(title, { x: tx, y: ty, weight: 800, anchor: 'start', lineHeight: 1.1 }))
+  ty += blockHeight(title, 1.1)
+  if (sub.lines.length) {
+    ty += gap
+    out.push(textBlock(sub, { x: tx, y: ty, weight: 500, color: MUTED, anchor: 'start', lineHeight: 1.2 }))
+    ty += blockHeight(sub, 1.2)
+  }
+  ty += gap * 1.4
+  const accent = row.kind === 'whatsapp' ? '#128c4a' : pal.light ? pal.accent : readableOnWhite(pal.primary)
+  out.push(textBlock(contact, { x: tx, y: ty, weight: 700, color: accent, anchor: 'start' }))
+  return out.join('')
+}
+
+/**
+ * Directory (portrait): logo, name and title on top, then one row per QR
+ * (deliveries, menus...), then the free text.
+ */
+async function directorySvgParts({ sign, W, H, pal, id, venueName, headline, logo, rows, art }) {
+  const parts = []
+  const m = W * 0.07
+  const cx = W / 2
+  let y = m
+  if (logo) {
+    const d = W * 0.13
+    parts.push(logoBlock(logo, cx, y + d / 2, d, id))
+    y += d + W * 0.03
+  }
+  const name = fitText(venueName, W - 2 * m, W * 0.045, 1)
+  parts.push(textBlock(name, { x: cx, y, weight: 700, color: pal.soft, spacing: 0.04 }))
+  y += blockHeight(name) + W * 0.025
+  const head = fitText(headline, W - 2 * m, W * 0.085, 2)
+  parts.push(textBlock(head, { x: cx, y, weight: 800, color: pal.accent, lineHeight: 1.08 }))
+  y += blockHeight(head, 1.08) + W * 0.05
+
+  const body = sign.body ? fitText(sign.body, W - 2 * m, W * 0.038, 3, { paragraphs: true, bold: false, min: 0.7 }) : { lines: [], size: 0 }
+  const bodyH = body.lines.length ? blockHeight(body, 1.3) + W * 0.04 : 0
+  const bottom = H - m - bodyH
+  const n = Math.max(rows.length, 1)
+  const gap = W * 0.025
+  const rowH = Math.min((bottom - y - gap * (n - 1)) / n, W * 0.3)
+  // Few rows: centre them in the space left instead of leaving it all at the bottom.
+  y += Math.max(0, (bottom - y - (n * rowH + (n - 1) * gap)) / 2)
+  for (const [i, row] of rows.entries()) {
+    parts.push(await directoryRow(row, m, y + i * (rowH + gap), W - 2 * m, rowH, pal, id, art))
+  }
+  y += n * rowH + (n - 1) * gap
+  if (body.lines.length) {
+    const room = H - m - y
+    parts.push(textBlock(body, { x: cx, y: y + (room - blockHeight(body, 1.3)) / 2, weight: 500, color: pal.text, lineHeight: 1.3 }))
+  }
+  return parts
+}
+
 // ---------- the sign ----------
 
 /**
@@ -269,7 +362,9 @@ export async function signSvg({ sign, venueName, qrText, shortUrl, wifi, colors,
   const extraQrs = (extras || []).slice(0, 2)
   const art = { whatsapp, instagram }
 
-  if (W > H) {
+  if (sign.kind === 'directory') {
+    parts.push(...await directorySvgParts({ sign, W, H, pal, id, venueName, headline, logo, rows: (extras || []).slice(0, 6), art }))
+  } else if (W > H) {
     // Banner: logo on the left, text in the middle, QR card on the right.
     const m = H * 0.09
     const cardH = H - 2 * m

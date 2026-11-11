@@ -89,8 +89,8 @@
             </div>
             <small v-else class="text-body-secondary mb-2">El QR del WiFi conecta directo a la red, así que no se pueden contar los escaneos.</small>
             <small v-if="sign.links?.length" class="text-body-secondary mb-2">
-              <template v-if="sign.kind !== 'wifi'">{{ SIGN_KINDS[sign.kind].label }} {{ sign.main_scans.total }} · </template>
-              <template v-for="(link, i) in sign.links" :key="link.id">{{ i ? ' · ' : '' }}{{ EXTRA_QR_LABELS[link.kind] }} {{ link.scans.total }}</template>
+              <template v-if="sign.kind !== 'wifi' && sign.kind !== 'directory'">{{ SIGN_KINDS[sign.kind].label }} {{ sign.main_scans.total }} · </template>
+              <template v-for="(link, i) in sign.links" :key="link.id">{{ i ? ' · ' : '' }}{{ link.title || EXTRA_QR_LABELS[link.kind] }} {{ link.scans.total }}</template>
             </small>
 
             <small v-if="sign.short_url" class="mb-2 text-truncate">
@@ -99,10 +99,10 @@
             </small>
 
             <div class="mt-auto d-flex flex-wrap gap-1">
-              <CButton color="primary" size="sm" :disabled="!sign.qr_text" @click="print(sign)">
+              <CButton color="primary" size="sm" :disabled="!hasArt(sign)" @click="print(sign)">
                 <CIcon icon="cilPrint" size="sm" class="me-1" />Imprimir
               </CButton>
-              <CButton color="primary" variant="outline" size="sm" :disabled="!sign.qr_text" @click="download(sign)">
+              <CButton color="primary" variant="outline" size="sm" :disabled="!hasArt(sign)" @click="download(sign)">
                 <CIcon icon="cilCloudDownload" size="sm" class="me-1" />Archivo
               </CButton>
               <CButton v-if="sign.kind !== 'wifi'" color="secondary" variant="outline" size="sm" @click="openScans(sign)">Escaneos</CButton>
@@ -137,8 +137,8 @@
                   :color="meta.color"
                   :variant="form.kind === kind ? undefined : 'outline'"
                   :aria-pressed="form.kind === kind"
-                  :disabled="!!form.id && (form.kind === 'wifi') !== (kind === 'wifi')"
-                  @click="form.kind = kind"
+                  :disabled="!!form.id && form.kind !== kind && (FIXED_KINDS.includes(form.kind) || FIXED_KINDS.includes(kind))"
+                  @click="pickKind(kind)"
                 >
                   <CIcon :icon="meta.icon" size="sm" class="me-1" />{{ meta.label }}
                 </CButton>
@@ -153,7 +153,43 @@
               <CFormLabel for="signUrl">Dirección</CFormLabel>
               <CFormInput id="signUrl" v-model="form.target" type="url" placeholder="https://" />
             </div>
-            <div class="mb-3">
+            <div v-if="form.kind === 'directory'" class="mb-3">
+              <CFormLabel class="d-block">Filas del directorio <span class="text-body-secondary fw-normal">(hasta 6)</span></CFormLabel>
+              <div v-for="(row, i) in form.links" :key="row.key" class="directory-row rounded p-2 mb-2">
+                <div class="d-flex gap-1 mb-1">
+                  <CFormInput v-model="row.title" size="sm" maxlength="60" :placeholder="`Título, ej: ${ROW_EXAMPLES[i % ROW_EXAMPLES.length]}`" />
+                  <CButton color="secondary" variant="ghost" size="sm" :disabled="i === 0" title="Subir" @click="moveRow(i, -1)">↑</CButton>
+                  <CButton color="secondary" variant="ghost" size="sm" :disabled="i === form.links.length - 1" title="Bajar" @click="moveRow(i, 1)">↓</CButton>
+                  <CButton color="danger" variant="ghost" size="sm" title="Quitar fila" @click="form.links.splice(i, 1)">✕</CButton>
+                </div>
+                <CFormInput v-model="row.subtitle" size="sm" maxlength="120" class="mb-1" placeholder="Línea debajo (opcional), ej: Todos los días de 7 a.m. a 9 p.m." />
+                <div class="d-flex gap-1">
+                  <CFormSelect v-model="row.kind" size="sm" style="max-width: 11rem;" aria-label="Qué hace el QR">
+                    <option v-for="(meta, kind) in DIRECTORY_ROW_KINDS" :key="kind" :value="kind">{{ meta.label }}</option>
+                  </CFormSelect>
+                  <CFormInput
+                    v-if="row.kind === 'whatsapp' || row.kind === 'call'"
+                    v-model="row.phone"
+                    size="sm"
+                    inputmode="tel"
+                    maxlength="20"
+                    :placeholder="venueInfo.whatsapp_display ? `Teléfono (vacío = ${venueInfo.whatsapp_display})` : 'Teléfono'"
+                  />
+                  <CFormInput v-else-if="row.kind === 'url'" v-model="row.target" size="sm" type="url" placeholder="https://" />
+                </div>
+                <CFormInput
+                  v-if="row.kind === 'whatsapp'"
+                  v-model="row.target"
+                  size="sm"
+                  class="mt-1"
+                  :placeholder="row.phone ? `Primer mensaje (opcional): Hola, te escribo desde ${venueInfo.name || 'la cabaña'}.` : 'Primer mensaje (opcional)'"
+                />
+                <div v-if="rowProblem(row)" class="small text-warning mt-1">{{ rowProblem(row) }}</div>
+              </div>
+              <CButton color="primary" variant="outline" size="sm" :disabled="form.links.length >= 6" @click="addRow">+ Agregar fila</CButton>
+              <div class="form-text">Cada fila lleva su QR, con su título y teléfono al lado. Los escaneos de cada fila se cuentan aparte.</div>
+            </div>
+            <div v-else class="mb-3">
               <CFormLabel class="d-block">QR pequeños <span class="text-body-secondary fw-normal">(opcional, hasta 2)</span></CFormLabel>
               <div class="d-flex flex-wrap gap-1">
                 <CButton
@@ -225,7 +261,7 @@
             <div class="mb-1">
               <CFormLabel for="signSize">Tamaño</CFormLabel>
               <CFormSelect id="signSize" v-model="form.size">
-                <option v-for="(meta, size) in SIGN_SIZES" :key="size" :value="size">{{ meta.label }}</option>
+                <option v-for="(meta, size) in SIGN_SIZES" :key="size" :value="size" :disabled="form.kind === 'directory' && size === 'banner_3x1'">{{ meta.label }}</option>
               </CFormSelect>
             </div>
             <CFormCheck
@@ -265,7 +301,7 @@
           </p>
           <p v-if="scans.per_qr?.length > 1" class="small mb-2">
             <template v-for="(qr, i) in scans.per_qr" :key="qr.id || 'main'">
-              {{ i ? ' · ' : '' }}{{ qr.main ? `QR grande (${SIGN_KINDS[qr.kind].label})` : EXTRA_QR_LABELS[qr.kind] }}: <strong>{{ qr.scans }}</strong>
+              {{ i ? ' · ' : '' }}{{ qr.main ? `QR grande (${SIGN_KINDS[qr.kind].label})` : (qr.title || EXTRA_QR_LABELS[qr.kind]) }}: <strong>{{ qr.scans }}</strong>
             </template>
           </p>
           <CTable v-if="scans.per_day.length" small class="mb-0">
@@ -294,7 +330,7 @@ import {
   CTable, CTableBody, CTableDataCell, CTableHead, CTableHeaderCell, CTableRow,
 } from '@coreui/vue'
 import { CIcon } from '@coreui/icons-vue'
-import { EXTRA_QR_LABELS, SIGN_KINDS, SIGN_SIZES, SIGN_STYLES, signSvg, printSign, downloadSign, logoDataUrl } from '@/utils/signArtwork'
+import { DIRECTORY_ROW_KINDS, EXTRA_QR_LABELS, SIGN_KINDS, SIGN_SIZES, SIGN_STYLES, signSvg, printSign, downloadSign, logoDataUrl } from '@/utils/signArtwork'
 import { copyText } from '@/utils/contactLinks'
 
 const props = defineProps({
@@ -334,14 +370,16 @@ const venueArt = (wifiFallback = {}) => ({
   wifi: { ssid: venueInfo.value.wifi_ssid || wifiFallback.ssid, password: venueInfo.value.wifi_password || wifiFallback.password },
 })
 
-const extrasOf = (sign) => (sign.links || []).map(l => ({ kind: l.kind, qrText: l.qr_text, shortUrl: l.short_url }))
+const extrasOf = (sign) => (sign.links || []).map(l => ({ kind: l.kind, qrText: l.qr_text, shortUrl: l.short_url, title: l.title, subtitle: l.subtitle, phone: l.phone }))
+// A directory has no main QR: it is drawn from its rows.
+const hasArt = (sign) => !!sign.qr_text || (sign.kind === 'directory' && !!sign.links?.length)
 const artwork = (sign) => signSvg({ ...venueArt(), sign, qrText: sign.qr_text, shortUrl: sign.short_url, extras: extrasOf(sign) })
 
 /** The sign scaled to its box for the screen (the printed file keeps its size in mm). */
 const fit = (svg) => String(svg || '').replace(/ width="[\d.]+mm" height="[\d.]+mm"/, ' width="100%" height="100%"')
 
 async function renderPreviews() {
-  for (const sign of signs.value) previews[sign.id] = sign.qr_text ? await artwork(sign) : ''
+  for (const sign of signs.value) previews[sign.id] = hasArt(sign) ? await artwork(sign) : ''
 }
 
 async function load() {
@@ -366,6 +404,10 @@ async function load() {
 /** Why a sign's QR does not lead anywhere yet, or ''. */
 function problem(sign) {
   if (sign.kind === 'wifi') return venueInfo.value.wifi_ssid ? '' : 'Escribe arriba el nombre de la red WiFi para generar el QR.'
+  if (sign.kind === 'directory') {
+    const bad = (sign.links || []).find(l => !l.destination)
+    return bad ? `La fila "${bad.title}" no lleva a ningún lado: ${rowProblem(bad) || 'revisa su teléfono o dirección.'}` : ''
+  }
   if (sign.destination) return ''
   if (sign.kind === 'public_page') return 'La página pública está apagada: el QR lleva al inicio de CabanIA hasta que la publiques (Editar cabaña).'
   if (sign.kind === 'whatsapp') return 'La cabaña no tiene número de WhatsApp: agrégalo en Editar cabaña.'
@@ -473,6 +515,38 @@ async function saveWifi() {
 }
 
 // Create / edit
+// Signs whose kind cannot change once created: the WiFi card and the directory.
+const FIXED_KINDS = ['wifi', 'directory']
+const ROW_EXAMPLES = ['Domicilios tienda', 'Almuerzos', 'Comidas rápidas', 'Lavandería', 'Transporte', 'Administración']
+let rowKey = 0
+const newRow = () => ({ key: ++rowKey, kind: 'whatsapp', title: '', subtitle: '', phone: '', target: '' })
+function addRow() {
+  if (form.value.links.length < 6) form.value.links.push(newRow())
+}
+function moveRow(i, step) {
+  const rows = form.value.links
+  const [row] = rows.splice(i, 1)
+  rows.splice(i + step, 0, row)
+}
+function pickKind(kind) {
+  form.value.kind = kind
+  if (kind === 'directory') {
+    // The directory is portrait, and starts with one row to fill in.
+    if (form.value.size === 'banner_3x1') form.value.size = 'letter'
+    if (!form.value.links.length || form.value.links.some(l => !('title' in l))) form.value.links = [newRow()]
+  } else if (form.value.links.some(l => 'title' in l)) {
+    form.value.links = []
+  }
+}
+/** What a directory row lacks to lead somewhere, or ''. */
+function rowProblem(row) {
+  if ((row.kind === 'whatsapp' || row.kind === 'call') && !String(row.phone || '').replace(/\D/g, '') && !venueInfo.value.has_whatsapp) {
+    return 'Escribe el teléfono (la cabaña no tiene WhatsApp para usar el suyo).'
+  }
+  if (row.kind === 'url' && !/^https?:\/\/\S+$/i.test(row.target || '')) return 'Escribe una dirección que empiece por https://'
+  return row.kind === 'public_page' || row.kind === 'instagram' ? linkProblem(row.kind) : ''
+}
+
 const emptyForm = () => ({ id: null, name: '', kind: 'public_page', headline: '', body: '', target: '', size: 'letter', style: 'gradient', powered_by: true, links: [] })
 const form = ref(emptyForm())
 const formOpen = ref(false)
@@ -485,11 +559,14 @@ const kindHelp = computed(() => ({
   instagram: 'Abre el perfil de Instagram de la cabaña.',
   url: 'Abre cualquier enlace, por ejemplo un video o un formulario.',
   wifi: 'El celular se conecta solo a la red. El nombre de la red y la clave se imprimen debajo.',
+  directory: 'Un aviso vertical con varias filas, cada una con su QR, título y teléfono: domicilios, almuerzos, servicios…',
 }[form.value.kind]))
 
 function openForm(sign) {
   form.value = sign
-    ? { id: sign.id, name: sign.name, kind: sign.kind, headline: sign.headline || '', body: sign.body || '', target: sign.target || '', size: sign.size, style: sign.style || 'gradient', powered_by: sign.powered_by !== false, links: (sign.links || []).map(l => ({ id: l.id, kind: l.kind, target: l.target || '' })) }
+    ? { id: sign.id, name: sign.name, kind: sign.kind, headline: sign.headline || '', body: sign.body || '', target: sign.target || '', size: sign.size, style: sign.style || 'gradient', powered_by: sign.powered_by !== false, links: (sign.links || []).map(l => sign.kind === 'directory'
+        ? { key: ++rowKey, id: l.id, kind: l.kind, target: l.target || '', title: l.title || '', subtitle: l.subtitle || '', phone: l.phone || '' }
+        : { id: l.id, kind: l.kind, target: l.target || '' }) }
     : emptyForm()
   formError.value = ''
   aiIdea.value = ''
@@ -532,10 +609,10 @@ watch(form, async (f) => {
     sign: f,
     qrText: sample,
     shortUrl,
-    extras: f.links.map((l) => {
-      const savedLink = saved?.links?.find(s => s.id === l.id || s.kind === l.kind)
-      const url = savedLink?.short_url || `${window.location.origin}/q/ejemplo${l.kind.slice(0, 2)}`
-      return { kind: l.kind, qrText: url, shortUrl: url }
+    extras: f.links.map((l, i) => {
+      const savedLink = saved?.links?.find(s => s.id === l.id || (f.kind !== 'directory' && s.kind === l.kind))
+      const url = savedLink?.short_url || `${window.location.origin}/q/ejemplo${i}${l.kind.slice(0, 2)}`
+      return { kind: l.kind, qrText: url, shortUrl: url, title: l.title || ROW_EXAMPLES[i % ROW_EXAMPLES.length], subtitle: l.subtitle, phone: l.phone }
     }),
   })
 }, { deep: true })
@@ -546,7 +623,9 @@ async function saveForm() {
   try {
     const { id, ...body } = form.value
     // A small QR to the same place as the big one is redundant.
-    body.links = body.links.filter(l => l.kind !== body.kind || l.kind === 'url')
+    body.links = body.links
+      .filter(l => body.kind === 'directory' || l.kind !== body.kind || l.kind === 'url')
+      .map(({ key, ...l }) => l)
     if (id) await api('PUT', `/signs/${id}`, body)
     else await api('POST', '/signs', body)
     formOpen.value = false
@@ -639,6 +718,10 @@ onMounted(load)
 .brand-swatch {
   width: 44px;
   height: 28px;
+}
+.directory-row {
+  border: 1px solid var(--cui-border-color);
+  background: var(--cui-tertiary-bg);
 }
 .ai-box {
   background: var(--cui-tertiary-bg);
