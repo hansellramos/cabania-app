@@ -1281,11 +1281,26 @@ async function startServer() {
     }
   });
 
-  app.get('/api/venues/:id', async (req, res) => {
+  // A venue's full settings (WiFi password, chat setup...): only for users who can
+  // see that venue, or who sell it as its commission agent. The public page uses
+  // /api/public/... instead.
+  app.get('/api/venues/:id', isAuthenticated, async (req, res) => {
     try {
+      if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(404).json({ error: 'Cabaña no encontrada' });
       const venue = await prisma.venues.findUnique({
         where: { id: req.params.id }
       });
+      if (!venue) return res.status(404).json({ error: 'Cabaña no encontrada' });
+      const venueIds = await getAccessibleVenueIds(req.userPermissions);
+      let allowed = venueIds === null || venueIds.includes(venue.id);
+      if (!allowed) {
+        const userId = String(req.user?.claims?.sub || req.user?.id || '');
+        allowed = !!(await prisma.commission_agents.findFirst({
+          where: { user_id: userId, OR: [{ venue_id: venue.id }, { venue_id: null, organization_id: venue.organization }] },
+          select: { id: true }
+        }));
+      }
+      if (!allowed) return res.status(404).json({ error: 'Cabaña no encontrada' });
       res.json(venue);
     } catch (error) {
       res.status(500).json({ error: error.message });
@@ -4916,7 +4931,7 @@ async function startServer() {
           { id: { in: agentVenueIds } }
         ]
       },
-      select: { id: true, name: true, organization: true, slug: true },
+      select: { id: true, name: true, organization: true, slug: true, is_public: true },
       orderBy: { name: 'asc' }
     });
     const orgIds = [...new Set(venues.map(v => v.organization).filter(Boolean))];
@@ -4969,7 +4984,7 @@ async function startServer() {
       const venues = await getResellerVenues(userId);
       const venueMap = Object.fromEntries(venues.map(v => [v.id, v]));
       const result = await buildAvailability(req.query, venues.map(v => v.id));
-      res.json(result.map(r => ({ ...r, source: venueMap[r.id]?.source, agent: venueMap[r.id]?.agent || null })));
+      res.json(result.map(r => ({ ...r, source: venueMap[r.id]?.source, agent: venueMap[r.id]?.agent || null, slug: venueMap[r.id]?.slug || null, is_public: !!venueMap[r.id]?.is_public })));
     } catch (error) {
       if (error.status === 400) return res.status(400).json({ error: error.message });
       console.error('Reseller availability error:', error);
