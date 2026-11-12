@@ -19,7 +19,7 @@ export const SIGN_KINDS = {
   instagram: { label: 'Instagram', headline: 'Síguenos en Instagram', icon: 'cibInstagram', color: 'danger' },
   url: { label: 'Otro enlace', headline: 'Más información', icon: 'cilLink', color: 'secondary' },
   wifi: { label: 'WiFi', headline: 'Conéctate al WiFi', icon: 'cilWifiSignal4', color: 'primary' },
-  directory: { label: 'Directorio', headline: 'Domicilios y servicios', icon: 'cilList', color: 'dark' },
+  directory: { label: 'Directorio (varias filas)', headline: 'Domicilios y servicios', icon: 'cilList', color: 'warning' },
 }
 
 /** What a directory row's QR does. */
