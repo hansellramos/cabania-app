@@ -117,7 +117,7 @@
     </CRow>
 
     <!-- Create / edit -->
-    <CModal :visible="formOpen" size="lg" alignment="center" @close="formOpen = false">
+    <CModal teleport scrollable :visible="formOpen" size="lg" alignment="center" @close="formOpen = false">
       <CModalHeader><CModalTitle>{{ form.id ? 'Editar aviso' : 'Nuevo aviso' }}</CModalTitle></CModalHeader>
       <CModalBody>
         <CRow class="g-3">
@@ -308,7 +308,7 @@
     </CModal>
 
     <!-- Scans -->
-    <CModal :visible="!!scansFor" alignment="center" @close="scansFor = null">
+    <CModal teleport scrollable :visible="!!scansFor" alignment="center" @close="scansFor = null">
       <CModalHeader><CModalTitle>Escaneos · {{ scansFor?.name }}</CModalTitle></CModalHeader>
       <CModalBody>
         <div v-if="!scans" class="text-center py-3"><CSpinner size="sm" color="primary" /></div>
